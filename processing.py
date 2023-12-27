@@ -1,7 +1,7 @@
 import math
 from multiprocessing import Pool
 
-import rawpy
+import rawpi
 import imageio.v2 as imageio
 import numpy as np
 import ffmpeg
@@ -19,9 +19,12 @@ METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'expo
                  'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
 EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
 
-LUT = 'FilmboxCustomV2.cube'
+LUT = 'FilmboxFllVibBl.cube'
 LUT_BW = 'BW.cube' # None if no BW is desired
 ARTIST = 'Jan Lohse'
+HALATION = True
+BLUR = True
+SHARPEN = True
 ORGANIZE_RAW = True
 
 def gaussian_blur(rgb, sigma=1):
@@ -33,8 +36,17 @@ def gaussian_blur(rgb, sigma=1):
 
 
 # calculate appropriate exposure adjustment
-def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722])):
+def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=True):
     lum_mat = np.dot(rgb, lum_vec)
+    if crop:
+        ratio = lum_mat.shape[0] / lum_mat.shape[1]
+        if ratio > 1:
+            width = int((lum_mat.shape[0] - ratio**.5 / ratio * lum_mat.shape[0] * .75)/2)
+            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75)/2)
+        else:
+            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75)/2)
+            height = int((lum_mat.shape[1] - ratio**.5 / ratio * lum_mat.shape[1] * .75)/2)
+        lum_mat = lum_mat[width : -width , height : -height]
     return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2**-16))
 
 
@@ -43,7 +55,7 @@ def add_metadata(src, metadata):
     with open(src, 'rb') as img_file:
         temp_metadata = Image(img_file)
     temp_metadata.artist = ARTIST
-    for key in METADATA_KEYS:
+    for key in [key for key in METADATA_KEYS if key in metadata.list_all()]:
         temp_metadata[key] = metadata[key]
     with open(src, 'wb') as image_file:
         image_file.write(temp_metadata.get_file())
@@ -82,32 +94,46 @@ def process_image(src):
         except:
             pass
     if os.path.exists(f"{path}/{src.split('.')[0]}.jpg"):
-        os.replace(src, f"{path}/RAW/{src}")
+        if ORGANIZE_RAW:
+            os.replace(src, f"{path}/RAW/{src}")
         return
 
     # convert raw file to linear data
     with rawpy.imread(src) as raw:
-        rgb = raw.postprocess(user_wb=[2.673, 1., 1.502, 1.], output_color=rawpy.ColorSpace(6), gamma=(1, 1),
+        rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), # user_wb=[2.673, 1., 1.502, 1.], 
                               output_bps=16, no_auto_bright=True,
                               demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
     rgb = rgb.astype(dtype='float32')
-    rgb /= 2 ** 16
+    rgb /= 2 ** 16 - 1
 
     # adjust exposure
-    rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
-    rgb *= 2 ** (-calc_exposure(rgb) / 1.2 - 2.75)
+    if metadata.f_number:
+        rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time        
+    else:
+        rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
+    rgb *= 2 ** (-calc_exposure(rgb) / 1.15 - 1.9)
 
     # crop to 3:2 ratio
     rgb = crop(rgb)
 
-    # resolution and halation
-    scale = max(rgb.shape) / 4608
-    r, g, b = np.dsplit(np.clip(gaussian_blur(rgb, sigma=7 * scale) - rgb, a_min=0, a_max=None), 3)
-    rgb = gaussian_blur(rgb, sigma=1.225 * scale)
-    rgb = 2 * rgb - gaussian_blur(rgb, sigma=1.65 * scale)
-    rgb += scale * np.dstack((.36 * r, .22 * g, .1 * b))
- 
- 
+    scale = max(rgb.shape) / 2880
+
+    # texture
+    if BLUR:
+        rgb = gaussian_blur(rgb, sigma=.5 * scale)
+    
+    if SHARPEN:
+        rgb = np.log2(rgb + 2**-16)
+        rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-1, a_max=1)
+        rgb = np.exp2(rgb) - 2**-16
+
+    if HALATION:
+        threshold = .175
+        r, g, b = np.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
+        r = ndimage.gaussian_filter(r, sigma=2.2 * scale)
+        g = .8 * ndimage.gaussian_filter(g, sigma=2 * scale)
+        b = ndimage.gaussian_filter(b, sigma=0.3 * scale)
+        rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
  
     # add lut and generate jpg
     rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2**16 - 1)).astype(dtype='uint16')
@@ -142,5 +168,6 @@ def process_image(src):
 
 if __name__ == '__main__':
     files = [x for x in os.listdir() if x.endswith(EXTENSION_LIST)]
+
     with Pool() as p:
         p.map(process_image, files)
