@@ -24,4 +24,4 @@ def make_lut(src, size=33):
     f.close()
 
 
-make_lut('FilmboxCustom.tif', size=65)
+make_lut('FilmboxCustomV2.tif', size=65)

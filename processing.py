@@ -19,11 +19,9 @@ METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'expo
                  'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
 EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
 
-LUT = 'FilmboxCustom.cube'
+LUT = 'FilmboxCustomV2.cube'
 LUT_BW = 'BW.cube' # None if no BW is desired
 ARTIST = 'Jan Lohse'
-HALATION = True
-TEXTURE = True
 ORGANIZE_RAW = True
 
 def gaussian_blur(rgb, sigma=1):
@@ -97,21 +95,17 @@ def process_image(src):
 
     # adjust exposure
     rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
-    rgb *= 2 ** (-calc_exposure(rgb) / 1.2 - 3)
+    rgb *= 2 ** (-calc_exposure(rgb) / 1.2 - 2.75)
 
     # crop to 3:2 ratio
     rgb = crop(rgb)
 
-    # halation
-    if HALATION:
-        scale = max(rgb.shape) / 4608
-        r, g, b = np.dsplit(np.clip(gaussian_blur(rgb, sigma=7 * scale) - rgb, a_min=0, a_max=None), 3)
-        rgb += 1.1 * scale * np.dstack((.36 * r, .22 * g, .1 * b))
-
-    # blur and sharpen
-    if TEXTURE:
-        rgb = gaussian_blur(rgb, sigma=1.25 * scale)
-        rgb = 2 * rgb - gaussian_blur(rgb, sigma=1.6 * scale)
+    # resolution and halation
+    scale = max(rgb.shape) / 4608
+    r, g, b = np.dsplit(np.clip(gaussian_blur(rgb, sigma=7 * scale) - rgb, a_min=0, a_max=None), 3)
+    rgb = gaussian_blur(rgb, sigma=1.225 * scale)
+    rgb = 2 * rgb - gaussian_blur(rgb, sigma=1.65 * scale)
+    rgb += scale * np.dstack((.36 * r, .22 * g, .1 * b))
  
  
  
