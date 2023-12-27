@@ -33,12 +33,13 @@ ARTIST = 'Jan Lohse'
 
 # What features to activate. 
 # Default is all True.
-CROP = True
-BLUR = True
-SHARPEN = True
-HALATION = True
-GRAIN = True
-ORGANIZE = True
+CROP =      True
+BLUR =      True
+SHARPEN =   True
+HALATION =  True
+GRAIN =     True
+ORGANIZE =  True
+CANVAS =    False
 
 # Specify width and height of simulated film frame. Matches resolution and aspect ratio.
 # Either select from dictionary or specify manual values. To preserve orientation width should be the larger value.
@@ -47,11 +48,18 @@ ORGANIZE = True
 # Motion picture formats: scope, flat, academy, super16, IMAX, 65mm
 WIDTH, HEIGHT = FORMATS['135']
 
+# Specify parameters of the output if CANVAS is turned on.
+# Select the aspect ratio, if orientation is automatic, the sizing of the image, and the background color.
+OUTPUT_RATIO = 4/5
+OUTPUT_SCALE = 1.0
+OUTPUT_COLOR = [0, 0, 0]
+
 # manages image processing pipeline
 def process_image(src):
     rgb, metadata = raw_to_linear(src)
     film_emulation(src, rgb, metadata)
-    file_list = [apply_lut(src, lut) for lut in LUTS]
+    file_list = [apply_lut(src, lut, first=(lut == LUTS[0])) for lut in LUTS]
+    file_list = [convert_jpg(file) for file in file_list]
     os.remove(src.split('.')[0] + '_log.tiff')
     for file in file_list:
         add_metadata(file, metadata)
@@ -161,18 +169,38 @@ def gaussian_blur(rgb, sigma=1):
 
 
 # loads tiff file and applies lut, generates jpg
-def apply_lut(src, lut):
-    if os.path.exists(src.split('.')[0] + '.tiff'):
+def apply_lut(src, lut, first=False):
+    extension = '.tiff'
+    if not first:
+        extension = "_" + lut.split('.')[0] + extension
+    if os.path.exists(src.split('.')[0] + extension):
         os.remove(src.split(".")[0] + ".tiff")
-    ffmpeg.input(src.split(".")[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split(".")[0] + '.tiff',
+    ffmpeg.input(src.split(".")[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split(".")[0] + extension,
                                                                                    loglevel="quiet").run()
-    extension = '.jpg'
-    if os.path.exists(src.split(".")[0] + extension):
-        extension = "_" +  lut.split('.')[0] + extension
-    imageio.imsave(src.split(".")[0] + extension,
-                 (imageio.imread(src.split(".")[0] + '.tiff') / 2 ** 8).astype(dtype='uint8'), quality=100)
-    os.remove(src.split(".")[0] + ".tiff")
     return src.split('.')[0] + extension
+
+
+# converts to jpg and removes src tiff file
+def convert_jpg(src):
+    image = (imageio.imread(src) / 2 ** 8).astype(dtype='uint8')
+    os.remove(src)
+    if CANVAS:
+        image = add_canvas(image)
+    imageio.imsave(src.split(".")[0] + '.jpg', image, quality=100)
+    return src.split(".")[0] + '.jpg'
+
+
+# add background to image
+def add_canvas(image):
+    img_ratio = image.shape[1] / image.shape[0]
+    if img_ratio > OUTPUT_RATIO:
+        output_resolution = (int(image.shape[1] / OUTPUT_RATIO * OUTPUT_SCALE), int(image.shape[1] * OUTPUT_SCALE))
+    else:
+        output_resolution = (int(image.shape[0] * OUTPUT_SCALE), int(image.shape[0] * OUTPUT_RATIO * OUTPUT_SCALE))
+    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    canvas = np.tensordot(np.ones(output_resolution), OUTPUT_COLOR, axes=0)
+    canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
+    return canvas.astype(dtype='uint8')
 
 
 # adds metadata from original image
