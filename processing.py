@@ -19,12 +19,13 @@ METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'expo
                  'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
 EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
 
-LUTS = ['FilmboxFllVibBl.cube', 'BW.cube']
+LUTS = ['Filmbox100vib.cube', 'BW.cube']
 ARTIST = 'Jan Lohse'
 HALATION = True
 BLUR = True
 SHARPEN = True
 ORGANIZE = True
+GRAIN = True
 
 
 # manages image processing pipeline
@@ -67,26 +68,33 @@ def film_emulation(src, rgb, metadata):
         rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time        
     else:
         rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
-    rgb *= 2 ** (-calc_exposure(rgb) / 1.15 - 1.9)
+    rgb *= 2 ** (-calc_exposure(rgb)- 2)
 
     scale = max(rgb.shape) / 2880
 
     # texture
     if BLUR:
         rgb = gaussian_blur(rgb, sigma=.5 * scale)
-    
-    if SHARPEN:
-        rgb = np.log2(rgb + 2**-16)
-        rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-1, a_max=1)
-        rgb = np.exp2(rgb) - 2**-16
 
     if HALATION:
-        threshold = .15
+        threshold = .14
         r, g, b = np.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
         r = ndimage.gaussian_filter(r, sigma=2.2 * scale)
         g = .8 * ndimage.gaussian_filter(g, sigma=2 * scale)
         b = ndimage.gaussian_filter(b, sigma=0.3 * scale)
         rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
+
+    if GRAIN:
+        rgb = np.log2(rgb + 2**-16)
+        noise = np.random.rand(*rgb.shape) - .5
+        noise = ndimage.gaussian_filter(noise, sigma=.5 * scale)
+        rgb += noise * 1.25
+        rgb = np.exp2(rgb) - 2**-16
+
+    if SHARPEN:
+        rgb = np.log2(rgb + 2**-16)
+        rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
+        rgb = np.exp2(rgb) - 2**-16
  
     # generate logarithmic tiff file
     rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2**16 - 1)).astype(dtype='uint16')
