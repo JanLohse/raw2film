@@ -25,7 +25,7 @@ FORMATS = {'110': (17, 13),
            'super16': (12.42, 7.44), 'scope': (24.89, 10.4275), 'flat': (24.89, 13.454), 'academy': (24.89, 18.7),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
 
-# LUTs to be applied to the image. First in the list is defaul, others will be saved in subfolders.
+# LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
 LUTS = ['Filmbox100vib.cube', 'BW.cube']
 
 # Artist name added to the output metadata.
@@ -38,7 +38,7 @@ BLUR =      True
 SHARPEN =   True
 HALATION =  True
 GRAIN =     True
-ORGANIZE =  True
+ORGANIZE =  False
 CANVAS =    False
 
 # Specify width and height of simulated film frame. Matches resolution and aspect ratio.
