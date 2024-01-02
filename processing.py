@@ -1,11 +1,10 @@
-import math
-from multiprocessing import Pool
-import rawpy
+import colour
 import imageio.v2 as imageio
 import numpy as np
-import ffmpeg
 import os
+import rawpy
 from exif import Image
+from multiprocessing import Pool
 from scipy import ndimage
 
 METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'exposure_program',
@@ -17,10 +16,10 @@ METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'expo
                  'white_balance',
                  'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
 EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
-FORMATS = {'110': (17, 13), 
+FORMATS = {'110': (17, 13),
            '135-half': (24, 18), '135': (36, 24),
            'xpan': (65, 24),
-           '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56), 
+           '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56),
            '4x5': (127, 101.6), '5x7': (177.8, 127), '8x10': (254, 203.2), '11x14': (355.6, 279.4),
            'super16': (12.42, 7.44), 'scope': (24.89, 10.4275), 'flat': (24.89, 13.454), 'academy': (24.89, 18.7),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
@@ -33,13 +32,13 @@ ARTIST = 'Jan Lohse'
 
 # What features to activate. 
 # Default is all True.
-CROP =      True
-BLUR =      True
-SHARPEN =   True
-HALATION =  True
-GRAIN =     True
-ORGANIZE =  False
-CANVAS =    False
+CROP = True
+BLUR = True
+SHARPEN = True
+HALATION = True
+GRAIN = True
+ORGANIZE = False
+CANVAS = False
 
 # Specify width and height of simulated film frame. Matches resolution and aspect ratio.
 # Either select from dictionary or specify manual values. To preserve orientation width should be the larger value.
@@ -50,17 +49,16 @@ WIDTH, HEIGHT = FORMATS['135']
 
 # Specify parameters of the output if CANVAS is turned on.
 # Select the aspect ratio, if orientation is automatic, the sizing of the image, and the background color.
-OUTPUT_RATIO = 4/5
+OUTPUT_RATIO = 4 / 5
 OUTPUT_SCALE = 1.0
 OUTPUT_COLOR = [0, 0, 0]
+
 
 # manages image processing pipeline
 def process_image(src):
     rgb, metadata = raw_to_linear(src)
-    film_emulation(src, rgb, metadata)
-    file_list = [apply_lut(src, lut, first=(lut == LUTS[0])) for lut in LUTS]
-    file_list = [convert_jpg(file) for file in file_list]
-    os.remove(src.split('.')[0] + '_log.tiff')
+    rgb = film_emulation(rgb, metadata)
+    file_list = [apply_lut(src, rgb, lut, first=(lut == LUTS[0])) for lut in LUTS]
     for file in file_list:
         add_metadata(file, metadata)
     if ORGANIZE:
@@ -86,14 +84,14 @@ def raw_to_linear(src):
 
 
 # adjusts exposure, aspect ratio and texture, outputs tiff file
-def film_emulation(src, rgb, metadata):
+def film_emulation(rgb, metadata):
     # crop to specified aspect ratio
     if CROP:
-        rgb = crop(rgb, aspect=WIDTH/HEIGHT)
+        rgb = crop(rgb, aspect=WIDTH / HEIGHT)
 
     # adjust exposure
     if metadata.f_number:
-        rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time        
+        rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     else:
         rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     rgb *= 2 ** (-calc_exposure(ndimage.gaussian_filter(rgb, sigma=3)) / 1.15 - 2)
@@ -105,9 +103,9 @@ def film_emulation(src, rgb, metadata):
         rgb = gaussian_blur(rgb, sigma=.5 * scale)
 
     if SHARPEN:
-        rgb = np.log2(rgb + 2**-16)
+        rgb = np.log2(rgb + 2 ** -16)
         rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-        rgb = np.exp2(rgb) - 2**-16
+        rgb = np.exp2(rgb) - 2 ** -16
 
     if HALATION:
         threshold = .2
@@ -118,15 +116,16 @@ def film_emulation(src, rgb, metadata):
         rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
 
     if GRAIN:
-        rgb = np.log2(rgb + 2**-16)
+        rgb = np.log2(rgb + 2 ** -16)
         noise = np.random.rand(*rgb.shape) - .5
         noise = ndimage.gaussian_filter(noise, sigma=.5 * scale)
         rgb += noise * (scale / 2)
-        rgb = np.exp2(rgb) - 2**-16
- 
+        rgb = np.exp2(rgb) - 2 ** -16
+
     # generate logarithmic tiff file
-    rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2**16 - 1)).astype(dtype='uint16')
-    imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
+    rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2 ** 16 - 1)).astype(
+        dtype='uint16')
+    return rgb
 
 
 # crop image
@@ -149,14 +148,14 @@ def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=True):
     if crop:
         ratio = lum_mat.shape[0] / lum_mat.shape[1]
         if ratio > 1:
-            width = int((lum_mat.shape[0] - ratio**.5 / ratio * lum_mat.shape[0] * .75)/2)
-            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75)/2)
+            width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * .75) / 2)
+            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75) / 2)
         else:
-            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75)/2)
-            ratio = 1/ratio
-            height = int((lum_mat.shape[1] - ratio**.5 / ratio * lum_mat.shape[1] * .75)/2)
-        lum_mat = lum_mat[width : -width , height : -height]
-    return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2**-16))
+            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75) / 2)
+            ratio = 1 / ratio
+            height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * .75) / 2)
+        lum_mat = lum_mat[width: -width, height: -height]
+    return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2 ** -16))
 
 
 # applies gaussian blur to each channel individually
@@ -169,25 +168,17 @@ def gaussian_blur(rgb, sigma=1):
 
 
 # loads tiff file and applies lut, generates jpg
-def apply_lut(src, lut, first=False):
-    extension = '.tiff'
+def apply_lut(src, rgb, lut, first=False):
+    extension = '.jpg'
     if not first:
         extension = "_" + lut.split('.')[0] + extension
-    if os.path.exists(src.split('.')[0] + extension):
-        os.remove(src.split(".")[0] + ".tiff")
-    ffmpeg.input(src.split(".")[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split(".")[0] + extension,
-                                                                                   loglevel="quiet").run()
-    return src.split('.')[0] + extension
-
-
-# converts to jpg and removes src tiff file
-def convert_jpg(src):
-    image = (imageio.imread(src) / 2 ** 8).astype(dtype='uint8')
-    os.remove(src)
+    lut = colour.read_LUT(lut)
+    rgb = lut.apply(rgb / 2**16)
+    rgb = (rgb * 255).astype(dtype='uint8')
     if CANVAS:
-        image = add_canvas(image)
-    imageio.imsave(src.split(".")[0] + '.jpg', image, quality=100)
-    return src.split(".")[0] + '.jpg'
+        rgb = add_canvas(rgb)
+    imageio.imsave(src.split(".")[0] + extension, rgb, quality=100)
+    return src.split('.')[0] + extension
 
 
 # add background to image
