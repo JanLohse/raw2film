@@ -1,10 +1,11 @@
-import math
+import os
 from multiprocessing import Pool
-import rawpy
+
+import ffmpeg
 import imageio.v2 as imageio
 import numpy as np
-import ffmpeg
-import os
+import rawpy
+from colour.models import log_encoding_ARRILogC3
 from exif import Image
 from scipy import ndimage
 
@@ -17,16 +18,19 @@ METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'expo
                  'white_balance',
                  'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
 EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
-FORMATS = {'110': (17, 13), 
+FORMATS = {'110': (17, 13),
            '135-half': (24, 18), '135': (36, 24),
            'xpan': (65, 24),
-           '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56), 
+           '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56),
            '4x5': (127, 101.6), '5x7': (177.8, 127), '8x10': (254, 203.2), '11x14': (355.6, 279.4),
            'super16': (12.42, 7.44), 'scope': (24.89, 10.4275), 'flat': (24.89, 13.454), 'academy': (24.89, 18.7),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
+REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
+                               [-.1576, 0.8805, 0.0077],
+                               [0.0615, 0.1946, 1.0275]])
 
 # LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['Filmbox100vib.cube', 'BW.cube']
+LUTS = ['FilmboxFullVibrant.cube', 'FilmboxFullBW.cube']
 
 # Artist name added to the output metadata.
 ARTIST = 'Jan Lohse'
@@ -38,7 +42,7 @@ BLUR =      True
 SHARPEN =   True
 HALATION =  True
 GRAIN =     True
-ORGANIZE =  False
+ORGANIZE =  True
 CANVAS =    False
 
 # Specify width and height of simulated film frame. Matches resolution and aspect ratio.
@@ -50,9 +54,10 @@ WIDTH, HEIGHT = FORMATS['135']
 
 # Specify parameters of the output if CANVAS is turned on.
 # Select the aspect ratio, if orientation is automatic, the sizing of the image, and the background color.
-OUTPUT_RATIO = 4/5
+OUTPUT_RATIO = 4 / 5
 OUTPUT_SCALE = 1.0
 OUTPUT_COLOR = [0, 0, 0]
+
 
 # manages image processing pipeline
 def process_image(src):
@@ -89,11 +94,11 @@ def raw_to_linear(src):
 def film_emulation(src, rgb, metadata):
     # crop to specified aspect ratio
     if CROP:
-        rgb = crop(rgb, aspect=WIDTH/HEIGHT)
+        rgb = crop(rgb, aspect=WIDTH / HEIGHT)
 
     # adjust exposure
     if metadata.f_number:
-        rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time        
+        rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     else:
         rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     rgb *= 2 ** (-calc_exposure(ndimage.gaussian_filter(rgb, sigma=3)) / 1.15 - 2)
@@ -105,9 +110,9 @@ def film_emulation(src, rgb, metadata):
         rgb = gaussian_blur(rgb, sigma=.5 * scale)
 
     if SHARPEN:
-        rgb = np.log2(rgb + 2**-16)
+        rgb = np.log2(rgb + 2 ** -16)
         rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-        rgb = np.exp2(rgb) - 2**-16
+        rgb = np.exp2(rgb) - 2 ** -16
 
     if HALATION:
         threshold = .2
@@ -118,14 +123,16 @@ def film_emulation(src, rgb, metadata):
         rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
 
     if GRAIN:
-        rgb = np.log2(rgb + 2**-16)
+        rgb = np.log2(rgb + 2 ** -16)
         noise = np.random.rand(*rgb.shape) - .5
         noise = ndimage.gaussian_filter(noise, sigma=.5 * scale)
         rgb += noise * (scale / 2)
-        rgb = np.exp2(rgb) - 2**-16
- 
+        rgb = np.exp2(rgb) - 2 ** -16
+
     # generate logarithmic tiff file
-    rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2**16 - 1)).astype(dtype='uint16')
+    rgb = log_encoding_ARRILogC3(rgb)
+    rgb = np.dot(rgb, REC2020_TO_ARRIWCG)
+    rgb = (rgb * (2 ** 16 - 1)).astype(dtype="uint16")
     imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
 
 
@@ -149,14 +156,14 @@ def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=True):
     if crop:
         ratio = lum_mat.shape[0] / lum_mat.shape[1]
         if ratio > 1:
-            width = int((lum_mat.shape[0] - ratio**.5 / ratio * lum_mat.shape[0] * .75)/2)
-            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75)/2)
+            width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * .75) / 2)
+            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75) / 2)
         else:
-            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75)/2)
-            ratio = 1/ratio
-            height = int((lum_mat.shape[1] - ratio**.5 / ratio * lum_mat.shape[1] * .75)/2)
-        lum_mat = lum_mat[width : -width , height : -height]
-    return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2**-16))
+            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75) / 2)
+            ratio = 1 / ratio
+            height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * .75) / 2)
+        lum_mat = lum_mat[width: -width, height: -height]
+    return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2 ** -16))
 
 
 # applies gaussian blur to each channel individually
