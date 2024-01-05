@@ -105,7 +105,7 @@ def film_emulation(src, rgb, metadata):
     else:
         rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     exposure = calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
-    adjustment = -.9 * exposure - 2.3
+    adjustment = -.85 * exposure - 2.35
     rgb *= 2 ** adjustment
 
     scale = max(rgb.shape) / (80 * WIDTH)
@@ -136,7 +136,7 @@ def film_emulation(src, rgb, metadata):
 
     # generate logarithmic tiff file
     rgb = log_encoding_ARRILogC3(rgb)
-    rgb = np.dot(rgb, REC2020_TO_ARRIWCG)
+    rgb = np.clip(np.dot(rgb, REC2020_TO_ARRIWCG), a_min=0, a_max=1)
     rgb = (rgb * (2 ** 16 - 1)).astype(dtype="uint16")
     imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
 
@@ -157,7 +157,7 @@ def crop(rgb, aspect=1.5):
 
 # calculate appropriate exposure adjustment
 def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
-    lum_mat = np.dot(np.dot(rgb, REC2020_TO_REC709), lum_vec)
+    lum_mat = np.dot(np.clip(np.dot(rgb, REC2020_TO_REC709), a_min=0, a_max=None), lum_vec)
     if 0 < crop < 1:
         ratio = lum_mat.shape[0] / lum_mat.shape[1]
         if ratio > 1:
