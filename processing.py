@@ -26,7 +26,7 @@ FORMATS = {'110': (17, 13),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
 
 # LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['ARRI_LogC2Video_709_davinci3d_33.cube']
+LUTS = ['FilmboxFullVibrant.cube', 'FilmboxFullBW.cube']
 
 REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
                                [-.1576, 0.8805, 0.0077],
@@ -42,7 +42,7 @@ BLUR = True
 SHARPEN = True
 HALATION = True
 GRAIN = True
-ORGANIZE = False
+ORGANIZE = True
 CANVAS = False
 
 # Specify width and height of simulated film frame. Matches resolution and aspect ratio.
