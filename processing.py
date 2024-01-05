@@ -33,7 +33,7 @@ REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                               [-.0728, -.0084, 1.1187]])
 
 # LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['FilmboxFullVibrant.cube']
+LUTS = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
 
 # Artist name added to the output metadata.
 ARTIST = 'Jan Lohse'
