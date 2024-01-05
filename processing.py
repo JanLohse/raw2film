@@ -1,10 +1,11 @@
+import os
+from multiprocessing import Pool
+
 import colour
 import imageio.v2 as imageio
 import numpy as np
-import os
 import rawpy
 from exif import Image
-from multiprocessing import Pool
 from scipy import ndimage
 
 METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'exposure_program',
@@ -25,7 +26,11 @@ FORMATS = {'110': (17, 13),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
 
 # LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['Filmbox100vib.cube', 'BW.cube']
+LUTS = ['ARRI_LogC2Video_709_davinci3d_33.cube']
+
+REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
+                               [-.1576, 0.8805, 0.0077],
+                               [0.0615, 0.1946, 1.0275]])
 
 # Artist name added to the output metadata.
 ARTIST = 'Jan Lohse'
@@ -122,9 +127,6 @@ def film_emulation(rgb, metadata):
         rgb += noise * (scale / 2)
         rgb = np.exp2(rgb) - 2 ** -16
 
-    # generate logarithmic tiff file
-    rgb = (np.clip((np.log2(rgb + np.ones(rgb.shape)) / 4) * 2 ** 16, a_min=0, a_max=2 ** 16 - 1)).astype(
-        dtype='uint16')
     return rgb
 
 
@@ -172,8 +174,10 @@ def apply_lut(src, rgb, lut, first=False):
     extension = '.jpg'
     if not first:
         extension = "_" + lut.split('.')[0] + extension
+    rgb = colour.models.log_encoding_ARRILogC3(rgb)  # convert to ARRI LogC 3
+    rgb = np.dot(rgb, REC2020_TO_ARRIWCG)  # convert to ARRI Wide Color Gamut
     lut = colour.read_LUT(lut)
-    rgb = lut.apply(rgb / 2**16)
+    rgb = lut.apply(rgb)
     rgb = (rgb * 255).astype(dtype='uint8')
     if CANVAS:
         rgb = add_canvas(rgb)
