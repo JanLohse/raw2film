@@ -28,9 +28,12 @@ FORMATS = {'110': (17, 13),
 REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
                                [-.1576, 0.8805, 0.0077],
                                [0.0615, 0.1946, 1.0275]])
+REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
+                              [-.5879, 1.1330, -.1006],
+                              [-.0728, -.0084, 1.1187]])
 
 # LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['FilmboxFullVibrant.cube', 'FilmboxFullBW.cube']
+LUTS = ['FilmboxFullVibrant.cube']
 
 # Artist name added to the output metadata.
 ARTIST = 'Jan Lohse'
@@ -101,7 +104,9 @@ def film_emulation(src, rgb, metadata):
         rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
     else:
         rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
-    rgb *= 2 ** (-calc_exposure(ndimage.gaussian_filter(rgb, sigma=3)) / 1.15 - 2)
+    exposure = calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
+    adjustment = -.9 * exposure - 2.3
+    rgb *= 2 ** adjustment
 
     scale = max(rgb.shape) / (80 * WIDTH)
 
@@ -151,17 +156,17 @@ def crop(rgb, aspect=1.5):
 
 
 # calculate appropriate exposure adjustment
-def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=True):
-    lum_mat = np.dot(rgb, lum_vec)
-    if crop:
+def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
+    lum_mat = np.dot(np.dot(rgb, REC2020_TO_REC709), lum_vec)
+    if 0 < crop < 1:
         ratio = lum_mat.shape[0] / lum_mat.shape[1]
         if ratio > 1:
-            width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * .75) / 2)
-            height = int((lum_mat.shape[1] - lum_mat.shape[1] * .75) / 2)
+            width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * crop) / 2)
+            height = int((lum_mat.shape[1] - lum_mat.shape[1] * crop) / 2)
         else:
-            width = int((lum_mat.shape[0] - lum_mat.shape[0] * .75) / 2)
+            width = int((lum_mat.shape[0] - lum_mat.shape[0] * crop) / 2)
             ratio = 1 / ratio
-            height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * .75) / 2)
+            height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * crop) / 2)
         lum_mat = lum_mat[width: -width, height: -height]
     return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2 ** -16))
 
