@@ -184,7 +184,7 @@ def gaussian_blur(rgb, sigma=1):
 def apply_lut(src, lut, first=False):
     extension = '.tiff'
     if not first:
-        extension = "_" + lut.split('.')[0] + extension
+        extension = "_" + lut.split("_")[-1].split(".")[0] + extension
     if os.path.exists(src.split('.')[0] + extension):
         os.remove(src.split(".")[0] + ".tiff")
     ffmpeg.input(src.split(".")[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split(".")[0] + extension,
