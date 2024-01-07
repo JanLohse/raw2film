@@ -1,5 +1,6 @@
 import os
 import sys
+from functools import partial
 from multiprocessing import Pool
 
 import ffmpeg
@@ -33,46 +34,19 @@ REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                               [-.5879, 1.1330, -.1006],
                               [-.0728, -.0084, 1.1187]])
 
-# LUTs to be applied to the image. First in the list is default, others will be saved in sub folders.
-LUTS = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
 
-# Artist name added to the output metadata.
-ARTIST = 'Jan Lohse'
-
-# What features to activate. 
-# Default is all True.
-CROP =      True
-BLUR =      True
-SHARPEN =   True
-HALATION =  True
-GRAIN =     True
-ORGANIZE =  True
-CANVAS =    False
-
-# Specify width and height of simulated film frame. Matches resolution and aspect ratio.
-# Either select from dictionary or specify manual values. To preserve orientation width should be the larger value.
-# Roll film formats: 110, 120, 120-4.5, 120-6, 120-9, 135, 135-half, xpan
-# Sheet film formats: 4x5, 5x7, 8x10, 11x14
-# Motion picture formats: scope, flat, academy, super16, IMAX, 65mm
-WIDTH, HEIGHT = FORMATS['135']
-
-# Specify parameters of the output if CANVAS is turned on.
-# Select the aspect ratio, if orientation is automatic, the sizing of the image, and the background color.
-OUTPUT_RATIO = 4 / 5
-OUTPUT_SCALE = 1.0
-OUTPUT_COLOR = [0, 0, 0]
-
-
-def process_image(src):
+def process_image(src, luts=None, organize=True, **kwargs):
     """Manages image processing pipeline."""
+    if luts is None:
+        luts = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
     rgb, metadata = raw_to_linear(src)
-    film_emulation(src, rgb, metadata)
-    file_list = [apply_lut(src, lut, first=(lut == LUTS[0])) for lut in LUTS]
-    file_list = [convert_jpg(file) for file in file_list]
+    film_emulation(src, rgb, metadata, **kwargs)
+    file_list = [apply_lut(src, lut, first=(lut == luts[0])) for lut in luts]
+    file_list = [convert_jpg(file, **kwargs) for file in file_list]
     os.remove(src.split('.')[0] + '_log.tiff')
     for file in file_list:
-        add_metadata(file, metadata)
-    if ORGANIZE:
+        add_metadata(file, metadata, **kwargs)
+    if organize:
         organize_files(src, file_list, metadata)
     print(f"{src} processed successfully", flush=True)
 
@@ -94,11 +68,17 @@ def raw_to_linear(src):
     return rgb, metadata
 
 
-def film_emulation(src, rgb, metadata):
+def film_emulation(src, rgb, metadata, width=None, height=None, crop=True, blur=True, sharpen=True, halation=True,
+                   grain=True, **kwargs):
     """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
+    if width is None:
+        width = FORMATS['135'][0]
+    if height is None:
+        height = FORMATS['135'][1]
+
     # crop to specified aspect ratio
-    if CROP:
-        rgb = crop(rgb, aspect=WIDTH / HEIGHT)
+    if crop:
+        rgb = crop_image(rgb, aspect=width / height)
 
     # adjust exposure
     if metadata.f_number:
@@ -109,18 +89,18 @@ def film_emulation(src, rgb, metadata):
     adjustment = -.85 * exposure - 2.35
     rgb *= 2 ** adjustment
 
-    scale = max(rgb.shape) / (80 * WIDTH)
+    scale = max(rgb.shape) / (80 * width)
 
     # texture
-    if BLUR:
+    if blur:
         rgb = gaussian_blur(rgb, sigma=.5 * scale)
 
-    if SHARPEN:
+    if sharpen:
         rgb = np.log2(rgb + 2 ** -16)
         rgb = rgb + np.clip(rgb - gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
         rgb = np.exp2(rgb) - 2 ** -16
 
-    if HALATION:
+    if halation:
         threshold = .2
         r, g, b = np.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
         r = ndimage.gaussian_filter(r, sigma=2.2 * scale)
@@ -128,7 +108,7 @@ def film_emulation(src, rgb, metadata):
         b = ndimage.gaussian_filter(b, sigma=0.3 * scale)
         rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
 
-    if GRAIN:
+    if grain:
         rgb = np.log2(rgb + 2 ** -16)
         noise = np.random.rand(*rgb.shape) - .5
         noise = ndimage.gaussian_filter(noise, sigma=.5 * scale)
@@ -142,7 +122,7 @@ def film_emulation(src, rgb, metadata):
     imageio.imsave(src.split(".")[0] + '_log.tiff', rgb)
 
 
-def crop(rgb, aspect=1.5):
+def crop_image(rgb, aspect=1.5):
     """Crops rgb data to aspect ratio."""
     x, y, c = rgb.shape
     if x > y:
@@ -193,34 +173,34 @@ def apply_lut(src, lut, first=False):
     return src.split('.')[0] + extension
 
 
-def convert_jpg(src):
+def convert_jpg(src, canvas=False, **kwargs):
     """Converts to jpg and removes src tiff file."""
     image = (imageio.imread(src) / 2 ** 8).astype(dtype='uint8')
     os.remove(src)
-    if CANVAS:
-        image = add_canvas(image)
+    if canvas:
+        image = add_canvas(image, **kwargs)
     imageio.imsave(src.split('.')[0] + '.jpg', image, quality=100)
     return src.split('.')[0] + '.jpg'
 
 
-def add_canvas(image):
+def add_canvas(image, output_ratio=4 / 5, output_scale=1., output_color=(0, 0, 0), **kwargs):
     """Adds background canvas to image."""
     img_ratio = image.shape[1] / image.shape[0]
-    if img_ratio > OUTPUT_RATIO:
-        output_resolution = (int(image.shape[1] / OUTPUT_RATIO * OUTPUT_SCALE), int(image.shape[1] * OUTPUT_SCALE))
+    if img_ratio > output_ratio:
+        output_resolution = (int(image.shape[1] / output_ratio * output_scale), int(image.shape[1] * output_scale))
     else:
-        output_resolution = (int(image.shape[0] * OUTPUT_SCALE), int(image.shape[0] * OUTPUT_RATIO * OUTPUT_SCALE))
+        output_resolution = (int(image.shape[0] * output_scale), int(image.shape[0] * output_ratio * output_scale))
     offset = np.subtract(output_resolution, image.shape[:2]) // 2
-    canvas = np.tensordot(np.ones(output_resolution), OUTPUT_COLOR, axes=0)
+    canvas = np.tensordot(np.ones(output_resolution), output_color, axes=0)
     canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
     return canvas.astype(dtype='uint8')
 
 
-def add_metadata(src, metadata):
+def add_metadata(src, metadata, artist='Jan Lohse', **kwargs):
     """Adds metadata to image file."""
     with open(src, 'rb') as img_file:
         temp_metadata = Image(img_file)
-    temp_metadata.artist = ARTIST
+    temp_metadata.artist = artist
     for key in [key for key in METADATA_KEYS if key in metadata.list_all()]:
         temp_metadata[key] = metadata[key]
     with open(src, 'wb') as image_file:
@@ -248,52 +228,61 @@ def move_file(src, path):
 
 
 def main(argv):
-    global CROP, BLUR, SHARPEN, HALATION, GRAIN, ORGANIZE, CANVAS, WIDTH, HEIGHT, OUTPUT_RATIO, OUTPUT_COLOR, \
-        OUTPUT_SCALE, LUTS
+    params = dict()
     for arg in argv:
+        if arg[0] == '"' and arg[1] == '"':
+            arg = arg[1:-1]
         if arg == '--help':
             return help_message()
         elif arg == '--formats':
             return formats_message()
         elif arg == '--no-crop':
-            CROP = False
+            params['crop'] = False
         elif arg == '--no-blur':
-            BLUR = False
+            params['blur'] = False
         elif arg == '--no-sharpen':
-            SHARPEN = False
+            params['sharpen'] = False
         elif arg == '--no-halation':
-            HALATION = False
+            params['halation'] = False
         elif arg == '--no-grain':
-            GRAIN = False
+            params['grain'] = False
         elif arg == '--no-organize':
-            global ORGANIZE
-            ORGANIZE = False
+            params['organize'] = False
         elif arg == '--canvas':
-            CANVAS = False
+            params['canvas'] = True
         elif '=' in arg:
             command, parameter = arg.split('=')
+            if parameter[0] == '"' and parameter[1] == '"':
+                parameter = parameter[1:-1]
             if command == '--format':
-                WIDTH, HEIGHT = FORMATS[parameter]
+                params['width'], params['height'] = FORMATS[parameter]
             if command == '--width':
-                WIDTH = float(parameter)
+                params['width'] = float(parameter)
             elif command == '--height':
-                HEIGHT = float(parameter)
+                params['height'] = float(parameter)
             elif command == '--ratio':
                 if '/' in parameter:
                     parameter = parameter.split('/')
                     parameter = float(parameter[0]) / float(parameter[1])
-                OUTPUT_RATIO = float(parameter)
+                params['output_ratio'] = float(parameter)
             elif command == '--scale':
-                OUTPUT_SCALE = float(parameter)
+                params['output_scale'] = float(parameter)
             elif command == '--color':
-                OUTPUT_COLOR = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
+                params['output_color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
             elif command == '--lut':
-                LUTS = parameter.split(',')
-    print(ORGANIZE)
+                params['luts'] = parameter.split(',')
+            elif command == '--artist':
+                params['artist'] = parameter
+            else:
+                print(f"Argument {arg} unknown. Use --help to get more info.")
+                return
+        else:
+            print(f"Argument {arg} unknown. Use --help to get more info.")
+            return
     files = [x for x in os.listdir() if x.endswith(EXTENSION_LIST)]
 
     with Pool() as p:
-        p.map(process_image, files)
+        p.map(partial(process_image, **params), files)
 
 
 def help_message():
@@ -316,6 +305,7 @@ Options:
           <w>/<h>   Set canvas aspect ratio to w/h.
   --scale=<s>       Multiply canvas size by s.
   --color=<hex>     Set canvas color to #hex.
+  --artist=<name>   Set artist name in metadata to name.
   --lut=<1,2,...>   Set output LUTs to those listed. Separate LUT names with ',' and leave no space.
                     LUT 1 is the primary LUT. Others are saved to subfolders.
     """)
