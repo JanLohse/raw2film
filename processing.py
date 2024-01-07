@@ -1,4 +1,5 @@
 import os
+import sys
 from multiprocessing import Pool
 
 import ffmpeg
@@ -246,9 +247,88 @@ def move_file(src, path):
     os.replace(src, path + src)
 
 
-# runs image processing on all raw files in parallel
-if __name__ == '__main__':
+def main(argv):
+    global CROP, BLUR, SHARPEN, HALATION, GRAIN, ORGANIZE, CANVAS, WIDTH, HEIGHT, OUTPUT_RATIO, OUTPUT_COLOR, \
+        OUTPUT_SCALE, LUTS
+    for arg in argv:
+        if arg == '--help':
+            return help_message()
+        elif arg == '--formats':
+            return formats_message()
+        elif arg == '--no-crop':
+            CROP = False
+        elif arg == '--no-blur':
+            BLUR = False
+        elif arg == '--no-sharpen':
+            SHARPEN = False
+        elif arg == '--no-halation':
+            HALATION = False
+        elif arg == '--no-grain':
+            GRAIN = False
+        elif arg == '--no-organize':
+            global ORGANIZE
+            ORGANIZE = False
+        elif arg == '--canvas':
+            CANVAS = False
+        elif '=' in arg:
+            command, parameter = arg.split('=')
+            if command == '--format':
+                WIDTH, HEIGHT = FORMATS[parameter]
+            if command == '--width':
+                WIDTH = float(parameter)
+            elif command == '--height':
+                HEIGHT = float(parameter)
+            elif command == '--ratio':
+                if '/' in parameter:
+                    parameter = parameter.split('/')
+                    parameter = float(parameter[0]) / float(parameter[1])
+                OUTPUT_RATIO = float(parameter)
+            elif command == '--scale':
+                OUTPUT_SCALE = float(parameter)
+            elif command == '--color':
+                OUTPUT_COLOR = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
+            elif command == '--lut':
+                LUTS = parameter.split(',')
+    print(ORGANIZE)
     files = [x for x in os.listdir() if x.endswith(EXTENSION_LIST)]
 
     with Pool() as p:
         p.map(process_image, files)
+
+
+def help_message():
+    """Outputs a guide to raw2film."""
+    print("""Develop and organize all raw files in the current directory by running processing.py.
+
+Options:
+  --help            Print help.
+  --formats         Print built-in film formats.
+  --no-crop         Preserve source aspect ratio.
+  --no-blur         Turn off gaussian blur filter.
+  --no-sharpen      Turn off sharpening filter.
+  --no-halation     Turn off halation.
+  --no-grain        Turn off grain.
+  --no-organize     Do not organize files.
+  --canvas          Add canvas to output images.
+  --width=<w>       Set simulated film width to w mm.
+  --height=<h>      Set simulated film height to h mm.
+  --ratio=<r>       Set canvas aspect ratio to r.
+          <w>/<h>   Set canvas aspect ratio to w/h.
+  --scale=<s>       Multiply canvas size by s.
+  --color=<hex>     Set canvas color to #hex.
+  --lut=<1,2,...>   Set output LUTs to those listed. Separate LUT names with ',' and leave no space.
+                    LUT 1 is the primary LUT. Others are saved to subfolders.
+    """)
+
+
+def formats_message():
+    """Outputs all built-in formats."""
+    key_length = max([len(key) for key in FORMATS])
+    print(f"key {' ' * (key_length - 3)} width mm x height mm")
+    for key in FORMATS:
+        print(f"{key} {' ' * (key_length - len(key))} {FORMATS[key][0]} mm x {FORMATS[key][1]} mm")
+
+
+# runs image processing on all raw files in parallel
+if __name__ == '__main__':
+    main(sys.argv[1:])
