@@ -62,8 +62,8 @@ OUTPUT_SCALE = 1.0
 OUTPUT_COLOR = [0, 0, 0]
 
 
-# manages image processing pipeline
 def process_image(src):
+    """Manages image processing pipeline."""
     rgb, metadata = raw_to_linear(src)
     film_emulation(src, rgb, metadata)
     file_list = [apply_lut(src, lut, first=(lut == LUTS[0])) for lut in LUTS]
@@ -76,8 +76,8 @@ def process_image(src):
     print(f"{src} processed successfully", flush=True)
 
 
-# takes raw file location and outputs linear rgb data and metadata
 def raw_to_linear(src):
+    """Takes raw file location and outputs linear rgb data and metadata."""
     # read metadata
     with open(src, 'rb') as img_file:
         metadata = Image(img_file)
@@ -93,8 +93,8 @@ def raw_to_linear(src):
     return rgb, metadata
 
 
-# adjusts exposure, aspect ratio and texture, outputs tiff file
 def film_emulation(src, rgb, metadata):
+    """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
     # crop to specified aspect ratio
     if CROP:
         rgb = crop(rgb, aspect=WIDTH / HEIGHT)
@@ -137,12 +137,12 @@ def film_emulation(src, rgb, metadata):
     # generate logarithmic tiff file
     rgb = log_encoding_ARRILogC3(rgb)
     rgb = np.clip(np.dot(rgb, REC2020_TO_ARRIWCG), a_min=0, a_max=1)
-    rgb = (rgb * (2 ** 16 - 1)).astype(dtype="uint16")
-    imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
+    rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
+    imageio.imsave(src.split(".")[0] + '_log.tiff', rgb)
 
 
-# crop image
 def crop(rgb, aspect=1.5):
+    """Crops rgb data to aspect ratio."""
     x, y, c = rgb.shape
     if x > y:
         if x > aspect * y:
@@ -155,8 +155,8 @@ def crop(rgb, aspect=1.5):
         return rgb[round(x / 2 - y / aspect / 2): round(x / 2 + y / aspect / 2), :, :]
 
 
-# calculate appropriate exposure adjustment
 def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
+    """Calculates exposure value of the rgb image."""
     lum_mat = np.dot(np.clip(np.dot(rgb, REC2020_TO_REC709), a_min=0, a_max=None), lum_vec)
     if 0 < crop < 1:
         ratio = lum_mat.shape[0] / lum_mat.shape[1]
@@ -171,8 +171,8 @@ def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
     return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2 ** -16))
 
 
-# applies gaussian blur to each channel individually
 def gaussian_blur(rgb, sigma=1):
+    """Applies gaussian blur per channel of rgb image."""
     r, g, b = np.dsplit(rgb, 3)
     r = ndimage.gaussian_filter(r, sigma=sigma)
     g = ndimage.gaussian_filter(g, sigma=sigma)
@@ -180,30 +180,30 @@ def gaussian_blur(rgb, sigma=1):
     return np.dstack((r, g, b))
 
 
-# loads tiff file and applies lut, generates jpg
 def apply_lut(src, lut, first=False):
+    """Loads tiff file and applies LUT, generates jpg."""
     extension = '.tiff'
     if not first:
-        extension = "_" + lut.split("_")[-1].split(".")[0] + extension
+        extension = '_' + lut.split('_')[-1].split('.')[0] + extension
     if os.path.exists(src.split('.')[0] + extension):
-        os.remove(src.split(".")[0] + ".tiff")
-    ffmpeg.input(src.split(".")[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split(".")[0] + extension,
-                                                                                   loglevel="quiet").run()
+        os.remove(src.split('.')[0] + '.tiff')
+    ffmpeg.input(src.split('.')[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split('.')[0] + extension,
+                                                                                   loglevel='quiet').run()
     return src.split('.')[0] + extension
 
 
-# converts to jpg and removes src tiff file
 def convert_jpg(src):
+    """Converts to jpg and removes src tiff file."""
     image = (imageio.imread(src) / 2 ** 8).astype(dtype='uint8')
     os.remove(src)
     if CANVAS:
         image = add_canvas(image)
-    imageio.imsave(src.split(".")[0] + '.jpg', image, quality=100)
-    return src.split(".")[0] + '.jpg'
+    imageio.imsave(src.split('.')[0] + '.jpg', image, quality=100)
+    return src.split('.')[0] + '.jpg'
 
 
-# add background to image
 def add_canvas(image):
+    """Adds background canvas to image."""
     img_ratio = image.shape[1] / image.shape[0]
     if img_ratio > OUTPUT_RATIO:
         output_resolution = (int(image.shape[1] / OUTPUT_RATIO * OUTPUT_SCALE), int(image.shape[1] * OUTPUT_SCALE))
@@ -215,8 +215,8 @@ def add_canvas(image):
     return canvas.astype(dtype='uint8')
 
 
-# adds metadata from original image
 def add_metadata(src, metadata):
+    """Adds metadata to image file."""
     with open(src, 'rb') as img_file:
         temp_metadata = Image(img_file)
     temp_metadata.artist = ARTIST
@@ -226,21 +226,21 @@ def add_metadata(src, metadata):
         image_file.write(temp_metadata.get_file())
 
 
-# moves files into corresponding folders
 def organize_files(src, file_list, metadata):
+    """Moves files into target folders."""
     # create path
     path = f"{metadata.datetime[:4]}/{metadata.datetime[:10].replace(':', '-')}/"
 
     # move files
-    move_file(src, path + "/RAW/")
+    move_file(src, path + '/RAW/')
     if file_list:
         move_file(file_list.pop(0), path)
     for file in file_list:
-        move_file(file, path + "/" + file.split("_")[-1].split(".")[0] + "/")
+        move_file(file, path + '/' + file.split('_')[-1].split('.')[0] + '/')
 
 
-# moves src file to path folder
 def move_file(src, path):
+    """Moves src file to path."""
     if not os.path.exists(path):
         os.makedirs(path)
     os.replace(src, path + src)
