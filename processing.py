@@ -267,7 +267,7 @@ def main(argv):
                 parameter = parameter[1:-1]
             if command == '--format':
                 params['width'], params['height'] = Raw2Film.FORMATS[parameter]
-            if command == '--width':
+            elif command == '--width':
                 params['width'] = float(parameter)
             elif command == '--height':
                 params['height'] = float(parameter)
