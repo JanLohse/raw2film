@@ -36,12 +36,12 @@ class Raw2Film:
                                   [-.0728, -.0084, 1.1187]])
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
-                 width=36, height=24, output_ratio=4 / 5, output_scale=1., output_color=None, artist='Jan Lohse',
-                 luts=None):
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse',
+                 luts=None, auto_wb=False, camera_wb=False):
         if luts is None:
             luts = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
-        if output_color is None:
-            output_color = [0, 0, 0]
+        if color is None:
+            color = [0, 0, 0]
         self.crop = crop
         self.blur = blur
         self.sharpen = sharpen
@@ -51,11 +51,13 @@ class Raw2Film:
         self.canvas = canvas
         self.width = width
         self.height = height
-        self.output_ratio = output_ratio
-        self.output_scale = output_scale
-        self.output_color = output_color
+        self.output_ratio = ratio
+        self.output_scale = scale
+        self.output_color = color
         self.artist = artist
         self.luts = luts
+        self.auto_wb = auto_wb
+        self.camera_wb = camera_wb
 
     def process_image(self, src):
         """Manages image processing pipeline."""
@@ -70,8 +72,7 @@ class Raw2Film:
             self.organize_files(src, file_list, metadata)
         print(f"{src} processed successfully", flush=True)
 
-    @staticmethod
-    def raw_to_linear(src):
+    def raw_to_linear(self, src):
         """Takes raw file location and outputs linear rgb data and metadata."""
         # read metadata
         with open(src, 'rb') as img_file:
@@ -79,8 +80,8 @@ class Raw2Film:
 
         # convert raw file to linear data
         with rawpy.imread(src) as raw:
-            rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1),
-                                  output_bps=16, no_auto_bright=True,
+            rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), output_bps=16, no_auto_bright=True,
+                                  use_camera_wb=self.camera_wb, use_auto_wb=self.auto_wb,
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
         rgb = rgb.astype(dtype='float32')
         rgb /= 2 ** 16 - 1
@@ -239,45 +240,38 @@ class Raw2Film:
 
 
 def main(argv):
+    bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb']
+    float_params = ['width', 'height', 'ratio', 'scale', 'color']
+
     params = {}
     for arg in argv:
         if arg[0] == '"' and arg[1] == '"':
             arg = arg[1:-1]
-        if arg == '--help':
+        if not arg.startswith('--'):
+            fail(arg)
+        command = arg[2:]
+        if command == 'help':
             return help_message()
-        elif arg == '--formats':
+        elif command == 'formats':
             return formats_message()
-        elif arg == '--no-crop':
-            params['crop'] = False
-        elif arg == '--no-blur':
-            params['blur'] = False
-        elif arg == '--no-sharpen':
-            params['sharpen'] = False
-        elif arg == '--no-halation':
-            params['halation'] = False
-        elif arg == '--no-grain':
-            params['grain'] = False
-        elif arg == '--no-organize':
-            params['organize'] = False
-        elif arg == '--canvas':
-            params['canvas'] = True
-        elif '=' in arg:
+        elif command in bool_params:
+            params[command] = True
+        elif command.startswith('no-'):
+            command = command[3:]
+            if command not in bool_params:
+                fail(arg)
+            params[command] = False
+        elif '=' in command:
             command, parameter = arg.split('=')
             if parameter[0] == '"' and parameter[1] == '"':
                 parameter = parameter[1:-1]
-            if command == '--format':
-                params['width'], params['height'] = Raw2Film.FORMATS[parameter]
-            elif command == '--width':
-                params['width'] = float(parameter)
-            elif command == '--height':
-                params['height'] = float(parameter)
-            elif command == '--ratio':
+            if command in float_params:
                 if '/' in parameter:
                     parameter = parameter.split('/')
                     parameter = float(parameter[0]) / float(parameter[1])
-                params['output_ratio'] = float(parameter)
-            elif command == '--scale':
-                params['output_scale'] = float(parameter)
+                else:
+                    parameter = float(parameter)
+                params[command] = parameter
             elif command == '--color':
                 params['output_color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
             elif command == '--lut':
@@ -285,17 +279,21 @@ def main(argv):
             elif command == '--artist':
                 params['artist'] = parameter
             else:
-                print(f"Argument {arg} unknown. Use --help to get more info.")
-                return
+                fail(arg)
         else:
-            print(f"Argument {arg} unknown. Use --help to get more info.")
-            return
+            fail(arg)
 
     raw2film = Raw2Film(**params)
     files = [x for x in os.listdir() if x.endswith(Raw2Film.EXTENSION_LIST)]
 
     with Pool() as p:
         p.map(raw2film.process_image, files)
+        return
+
+
+def fail(arg):
+    print(f"Argument {arg} unknown. Use --help to get more info.")
+    sys.exit()
 
 
 def help_message():
@@ -312,6 +310,8 @@ Options:
   --no-grain        Turn off grain.
   --no-organize     Do not organize files.
   --canvas          Add canvas to output images.
+  --auto_wb         Use automatic white balance adjustment from rawpy. Default is daylight balanced.
+  --camera_wb       Use as-shot white balance. --auto_wb has priority if both are used.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
@@ -321,7 +321,10 @@ Options:
   --artist=<name>   Set artist name in metadata to name.
   --lut=<1,2,...>   Set output LUTs to those listed. Separate LUT names with ',' and leave no space.
                     LUT 1 is the primary LUT. Others are saved to subfolders.
-    """)
+
+All boolean options can be used with no- or without, depending on which value is desired.
+Above we show the options used to change the default value.
+""")
 
 
 def formats_message():
