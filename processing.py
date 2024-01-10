@@ -2,11 +2,11 @@ import os
 import sys
 from multiprocessing import Pool
 
+import colour
 import ffmpeg
 import imageio.v2 as imageio
 import numpy as np
 import rawpy
-from colour.models import log_encoding_ARRILogC3
 from exif import Image
 from scipy import ndimage
 
@@ -36,8 +36,8 @@ class Raw2Film:
                                   [-.0728, -.0084, 1.1187]])
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
-                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse',
-                 luts=None, auto_wb=False, camera_wb=False):
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None,
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False):
         if luts is None:
             luts = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
         if color is None:
@@ -58,6 +58,8 @@ class Raw2Film:
         self.luts = luts
         self.auto_wb = auto_wb
         self.camera_wb = camera_wb
+        self.tungsten_wb = tungsten_wb
+        self.daylight_wb = daylight_wb
 
     def process_image(self, src):
         """Manages image processing pipeline."""
@@ -86,7 +88,28 @@ class Raw2Film:
         rgb = rgb.astype(dtype='float32')
         rgb /= 2 ** 16 - 1
 
+        image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
+        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and (
+                self.tungsten_wb or image_kelvin < 4000):
+            daylight_rgb = self.kelvin_to_BT2020(5600)
+            tungsten_rgb = self.kelvin_to_BT2020(4400)
+            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
+
         return rgb, metadata
+
+    @staticmethod
+    def BT2020_to_kelvin(rgb):
+        XYZ = colour.RGB_to_XYZ(rgb, 'ITU-R BT.2020')
+        xy = colour.XYZ_to_xy(XYZ)
+        CCT = colour.xy_to_CCT(xy, 'Hernandez 1999')
+        return CCT
+
+    @staticmethod
+    def kelvin_to_BT2020(kelvin):
+        xy = colour.CCT_to_xy(kelvin, 'Kang 2002')
+        XYZ = colour.xy_to_XYZ(xy)
+        rgb = colour.XYZ_to_RGB(XYZ, 'ITU-R BT.2020')
+        return rgb
 
     def film_emulation(self, src, rgb, metadata):
         """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
@@ -130,7 +153,7 @@ class Raw2Film:
             rgb = np.exp2(rgb) - 2 ** -16
 
         # generate logarithmic tiff file
-        rgb = log_encoding_ARRILogC3(rgb)
+        rgb = colour.models.log_encoding_ARRILogC3(rgb)
         rgb = np.clip(np.dot(rgb, self.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
         imageio.imsave(src.split(".")[0] + '_log.tiff', rgb)
@@ -240,7 +263,8 @@ class Raw2Film:
 
 
 def main(argv):
-    bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb']
+    bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
+                   'tungsten_wb', 'daylight_wb']
     float_params = ['width', 'height', 'ratio', 'scale', 'color']
 
     params = {}
@@ -312,6 +336,8 @@ Options:
   --canvas          Add canvas to output images.
   --auto_wb         Use automatic white balance adjustment from rawpy. Default is daylight balanced.
   --camera_wb       Use as-shot white balance. --auto_wb has priority if both are used.
+  --tungsten_wb     Forces the use of tungsten white balance. Normally it is chosen automatically.
+  --daylight_wb     Forces the use of daylight white balance. Normally it is chosen automatically.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
