@@ -36,7 +36,7 @@ class Raw2Film:
                                   [-.0728, -.0084, 1.1187]])
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
-                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None,
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False):
         if luts is None:
             luts = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
@@ -60,18 +60,25 @@ class Raw2Film:
         self.camera_wb = camera_wb
         self.tungsten_wb = tungsten_wb
         self.daylight_wb = daylight_wb
+        self.tiff = tiff
 
     def process_image(self, src):
         """Manages image processing pipeline."""
         rgb, metadata = self.raw_to_linear(src)
         self.film_emulation(src, rgb, metadata)
+
+        if self.tiff:
+            return
+
         file_list = [self.apply_lut(src, lut, first=(lut == self.luts[0])) for lut in self.luts]
         file_list = [self.convert_jpg(file) for file in file_list]
         os.remove(src.split('.')[0] + '_log.tiff')
+
         for file in file_list:
             self.add_metadata(file, metadata)
         if self.organize:
             self.organize_files(src, file_list, metadata)
+
         print(f"{src} processed successfully", flush=True)
 
     def raw_to_linear(self, src):
@@ -93,18 +100,18 @@ class Raw2Film:
             tungsten_rgb = self.kelvin_to_BT2020(4400)
             rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
 
-        lower, upper, max_amount = 2800, 7700, 1200
+        lower, upper, max_amount = 2400, 8000, 1200
         if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
             image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
-            elif lower < image_kelvin < upper:
-                slope = (upper - lower - 2 * max_amount) / (upper - lower)
-                target = slope * image_kelvin + max_amount + lower - lower * slope
+            elif lower < image_kelvin < lower + 2 * max_amount:
+                target = 0.5 * value + 0.5 * (lower + 2 * max_amount)
+            elif upper - max_amount < image_kelvin < upper:
+                target = 0.5 * value + 0.5 * (upper - max_amount)
             elif upper <= image_kelvin:
                 value, target = upper, upper - max_amount
-            print(src, image_kelvin, value, target, flush=True)
             rgb = np.dot(rgb, np.diag(self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)))
 
         return rgb, metadata
@@ -276,7 +283,7 @@ class Raw2Film:
 
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
-                   'tungsten_wb', 'daylight_wb']
+                   'tungsten_wb', 'daylight_wb', 'tiff']
     float_params = ['width', 'height', 'ratio', 'scale', 'color']
 
     params = {}
@@ -350,6 +357,7 @@ Options:
   --camera_wb       Use as-shot white balance. --auto_wb has priority if both are used.
   --tungsten_wb     Forces the use of tungsten white balance.
   --daylight_wb     Forces the use of daylight white balance.
+  --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
