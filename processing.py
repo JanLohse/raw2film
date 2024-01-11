@@ -88,12 +88,18 @@ class Raw2Film:
         rgb = rgb.astype(dtype='float32')
         rgb /= 2 ** 16 - 1
 
-        image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
-        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and (
-                self.tungsten_wb or image_kelvin < 4000):
+        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
             daylight_rgb = self.kelvin_to_BT2020(5600)
             tungsten_rgb = self.kelvin_to_BT2020(4400)
             rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
+        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
+            image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
+            if image_kelvin <= 4000:
+                rgb = np.dot(rgb,
+                             np.diag(self.kelvin_to_BT2020(4000) / self.kelvin_to_BT2020(max([image_kelvin, 2800]))))
+            elif image_kelvin >= 6500:
+                rgb = np.dot(rgb,
+                             np.diag(self.kelvin_to_BT2020(6500) / self.kelvin_to_BT2020(min([image_kelvin, 7700]))))
 
         return rgb, metadata
 
@@ -334,10 +340,10 @@ Options:
   --no-grain        Turn off grain.
   --no-organize     Do not organize files.
   --canvas          Add canvas to output images.
-  --auto_wb         Use automatic white balance adjustment from rawpy. Default is daylight balanced.
+  --auto_wb         Use automatic white balance adjustment from rawpy.
   --camera_wb       Use as-shot white balance. --auto_wb has priority if both are used.
-  --tungsten_wb     Forces the use of tungsten white balance. Normally it is chosen automatically.
-  --daylight_wb     Forces the use of daylight white balance. Normally it is chosen automatically.
+  --tungsten_wb     Forces the use of tungsten white balance.
+  --daylight_wb     Forces the use of daylight white balance.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
