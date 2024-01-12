@@ -305,7 +305,7 @@ def main(argv):
                 fail(arg)
             params[command] = False
         elif '=' in command:
-            command, parameter = arg.split('=')
+            command, parameter = command.split('=')
             if parameter[0] == '"' and parameter[1] == '"':
                 parameter = parameter[1:-1]
             if command in float_params:
@@ -315,11 +315,11 @@ def main(argv):
                 else:
                     parameter = float(parameter)
                 params[command] = parameter
-            elif command == '--color':
+            elif command == 'color':
                 params['output_color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
-            elif command == '--lut':
+            elif command == 'lut':
                 params['luts'] = parameter.split(',')
-            elif command == '--artist':
+            elif command == 'artist':
                 params['artist'] = parameter
             else:
                 fail(arg)
