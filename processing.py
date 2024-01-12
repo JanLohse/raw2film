@@ -39,7 +39,7 @@ class Raw2Film:
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False):
         if luts is None:
-            luts = ['FilmboxFull_Vibrant.cube', 'FilmboxFull_BW.cube']
+            luts = ['Filmbox_Vibrant.cube', 'Filmbox_BW.cube']
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
@@ -331,7 +331,6 @@ def main(argv):
 
     with Pool() as p:
         p.map(raw2film.process_image, files)
-        return
 
 
 def fail(arg):
