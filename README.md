@@ -8,7 +8,6 @@ Install required packages as follows:
 - [`imageio`](https://pypi.org/project/imageio/)
 - [`numpy`](https://pypi.org/project/numpy/)
 - [`rawpy`](https://pypi.org/project/rawpy/)
-- [`colour-science`](https://pypi.org/project/colour-science/)
 - [`exif`](https://pypi.org/project/exif/)
 - [`SciPy`](https://pypi.org/project/SciPy/)
 
@@ -20,7 +19,8 @@ Get a list of parameters with the argument `--helpt`.
 ## Features
 - Develop raw images into `.jpg` files and organize the output by date.
 - Apply basic film emulation including _halation_, _grain_, and _resolution_.
-- Automatic _exposure adjustment_. (Whitebalance is currently fixed to daylight.)
-- Specify multiple ARRI LogC3 LUTs for the output.
-- Emulate various _film formats_ and match resolution and aspect ratio.
-- Optionally add a _canvas_ with a fixed output aspect-ratio. 
+- Automatic _exposure adjustment_ based solely on scene brightness regardless of exposure.
+- White balance tries to adhere to daylight balance, but will adjust slightly.
+- Support for ARRI LogC3 LUTs, including output under multiple LUTs to generate alternative versions.
+- Emulate various _film formats_ by matching resolution and aspect ratio.
+- Optionally add a _canvas_ with a fixed output aspect-ratio, e.g. to get a uniform output for Instagram posts.
