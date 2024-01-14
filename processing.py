@@ -142,12 +142,16 @@ class Raw2Film:
         else:
             rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
         exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
-        adjustment = -.85 * exposure - 2.35
+        middle, max_under, max_over, slope, slope_offset = -3, -.75, .75, .9, .5
+        lower_bound = -exposure + middle + max_under
+        sloped = -slope * exposure + middle + slope_offset
+        upper_bound = -exposure + middle + max_over
+        adjustment = max(lower_bound, min(sloped, upper_bound))
         rgb *= 2 ** adjustment
 
+        # texture
         scale = max(rgb.shape) / (80 * self.width)
 
-        # texture
         if self.blur:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
 
