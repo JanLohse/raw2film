@@ -37,7 +37,7 @@ class Raw2Film:
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False):
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0):
         if luts is None:
             luts = ['Filmbox_Vibrant.cube', 'Filmbox_BW.cube']
         if color is None:
@@ -61,6 +61,7 @@ class Raw2Film:
         self.tungsten_wb = tungsten_wb
         self.daylight_wb = daylight_wb
         self.tiff = tiff
+        self.exp=exp
 
     def process_image(self, src):
         """Manages image processing pipeline."""
@@ -147,7 +148,7 @@ class Raw2Film:
         sloped = -slope * exposure + middle + slope_offset
         upper_bound = -exposure + middle + max_over
         adjustment = max(lower_bound, min(sloped, upper_bound))
-        rgb *= 2 ** adjustment
+        rgb *= 2 ** (adjustment + self.exp)
 
         # texture
         scale = max(rgb.shape) / (80 * self.width)
@@ -288,7 +289,7 @@ class Raw2Film:
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
                    'tungsten_wb', 'daylight_wb', 'tiff']
-    float_params = ['width', 'height', 'ratio', 'scale', 'color']
+    float_params = ['width', 'height', 'ratio', 'scale', 'color', 'exp']
 
     params = {}
     for arg in argv:
@@ -361,6 +362,7 @@ Options:
   --tungsten_wb     Forces the use of tungsten white balance.
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
+  --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
