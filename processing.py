@@ -37,7 +37,7 @@ class Raw2Film:
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0):
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1.):
         if luts is None:
             luts = ['Filmbox_Vibrant.cube', 'Filmbox_BW.cube']
         if color is None:
@@ -61,7 +61,8 @@ class Raw2Film:
         self.tungsten_wb = tungsten_wb
         self.daylight_wb = daylight_wb
         self.tiff = tiff
-        self.exp=exp
+        self.exp = exp
+        self.zoom = zoom
 
     def process_image(self, src):
         """Manages image processing pipeline."""
@@ -182,19 +183,27 @@ class Raw2Film:
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
         imageio.imsave(src.split(".")[0] + '_log.tiff', rgb)
 
-    @staticmethod
-    def crop_image(rgb, aspect=1.5):
+    def crop_image(self, rgb, aspect=1.5):
         """Crops rgb data to aspect ratio."""
         x, y, c = rgb.shape
         if x > y:
             if x > aspect * y:
-                return rgb[round(x / 2 - y * aspect / 2): round(x / 2 + y * aspect / 2), :, :]
+                rgb = rgb[round(x / 2 - y * aspect / 2): round(x / 2 + y * aspect / 2), :, :]
             else:
-                return rgb[:, round(y / 2 - x / aspect / 2): round(y / 2 + x / aspect / 2), :]
+                rgb = rgb[:, round(y / 2 - x / aspect / 2): round(y / 2 + x / aspect / 2), :]
         elif y > aspect * x:
-            return rgb[:, round(y / 2 - x * aspect / 2): round(y / 2 + x * aspect / 2), :]
+            rgb = rgb[:, round(y / 2 - x * aspect / 2): round(y / 2 + x * aspect / 2), :]
         else:
-            return rgb[round(x / 2 - y / aspect / 2): round(x / 2 + y / aspect / 2), :, :]
+            rgb = rgb[round(x / 2 - y / aspect / 2): round(x / 2 + y / aspect / 2), :, :]
+
+        if self.zoom > 1:
+            x, y, c = rgb.shape
+            zoom_factor = (self.zoom - 1) / (2 * self.zoom)
+            x = round(zoom_factor * x)
+            y = round(zoom_factor * y)
+            rgb = rgb[x: -x, y: -y, :]
+
+        return rgb
 
     @staticmethod
     def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
@@ -289,7 +298,7 @@ class Raw2Film:
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
                    'tungsten_wb', 'daylight_wb', 'tiff']
-    float_params = ['width', 'height', 'ratio', 'scale', 'color', 'exp']
+    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom']
 
     params = {}
     for arg in argv:
@@ -321,7 +330,7 @@ def main(argv):
                     parameter = float(parameter)
                 params[command] = parameter
             elif command == 'color':
-                params['output_color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
+                params['color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
             elif command == 'lut':
                 params['luts'] = parameter.split(',')
             elif command == 'artist':
@@ -363,6 +372,7 @@ Options:
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
+  --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
