@@ -3,23 +3,28 @@ import sys
 from multiprocessing import Pool
 
 import colour
+import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import numpy as np
 import rawpy
-from exif import Image
 from scipy import ndimage
 
 
 class Raw2Film:
-    METADATA_KEYS = (
-        'make', 'model', 'datetime', 'exposure_time', 'f_number', 'exposure_program', 'photographic_sensitivity',
-        'datetime_original', 'datetime_digitized', 'exposure_bias_value', 'max_aperture_value', 'metering_mode',
-        'light_source', 'flash', 'focal_length', 'subsec_time', 'subsec_time_original', 'subsec_time_digitized',
-        'color_space', 'pixel_x_dimension', 'pixel_y_dimension', 'sensing_method', 'custom_rendered', 'exposure_mode',
-        'white_balance', 'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control', 'orientation',
-        'software', 'copyright', 'shutter_speed_value', 'aperture_value', 'focal_plane_x_resolution',
-        'focal_plane_y_resolution', 'focal_plane_resolution_unit', 'sharpness', 'subject_distance_range')
+    METADATA_KEYS = [
+        'GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'ShutterSpeedValue', 'FocalLength', 'Make',
+        'Saturation', 'SubSecTimeOriginal', 'SubSecTimeDigitized', 'GPSImgDirectionRef', 'ExposureProgram',
+        'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource', 'ExposureMode',
+        'Compression', 'MaxApertureValue', 'OffsetTime', 'DigitalZoomRatio', 'Contrast', 'InteropIndex',
+        'ThumbnailLength', 'DateTimeOriginal', 'OffsetTimeOriginal', 'SensingMethod', 'SubjectDistance',
+        'CreateDate', 'ExposureCompensation', 'SensitivityType', 'ApertureValue', 'ExifImageWidth',
+        'FocalPlaneYResolution', 'GPSImgDirection', 'ComponentsConfiguration', 'Flash', 'Model', 'ColorSpace',
+        'LensModel', 'XResolution', 'GPSTimeStamp', 'ISO', 'CompositeImage', 'FocalPlaneXResolution', 'SubSecTime',
+        'GPSAltitude', 'OffsetTimeDigitized', 'ExposureTime', 'LensMake', 'WhiteBalance', 'BrightnessValue',
+        'GPSLatitude', 'YResolution', 'GPSLongitude', 'YCbCrPositioning', 'Copyright', 'SubjectDistanceRange',
+        'SceneType', 'GPSAltitudeRef', 'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef',
+        'SceneCaptureType', 'FNumber', 'LightValue', 'BrightnessValue']
     EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
     FORMATS = {'110': (17, 13),
                '135-half': (24, 18), '135': (36, 24),
@@ -37,7 +42,7 @@ class Raw2Film:
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1.):
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., nd=0):
         if luts is None:
             luts = ['Filmbox_Vibrant.cube', 'Filmbox_BW.cube']
         if color is None:
@@ -63,6 +68,7 @@ class Raw2Film:
         self.tiff = tiff
         self.exp = exp
         self.zoom = zoom
+        self.nd = nd
 
     def process_image(self, src):
         """Manages image processing pipeline."""
@@ -86,8 +92,9 @@ class Raw2Film:
     def raw_to_linear(self, src):
         """Takes raw file location and outputs linear rgb data and metadata."""
         # read metadata
-        with open(src, 'rb') as img_file:
-            metadata = Image(img_file)
+        with exiftool.ExifToolHelper() as et:
+            metadata = et.get_metadata(src)[0]
+        metadata['EXIF:Artist'] = self.artist
 
         # convert raw file to linear data
         with rawpy.imread(src) as raw:
@@ -139,10 +146,15 @@ class Raw2Film:
             rgb = self.crop_image(rgb, aspect=self.width / self.height)
 
         # adjust exposure
-        if metadata.f_number:
-            rgb *= metadata.f_number ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
+        if 'EXIF:FNumber' in metadata:
+            rgb *= metadata['EXIF:FNumber'] ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         else:
-            rgb *= 4 ** 2 / metadata.photographic_sensitivity / metadata.exposure_time
+            rgb *= 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
+        # adjust exposure if ND filter is used on Fuji X100 camera (sadly imprecise)
+        if ('x100' in metadata['EXIF:Model'].lower()
+                and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 2):
+            rgb *= 8
+            print(f"ND filter adjustment applied to", src, flush=True)
         exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .75, .9, .5
         lower_bound = -exposure + middle + max_under
@@ -267,18 +279,15 @@ class Raw2Film:
 
     def add_metadata(self, src, metadata):
         """Adds metadata to image file."""
-        with open(src, 'rb') as img_file:
-            temp_metadata = Image(img_file)
-        temp_metadata.artist = self.artist
-        for key in [key for key in self.METADATA_KEYS if key in metadata.list_all()]:
-            temp_metadata[key] = metadata[key]
-        with open(src, 'wb') as image_file:
-            image_file.write(temp_metadata.get_file())
+        metadata = {key: metadata[key] for key in metadata if key.startswith('EXIF') and key[5:] in self.METADATA_KEYS}
+        metadata['EXIF:Artist'] = self.artist
+        with exiftool.ExifToolHelper() as et:
+            et.set_tags([src], metadata, '-overwrite_original')
 
     def organize_files(self, src, file_list, metadata):
         """Moves files into target folders."""
         # create path
-        path = f"{metadata.datetime[:4]}/{metadata.datetime[:10].replace(':', '-')}/"
+        path = f"{metadata['EXIF:DateTimeOriginal'][:4]}/{metadata['EXIF:DateTimeOriginal'][:10].replace(':', '-')}/"
 
         # move files
         self.move_file(src, path + '/RAW/')
@@ -298,7 +307,7 @@ class Raw2Film:
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
                    'tungsten_wb', 'daylight_wb', 'tiff']
-    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom']
+    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
     params = {}
     for arg in argv:
@@ -341,7 +350,7 @@ def main(argv):
             fail(arg)
 
     raw2film = Raw2Film(**params)
-    files = [x for x in os.listdir() if x.lower().endswith(Raw2Film.EXTENSION_LIST)]
+    files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
     with Pool() as p:
         p.map(raw2film.process_image, files)
@@ -382,6 +391,9 @@ Options:
   --artist=<name>   Set artist name in metadata to name.
   --lut=<1,2,...>   Set output LUTs to those listed. Separate LUT names with ',' and leave no space.
                     LUT 1 is the primary LUT. Others are saved to subfolders.
+  --nd=<1>          0: Turn of ND adjustment.
+                    1: Apply 3 stop nd filter adjustment on X100 cameras if deemed necessary. 
+                    2: Force 3 stop nd adjustment. 
 
 All boolean options can be used with no- or without, depending on which value is desired.
 Above we show the options used to change the default value.
