@@ -10,6 +10,9 @@ Install required packages as follows:
 - [`rawpy`](https://pypi.org/project/rawpy/)
 - [`PyExifTool`](https://pypi.org/project/PyExifTool/)
 - [`SciPy`](https://pypi.org/project/SciPy/)
+- [`lensfunpy`](https://pypi.org/project/lensfunpy/)
+Optional (speeds up distortion correction):
+- [`opencv-python`](https://pypi.org/project/opencv-python/)
 
 ## Usage
 Put `processing.py` and the `.cube` files in the same folder as the raw images and the run `processing.py`.
