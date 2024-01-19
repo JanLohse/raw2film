@@ -155,14 +155,14 @@ class Raw2Film:
         try:
             cam = db.find_cameras(metadata['EXIF:Make'], metadata['EXIF:Model'], loose_search=True)[0]
             lens = db.find_lenses(cam, metadata['EXIF:LensMake'], metadata['EXIF:LensModel'], loose_search=True)[0]
-        except KeyError:
+        except (KeyError, IndexError):
             try:
                 camera = metadata['EXIF:Model']
                 cam = db.find_cameras(self.CAMERA_DB[camera]['cam_make'], self.CAMERA_DB[camera]['cam_model'],
                                       loose_search=True)[0]
                 lens = db.find_lenses(cam, self.CAMERA_DB[camera]['lens_make'], self.CAMERA_DB[camera]['lens_model'],
                                       loose_search=True)[0]
-            except KeyError:
+            except (KeyError, IndexError):
                 return rgb
         try:
             focal_length = metadata['EXIF:FocalLength']
