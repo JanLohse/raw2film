@@ -12,14 +12,14 @@ from scipy import ndimage
 
 
 class Raw2Film:
-    METADATA_KEYS = ('make', 'model', 'datetime', 'exposure_time', 'f_number', 'exposure_program',
-                     'photographic_sensitivity', 'datetime_original',
-                     'datetime_digitized', 'exposure_bias_value',
-                     'max_aperture_value', 'metering_mode', 'light_source', 'flash', 'focal_length',
-                     'subsec_time', 'subsec_time_original', 'subsec_time_digitized', 'color_space',
-                     'pixel_x_dimension', 'pixel_y_dimension', 'sensing_method', 'custom_rendered', 'exposure_mode',
-                     'white_balance',
-                     'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control')
+    METADATA_KEYS = (
+        'make', 'model', 'datetime', 'exposure_time', 'f_number', 'exposure_program', 'photographic_sensitivity',
+        'datetime_original', 'datetime_digitized', 'exposure_bias_value', 'max_aperture_value', 'metering_mode',
+        'light_source', 'flash', 'focal_length', 'subsec_time', 'subsec_time_original', 'subsec_time_digitized',
+        'color_space', 'pixel_x_dimension', 'pixel_y_dimension', 'sensing_method', 'custom_rendered', 'exposure_mode',
+        'white_balance', 'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control', 'orientation',
+        'software', 'copyright', 'shutter_speed_value', 'aperture_value', 'focal_plane_x_resolution',
+        'focal_plane_y_resolution', 'focal_plane_resolution_unit', 'sharpness', 'subject_distance_range')
     EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
     FORMATS = {'110': (17, 13),
                '135-half': (24, 18), '135': (36, 24),
