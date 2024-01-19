@@ -14,5 +14,6 @@
 *.RWL
 *.PEF 
 *.PTX
+__pycache__
 20*
 .idea
