@@ -6,6 +6,7 @@ import colour
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
+import lensfunpy
 import numpy as np
 import rawpy
 from scipy import ndimage
@@ -18,13 +19,14 @@ class Raw2Film:
         'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource', 'ExposureMode',
         'Compression', 'MaxApertureValue', 'OffsetTime', 'DigitalZoomRatio', 'Contrast', 'InteropIndex',
         'ThumbnailLength', 'DateTimeOriginal', 'OffsetTimeOriginal', 'SensingMethod', 'SubjectDistance',
-        'CreateDate', 'ExposureCompensation', 'SensitivityType', 'ApertureValue', 'ExifImageWidth',
+        'CreateDate', 'ExposureCompensation', 'SensitivityType', 'ApertureValue', 'ExifImageWidth', 'SensorLeftBorder',
         'FocalPlaneYResolution', 'GPSImgDirection', 'ComponentsConfiguration', 'Flash', 'Model', 'ColorSpace',
         'LensModel', 'XResolution', 'GPSTimeStamp', 'ISO', 'CompositeImage', 'FocalPlaneXResolution', 'SubSecTime',
         'GPSAltitude', 'OffsetTimeDigitized', 'ExposureTime', 'LensMake', 'WhiteBalance', 'BrightnessValue',
         'GPSLatitude', 'YResolution', 'GPSLongitude', 'YCbCrPositioning', 'Copyright', 'SubjectDistanceRange',
-        'SceneType', 'GPSAltitudeRef', 'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef',
-        'SceneCaptureType', 'FNumber', 'LightValue', 'BrightnessValue']
+        'SceneType', 'GPSAltitudeRef', 'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef', 'SensorTopBorder',
+        'SceneCaptureType', 'FNumber', 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight',
+        'SensorBottomBorder', 'SensorRightBorder']
     EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
     FORMATS = {'110': (17, 13),
                '135-half': (24, 18), '135': (36, 24),
@@ -39,10 +41,12 @@ class Raw2Film:
     REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
+    CAMERA_DB = {'X100S': {'cam_make': "Fujifilm", 'cam_model': "X100S", 'lens_make': "Fujifilm",
+                           'lens_model': "X100 & compatibles (Standard)"}}
 
-    def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False,
+    def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., nd=0):
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True):
         if luts is None:
             luts = ['Filmbox_Vibrant.cube', 'Filmbox_BW.cube']
         if color is None:
@@ -69,10 +73,15 @@ class Raw2Film:
         self.exp = exp
         self.zoom = zoom
         self.nd = nd
+        self.correct = correct
 
     def process_image(self, src):
         """Manages image processing pipeline."""
         rgb, metadata = self.raw_to_linear(src)
+
+        if self.correct:
+            rgb = self.lens_correction(rgb, metadata)
+
         self.film_emulation(src, rgb, metadata)
 
         if self.tiff:
@@ -137,6 +146,32 @@ class Raw2Film:
         xy = colour.CCT_to_xy(kelvin, 'Kang 2002')
         XYZ = colour.xy_to_XYZ(xy)
         rgb = colour.XYZ_to_RGB(XYZ, 'ITU-R BT.2020')
+        return rgb
+
+    def lens_correction(self, rgb, metadata):
+        """Apply lens correction using lensfunpy."""
+        db = lensfunpy.Database()
+        try:
+            cam = db.find_cameras(metadata['EXIF:Make'], metadata['EXIF:Model'], loose_search=True)[0]
+            lens = db.find_lenses(cam, metadata['EXIF:LensMake'], metadata['EXIF:LensModel'], loose_search=True)[0]
+        except KeyError:
+            try:
+                camera = metadata['EXIF:Model']
+                cam = db.find_cameras(self.CAMERA_DB[camera]['cam_make'], self.CAMERA_DB[camera]['cam_model'],
+                                      loose_search=True)[0]
+                lens = db.find_lenses(cam, self.CAMERA_DB[camera]['lens_make'], self.CAMERA_DB[camera]['lens_model'],
+                                      loose_search=True)[0]
+            except KeyError:
+                return rgb
+        try:
+            focal_length = metadata['EXIF:FocalLength']
+            aperture = metadata['EXIF:ApertureValue']
+        except KeyError:
+            return rgb
+        height, width = rgb.shape[0], rgb.shape[1]
+        mod = lensfunpy.Modifier(lens, cam.crop_factor, width, height)
+        mod.initialize(focal_length, aperture, pixel_format=np.float64)
+        mod.apply_color_modification(rgb)
         return rgb
 
     def film_emulation(self, src, rgb, metadata):
@@ -306,7 +341,7 @@ class Raw2Film:
 
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
-                   'tungsten_wb', 'daylight_wb', 'tiff']
+                   'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
     params = {}
@@ -380,6 +415,7 @@ Options:
   --tungsten_wb     Forces the use of tungsten white balance.
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
+  --no-correct      Turn of lens correction
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
   --width=<w>       Set simulated film width to w mm.
