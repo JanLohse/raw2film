@@ -7,6 +7,7 @@ import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
+from lensfunpy import util as lensfunpy_util
 import numpy as np
 import rawpy
 from scipy import ndimage
@@ -171,6 +172,8 @@ class Raw2Film:
         height, width = rgb.shape[0], rgb.shape[1]
         mod = lensfunpy.Modifier(lens, cam.crop_factor, width, height)
         mod.initialize(focal_length, aperture, pixel_format=np.float64)
+        undist_coords = mod.apply_geometry_distortion()
+        rgb = lensfunpy_util.remap(rgb, undist_coords)
         mod.apply_color_modification(rgb)
         return rgb
 
