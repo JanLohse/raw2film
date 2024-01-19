@@ -8,7 +8,7 @@ Install required packages as follows:
 - [`imageio`](https://pypi.org/project/imageio/)
 - [`numpy`](https://pypi.org/project/numpy/)
 - [`rawpy`](https://pypi.org/project/rawpy/)
-- [`exif`](https://pypi.org/project/exif/)
+- [`PyExifTool`](https://pypi.org/project/PyExifTool/)
 - [`SciPy`](https://pypi.org/project/SciPy/)
 
 ## Usage
