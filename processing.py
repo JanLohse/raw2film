@@ -20,7 +20,7 @@ class Raw2Film:
         'white_balance', 'focal_length_in_35mm_film', 'scene_capture_type', 'gain_control', 'orientation',
         'software', 'copyright', 'shutter_speed_value', 'aperture_value', 'focal_plane_x_resolution',
         'focal_plane_y_resolution', 'focal_plane_resolution_unit', 'sharpness', 'subject_distance_range')
-    EXTENSION_LIST = ('.RW2', '.DNG', '.CRW', '.CR2', '.CR3', '.NEF', '.ORF', '.ORI', '.RAF', '.RWL', '.PEF', '.PTX')
+    EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
     FORMATS = {'110': (17, 13),
                '135-half': (24, 18), '135': (36, 24),
                'xpan': (65, 24),
@@ -341,7 +341,7 @@ def main(argv):
             fail(arg)
 
     raw2film = Raw2Film(**params)
-    files = [x for x in os.listdir() if x.endswith(Raw2Film.EXTENSION_LIST)]
+    files = [x for x in os.listdir() if x.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
     with Pool() as p:
         p.map(raw2film.process_image, files)
