@@ -42,8 +42,11 @@ class Raw2Film:
     REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
-    CAMERA_DB = {'X100S': {'cam_make': "Fujifilm", 'cam_model': "X100S", 'lens_make': "Fujifilm",
-                           'lens_model': "X100 & compatibles (Standard)"}}
+    CAMERA_DB = {"X100S": ["Fujifilm", "X100S"],
+                 "DMC-GX80": ["Panasonic", "DMC-GX80"]}
+    LENS_DB = {"X100S": ["Fujifilm", "X100 & compatibles (Standard)"],
+               "LUMIX G 25/F1.7": ["Panasonic", "Lumix G 25mm f/1.7 Asph."],
+               "LUMIX G VARIO 12-32/F3.5-5.6": ["Panasonic", "Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS"]}
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
@@ -108,6 +111,7 @@ class Raw2Film:
 
         # convert raw file to linear data
         with rawpy.imread(src) as raw:
+            # noinspection PyUnresolvedReferences
             rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), output_bps=16, no_auto_bright=True,
                                   use_camera_wb=self.camera_wb, use_auto_wb=self.auto_wb,
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
@@ -149,6 +153,7 @@ class Raw2Film:
         rgb = colour.XYZ_to_RGB(XYZ, 'ITU-R BT.2020')
         return rgb
 
+    # noinspection PyUnresolvedReferences
     def lens_correction(self, rgb, metadata):
         """Apply lens correction using lensfunpy."""
         db = lensfunpy.Database()
@@ -156,26 +161,36 @@ class Raw2Film:
             cam = db.find_cameras(metadata['EXIF:Make'], metadata['EXIF:Model'], loose_search=True)[0]
             lens = db.find_lenses(cam, metadata['EXIF:LensMake'], metadata['EXIF:LensModel'], loose_search=True)[0]
         except (KeyError, IndexError):
-            try:
-                camera = metadata['EXIF:Model']
-                cam = db.find_cameras(self.CAMERA_DB[camera]['cam_make'], self.CAMERA_DB[camera]['cam_model'],
-                                      loose_search=True)[0]
-                lens = db.find_lenses(cam, self.CAMERA_DB[camera]['lens_make'], self.CAMERA_DB[camera]['lens_model'],
-                                      loose_search=True)[0]
-            except (KeyError, IndexError):
+            cam, lens = self.find_data(metadata)
+            if lens and cam:
+                cam = db.find_cameras(*cam, loose_search=True)[0]
+                lens = db.find_lenses(cam, *lens, loose_search=True)[0]
+            else:
                 return rgb
         try:
             focal_length = metadata['EXIF:FocalLength']
-            aperture = metadata['EXIF:ApertureValue']
+            aperture = metadata['EXIF:FNumber']
         except KeyError:
             return rgb
         height, width = rgb.shape[0], rgb.shape[1]
         mod = lensfunpy.Modifier(lens, cam.crop_factor, width, height)
         mod.initialize(focal_length, aperture, pixel_format=np.float64)
-        undist_coords = mod.apply_geometry_distortion()
-        rgb = lensfunpy_util.remap(rgb, undist_coords)
+        undistorted_cords = mod.apply_geometry_distortion()
+        rgb = lensfunpy_util.remap(rgb, undistorted_cords)
         mod.apply_color_modification(rgb)
         return rgb
+
+    def find_data(self, metadata):
+        """Search for camera and lens name in metadata"""
+        values = list(metadata.values())
+        cam, lens = None, None
+        for key in self.CAMERA_DB:
+            if key in values:
+                cam = self.CAMERA_DB[key]
+        for key in self.LENS_DB:
+            if key in values:
+                lens = self.LENS_DB[key]
+        return cam, lens
 
     def film_emulation(self, src, rgb, metadata):
         """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
