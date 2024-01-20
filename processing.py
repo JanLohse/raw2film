@@ -363,7 +363,7 @@ def main(argv):
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
-    processes = None
+    cores = None
     params = {}
     for arg in argv:
         if arg[0] == '"' and arg[1] == '"':
@@ -375,8 +375,8 @@ def main(argv):
             return help_message()
         elif command == 'formats':
             return formats_message()
-        elif command.startswith('proces='):
-            processes = int(command.split('=')[2])
+        elif command.startswith('cores='):
+            processes = int(command.split('=')[1])
         elif command in bool_params:
             params[command] = True
         elif command == 'list_cameras':
@@ -413,7 +413,7 @@ def main(argv):
     raw2film = Raw2Film(**params)
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
-    with Pool(processes) as p:
+    with Pool(cores) as p:
         p.map(raw2film.process_image, files)
 
 
@@ -456,7 +456,7 @@ Options:
   --nd=<1>          0: Turn of ND adjustment.
                     1: Apply 3 stop nd filter adjustment on X100 cameras if deemed necessary. 
                     2: Force 3 stop nd adjustment. 
-  --proces=<c>      How many cpu cores c to use. Default is all available.
+  --cores=<c>       How many (virtual) cpu cores c to use. Default is all available.
 
 All boolean options can be used with no- or without, depending on which value is desired.
 Above we show the options used to change the default value.
