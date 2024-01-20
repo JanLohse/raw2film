@@ -376,7 +376,7 @@ def main(argv):
         elif command == 'formats':
             return formats_message()
         elif command.startswith('cores='):
-            processes = int(command.split('=')[1])
+            cores = int(command.split('=')[1])
         elif command in bool_params:
             params[command] = True
         elif command == 'list_cameras':
