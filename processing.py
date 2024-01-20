@@ -7,9 +7,9 @@ import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
-from lensfunpy import util as lensfunpy_util
 import numpy as np
 import rawpy
+from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
 
 
@@ -189,10 +189,9 @@ class Raw2Film:
         else:
             rgb *= 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         # adjust exposure if ND filter is used on Fuji X100 camera (sadly imprecise)
-        if ('x100' in metadata['EXIF:Model'].lower()
-                and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 2):
+        if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
+                and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.33):
             rgb *= 8
-            print(f"ND filter adjustment applied to", src, flush=True)
         exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .75, .9, .5
         lower_bound = -exposure + middle + max_under
