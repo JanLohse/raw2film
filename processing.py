@@ -43,10 +43,12 @@ class Raw2Film:
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
     CAMERA_DB = {"X100S": ["Fujifilm", "X100S"],
-                 "DMC-GX80": ["Panasonic", "DMC-GX80"]}
+                 "DMC-GX80": ["Panasonic", "DMC-GX80"],
+                 "DC-FZ10002": ["Panasonic", "DC-FZ10002"]}
     LENS_DB = {"X100S": ["Fujifilm", "X100 & compatibles (Standard)"],
                "LUMIX G 25/F1.7": ["Panasonic", "Lumix G 25mm f/1.7 Asph."],
-               "LUMIX G VARIO 12-32/F3.5-5.6": ["Panasonic", "Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS"]}
+               "LUMIX G VARIO 12-32/F3.5-5.6": ["Panasonic", "Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS"],
+               "DC-FZ10002": ["Leica", "FZ1000 & compatibles"]}
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
@@ -176,7 +178,7 @@ class Raw2Film:
         mod = lensfunpy.Modifier(lens, cam.crop_factor, width, height)
         mod.initialize(focal_length, aperture, pixel_format=np.float64)
         undistorted_cords = mod.apply_geometry_distortion()
-        rgb = lensfunpy_util.remap(rgb, undistorted_cords)
+        rgb = np.clip(lensfunpy_util.remap(rgb, undistorted_cords), a_min=0, a_max=None)
         mod.apply_color_modification(rgb)
         return rgb
 
@@ -361,6 +363,7 @@ def main(argv):
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
+    processes = None
     params = {}
     for arg in argv:
         if arg[0] == '"' and arg[1] == '"':
@@ -372,8 +375,14 @@ def main(argv):
             return help_message()
         elif command == 'formats':
             return formats_message()
+        elif command.startswith('proces='):
+            processes = int(command.split('=')[2])
         elif command in bool_params:
             params[command] = True
+        elif command == 'list_cameras':
+            return list_cameras()
+        elif command == 'list_lenses':
+            return list_lenses()
         elif command.startswith('no-'):
             command = command[3:]
             if command not in bool_params:
@@ -404,7 +413,7 @@ def main(argv):
     raw2film = Raw2Film(**params)
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
-    with Pool() as p:
+    with Pool(processes) as p:
         p.map(raw2film.process_image, files)
 
 
@@ -447,6 +456,7 @@ Options:
   --nd=<1>          0: Turn of ND adjustment.
                     1: Apply 3 stop nd filter adjustment on X100 cameras if deemed necessary. 
                     2: Force 3 stop nd adjustment. 
+  --proces=<c>      How many cpu cores c to use. Default is all available.
 
 All boolean options can be used with no- or without, depending on which value is desired.
 Above we show the options used to change the default value.
@@ -459,6 +469,25 @@ def formats_message():
     print(f"key {' ' * (key_length - 3)} width mm x height mm")
     for key in Raw2Film.FORMATS:
         print(f"{key} {' ' * (key_length - len(key))} {Raw2Film.FORMATS[key][0]} mm x {Raw2Film.FORMATS[key][1]} mm")
+
+
+def list_cameras():
+    """Output cameras from lensfunpy"""
+    # noinspection PyUnresolvedReferences
+    db = lensfunpy.Database()
+    for camera in db.cameras:
+        print(camera.maker, camera.model)
+    return
+
+
+def list_lenses():
+    """Output lenses from lensfunpy."""
+    # noinspection PyUnresolvedReferences
+    db = lensfunpy.Database()
+    for lens in db.lenses:
+        print(lens.maker, lens.model)
+    return
+
 
 
 # runs image processing on all raw files in parallel
