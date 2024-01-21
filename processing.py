@@ -27,7 +27,7 @@ class Raw2Film:
         'GPSLatitude', 'YResolution', 'GPSLongitude', 'YCbCrPositioning', 'Copyright', 'SubjectDistanceRange',
         'SceneType', 'GPSAltitudeRef', 'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef', 'SensorTopBorder',
         'SceneCaptureType', 'FNumber', 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight',
-        'SensorBottomBorder', 'SensorRightBorder']
+        'SensorBottomBorder', 'SensorRightBorder', 'ProcessingSoftware']
     EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
     FORMATS = {'110': (17, 13),
                '135-half': (24, 18), '135': (36, 24),
@@ -42,19 +42,19 @@ class Raw2Film:
     REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
-    CAMERA_DB = {"X100S": ["Fujifilm", "X100S"],
-                 "DMC-GX80": ["Panasonic", "DMC-GX80"],
-                 "DC-FZ10002": ["Panasonic", "DC-FZ10002"]}
-    LENS_DB = {"X100S": ["Fujifilm", "X100 & compatibles (Standard)"],
-               "LUMIX G 25/F1.7": ["Panasonic", "Lumix G 25mm f/1.7 Asph."],
-               "LUMIX G VARIO 12-32/F3.5-5.6": ["Panasonic", "Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS"],
-               "DC-FZ10002": ["Leica", "FZ1000 & compatibles"]}
+    CAMERA_DB = {"X100S": "Fujifilm : X100S",
+                 "DMC-GX80": "Panasonic : DMC-GX80",
+                 "DC-FZ10002": "Panasonic : DC-FZ10002"}
+    LENS_DB = {"X100S": "Fujifilm : X100 & compatibles (Standard)",
+               "LUMIX G 25/F1.7": "Panasonic : Lumix G 25mm f/1.7 Asph.",
+               "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
+               "DC-FZ10002": "Leica : FZ1000 & compatibles"}
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
-                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist='Jan Lohse', luts=None, tiff=False,
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True):
         if luts is None:
-            luts = ['Filmbox_Standard.cube', 'Filmbox_BW.cube']
+            luts = ["Filmbox_Standard.cube", "Filmbox_BW.cube"]
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
@@ -95,7 +95,7 @@ class Raw2Film:
 
         file_list = [self.apply_lut(src, lut, first=(lut == self.luts[0])) for lut in self.luts]
         file_list = [self.convert_jpg(file) for file in file_list]
-        os.remove(src.split('.')[0] + '_log.tiff')
+        os.remove(src.split('.')[0] + "_log.tiff")
 
         for file in file_list:
             self.add_metadata(file, metadata)
@@ -110,6 +110,7 @@ class Raw2Film:
         with exiftool.ExifToolHelper() as et:
             metadata = et.get_metadata(src)[0]
         metadata['EXIF:Artist'] = self.artist
+        metadata['EXIF:ProcessingSoftware'] = "raw2film"
 
         # convert raw file to linear data
         with rawpy.imread(src) as raw:
@@ -143,16 +144,16 @@ class Raw2Film:
 
     @staticmethod
     def BT2020_to_kelvin(rgb):
-        XYZ = colour.RGB_to_XYZ(rgb, 'ITU-R BT.2020')
+        XYZ = colour.RGB_to_XYZ(rgb, "ITU-R BT.2020")
         xy = colour.XYZ_to_xy(XYZ)
-        CCT = colour.xy_to_CCT(xy, 'Hernandez 1999')
+        CCT = colour.xy_to_CCT(xy, "Hernandez 1999")
         return CCT
 
     @staticmethod
     def kelvin_to_BT2020(kelvin):
-        xy = colour.CCT_to_xy(kelvin, 'Kang 2002')
+        xy = colour.CCT_to_xy(kelvin, "Kang 2002")
         XYZ = colour.xy_to_XYZ(xy)
-        rgb = colour.XYZ_to_RGB(XYZ, 'ITU-R BT.2020')
+        rgb = colour.XYZ_to_RGB(XYZ, "ITU-R BT.2020")
         return rgb
 
     # noinspection PyUnresolvedReferences
@@ -188,10 +189,10 @@ class Raw2Film:
         cam, lens = None, None
         for key in self.CAMERA_DB:
             if key in values:
-                cam = self.CAMERA_DB[key]
+                cam = self.CAMERA_DB[key].split(':')
         for key in self.LENS_DB:
             if key in values:
-                lens = self.LENS_DB[key]
+                lens = self.LENS_DB[key].split(':')
         return cam, lens
 
     def film_emulation(self, src, rgb, metadata):
@@ -247,7 +248,7 @@ class Raw2Film:
         rgb = colour.models.log_encoding_ARRILogC3(rgb)
         rgb = np.clip(np.dot(rgb, self.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
-        imageio.imsave(src.split(".")[0] + '_log.tiff', rgb)
+        imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
 
     def crop_image(self, rgb, aspect=1.5):
         """Crops rgb data to aspect ratio."""
@@ -303,9 +304,9 @@ class Raw2Film:
         if not first:
             extension = '_' + lut.split('_')[-1].split('.')[0] + extension
         if os.path.exists(src.split('.')[0] + extension):
-            os.remove(src.split('.')[0] + '.tiff')
-        ffmpeg.input(src.split('.')[0] + '_log.tiff').filter('lut3d', file=lut).output(src.split('.')[0] + extension,
-                                                                                       loglevel='quiet').run()
+            os.remove(src.split('.')[0] + ".tiff")
+        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut).output(src.split('.')[0] + extension,
+                                                                                       loglevel="quiet").run()
         return src.split('.')[0] + extension
 
     def convert_jpg(self, src):
@@ -314,8 +315,8 @@ class Raw2Film:
         os.remove(src)
         if self.canvas:
             image = self.add_canvas(image)
-        imageio.imsave(src.split('.')[0] + '.jpg', image, quality=100)
-        return src.split('.')[0] + '.jpg'
+        imageio.imsave(src.split('.')[0] + ".jpg", image, quality=100)
+        return src.split('.')[0] + ".jpg"
 
     def add_canvas(self, image):
         """Adds background canvas to image."""
@@ -333,7 +334,7 @@ class Raw2Film:
 
     def add_metadata(self, src, metadata):
         """Adds metadata to image file."""
-        metadata = {key: metadata[key] for key in metadata if key.startswith('EXIF') and key[5:] in self.METADATA_KEYS}
+        metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in self.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
@@ -429,6 +430,8 @@ def help_message():
 Options:
   --help            Print help.
   --formats         Print built-in film formats.
+  --list_cameras    Print all cameras from lensfunpy.
+  --list_lenses     Print all lenses from lensfunpy.
   --no-crop         Preserve source aspect ratio.
   --no-blur         Turn off gaussian blur filter.
   --no-sharpen      Turn off sharpening filter.
@@ -441,7 +444,7 @@ Options:
   --tungsten_wb     Forces the use of tungsten white balance.
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
-  --no-correct      Turn of lens correction
+  --no-correct      Turn off lens correction.
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
   --width=<w>       Set simulated film width to w mm.
@@ -476,7 +479,7 @@ def list_cameras():
     # noinspection PyUnresolvedReferences
     db = lensfunpy.Database()
     for camera in db.cameras:
-        print(camera.maker, camera.model)
+        print(camera.maker, ":", camera.model)
     return
 
 
@@ -485,9 +488,8 @@ def list_lenses():
     # noinspection PyUnresolvedReferences
     db = lensfunpy.Database()
     for lens in db.lenses:
-        print(lens.maker, lens.model)
+        print(lens.maker, ":", lens.model)
     return
-
 
 
 # runs image processing on all raw files in parallel
