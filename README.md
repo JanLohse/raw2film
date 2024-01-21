@@ -11,13 +11,20 @@ Install required packages as follows:
 - [`PyExifTool`](https://pypi.org/project/PyExifTool/)
 - [`SciPy`](https://pypi.org/project/SciPy/)
 - [`lensfunpy`](https://pypi.org/project/lensfunpy/)
+
 Optional (speeds up distortion correction):
 - [`opencv-python`](https://pypi.org/project/opencv-python/)
 
 ## Usage
-Put `processing.py` and the `.cube` files in the same folder as the raw images and the run `processing.py`.
+Put `processing.py` and the `.cube` files in the same folder as the raw images and run `processing.py`.
 
-Get a list of parameters with the argument `--helpt`.
+Get a list of parameters with the argument `--help`.
+
+### Lens correction
+For cameras which can easily be matched from their metadata it is applied automatically.
+Otherwise they can be added to `CAMERA_DB` and `LENS_DB` manually to ensure they are found by `lensfunpy`.
+For this find an identifying tag in the metadata of the file for each (e.g. using [ExifTool](https://exiftool.org/)) and find their tag for `lensfunpy` by running the options `--list_cameras` and `--list_lenses`.
+Then add the identifier and `lensfunpy` tag to the databases in `processing.py`.
 
 ## Features
 - Develop raw images into `.jpg` files and organize the output by date.
@@ -27,3 +34,4 @@ Get a list of parameters with the argument `--helpt`.
 - Support for ARRI LogC3 LUTs, including output under multiple LUTs to generate alternative versions.
 - Emulate various _film formats_ by matching resolution and aspect ratio.
 - Optionally add a _canvas_ with a fixed output aspect-ratio, e.g. to get a uniform output for Instagram posts.
+- Lens correction using `lensfunpy`.
