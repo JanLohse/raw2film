@@ -54,7 +54,7 @@ class Raw2Film:
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True):
         if luts is None:
-            luts = ["Fuji_Natural.cube", "Kodak_BW.cube"]
+            luts = ["Fuji_Vibrant.cube", "BW.cube"]
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
@@ -93,7 +93,7 @@ class Raw2Film:
         if self.tiff:
             return
 
-        file_list = [self.apply_lut(src, lut, first=(lut == self.luts[0])) for lut in self.luts]
+        file_list = [self.apply_lut(src, self.luts, i) for i in range(len(self.luts))]
         file_list = [self.convert_jpg(file) for file in file_list]
         os.remove(src.split('.')[0] + "_log.tiff")
 
@@ -298,15 +298,18 @@ class Raw2Film:
         return np.dstack((r, g, b))
 
     @staticmethod
-    def apply_lut(src, lut, first=False):
+    def apply_lut(src, luts, index):
         """Loads tiff file and applies LUT, generates jpg."""
         extension = '.tiff'
-        if not first:
-            extension = '_' + lut.split('_')[-1].split('.')[0] + extension
+        if index:
+            if luts[0].split('_')[0] == luts[index].split('_')[0]:
+                extension = '_' + luts[index].split('_')[-1].split('.')[0] + extension
+            else:
+                extension = '_' + luts[index].split('_')[0].split('.')[0] + extension
         if os.path.exists(src.split('.')[0] + extension):
             os.remove(src.split('.')[0] + ".tiff")
-        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut).output(src.split('.')[0] + extension,
-                                                                                       loglevel="quiet").run()
+        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=luts[index]).output(
+            src.split('.')[0] + extension, loglevel="quiet").run()
         return src.split('.')[0] + extension
 
     def convert_jpg(self, src):
