@@ -54,7 +54,7 @@ class Raw2Film:
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True):
         if luts is None:
-            luts = ["Kodak_Standard.cube", "Fuji_Standard.cube", "BW.cube"]
+            luts = ["Kodak_Standard.cube", "Eterna_Standard.cube", "BW.cube"]
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
