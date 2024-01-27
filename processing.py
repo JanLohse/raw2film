@@ -1,6 +1,7 @@
 import os
 import sys
-from multiprocessing import Pool
+from time import sleep
+from multiprocessing import Pool, current_process
 
 import colour
 import exiftool
@@ -52,7 +53,8 @@ class Raw2Film:
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True):
+                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
+                 sleep_time=0):
         if luts is None:
             luts = ["Kodak_Standard.cube", "Eterna_Standard.cube", "BW.cube"]
         if color is None:
@@ -80,9 +82,16 @@ class Raw2Film:
         self.zoom = zoom
         self.nd = nd
         self.correct = correct
+        self.first = True
+        self.sleep_time = sleep_time
 
     def process_image(self, src):
         """Manages image processing pipeline."""
+        if self.first:
+            self.first = False
+            process_id = current_process()._identity[0]
+            sleep(self.sleep_time * (process_id - 1))
+
         rgb, metadata = self.raw_to_linear(src)
 
         if self.correct:
@@ -381,6 +390,7 @@ def main(argv):
             return formats_message()
         elif command.startswith('cores='):
             cores = int(command.split('=')[1])
+            params['sleep_time'] = 60 / cores
         elif command in bool_params:
             params[command] = True
         elif command == 'list_cameras':
