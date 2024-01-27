@@ -35,5 +35,9 @@ Then add the identifier and `lensfunpy` tag to the databases in `processing.py`.
 - Emulate various _film formats_ by matching resolution and aspect ratio.
 - Optionally add a _canvas_ with a fixed output aspect-ratio, e.g. to get a uniform output for Instagram posts.
 - Lens correction using `lensfunpy`.
-- Film emulation LUTs based on [Filmbox](https://videovillage.com/filmbox/) Kodak Vision3 250D emulation.
-  Variants with varying saturation and black level (natural, standard, vibrant), Kodak 2383 and Fuji 3513 print emulation (Kodak, Fuji), and black and white (BW) included. 
+- Film emulation LUTs based on [Filmbox](https://videovillage.com/filmbox/):
+  - Natural/Standard/Vibrant: Variants with different saturation and black levels.
+  - Kodak: Kodak Vision3 250D with Kodak 2383 print film.
+  - Fuji: Kodak Vision3 250D with Fuji 3513 print film.
+  - Eterna: Fuji Eterna 250T with Fuji 3513 print film.
+  - BW: Kodak Double-X black and white film.
