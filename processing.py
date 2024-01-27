@@ -1,7 +1,7 @@
 import os
 import sys
 import time
-from multiprocessing import Pool, current_process
+from multiprocessing import Pool
 
 import colour
 import exiftool
@@ -54,7 +54,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
-                 sleep_time=0):
+                 cores=None, sleep_time=0):
         if luts is None:
             luts = ["Kodak_Standard.cube", "Eterna_Standard.cube", "BW.cube"]
         if color is None:
@@ -82,15 +82,21 @@ class Raw2Film:
         self.zoom = zoom
         self.nd = nd
         self.correct = correct
-        self.first = True
         self.sleep_time = sleep_time
+        self.cores = cores
 
-    def process_image(self, src):
+    def process_runner(self, starter: tuple[int, str]):
+        run_count, src = starter
+        try:
+            if run_count < self.cores:
+                time.sleep(self.sleep_time * run_count)
+            self.process_image(src)
+        except KeyboardInterrupt:
+            return False
+        return True
+
+    def process_image(self, src: str):
         """Manages image processing pipeline."""
-        if self.first and self.sleep_time:
-            self.first = False
-            process_id = current_process()._identity[0]
-            time.sleep(self.sleep_time * (process_id - 1))
 
         rgb, metadata = self.raw_to_linear(src)
 
@@ -327,8 +333,8 @@ class Raw2Film:
         os.remove(src)
         if self.canvas:
             image = self.add_canvas(image)
-        imageio.imsave(src.split('.')[0] + ".jpg", image, quality=100)
-        return src.split('.')[0] + ".jpg"
+        imageio.imsave(src.split('.')[0] + '.jpg', image, quality=100)
+        return src.split('.')[0] + '.jpg'
 
     def add_canvas(self, image):
         """Adds background canvas to image."""
@@ -376,8 +382,7 @@ def main(argv):
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
-    cores = os.cpu_count()
-    params = {}
+    params = {'cores': os.cpu_count()}
     for arg in argv:
         if arg[0] == '"' and arg[1] == '"':
             arg = arg[1:-1]
@@ -388,8 +393,8 @@ def main(argv):
             return help_message()
         elif command == 'formats':
             return formats_message()
-        elif command.startswith('cores='):
-            cores = min(int(command.split('=')[1]), cores)
+        elif command.startswith('cores'):
+            params['cores'] = min(int(command.split('=')[1]), params['cores'])
         elif command in bool_params:
             params[command] = True
         elif command == 'list_cameras':
@@ -427,12 +432,24 @@ def main(argv):
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
     start = time.time()
-    raw2film.process_image(files.pop(0))
+    if not raw2film.process_runner((0, files.pop(0))):
+        sys.exit()
     end = time.time()
-    raw2film.sleep_time = (end - start) / cores
+    raw2film.sleep_time = (end - start) / params['cores']
 
-    with Pool(cores) as p:
-        p.map(raw2film.process_image, files)
+    with Pool(params['cores']) as p:
+        try:
+            for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
+                if not result:
+                    raise KeyboardInterrupt
+        except KeyboardInterrupt:
+            p.terminate()
+            p.join()
+            print("terminating...")
+            files = [file.split('.')[0] for file in files]
+            for file in os.listdir():
+                if file.split('.')[0].split('_')[0] in files and file.endswith(('.tiff', '.jpg')):
+                    os.remove(file)
 
 
 def fail(arg):
