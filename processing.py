@@ -1,6 +1,6 @@
 import os
 import sys
-from time import sleep
+import time
 from multiprocessing import Pool, current_process
 
 import colour
@@ -87,10 +87,11 @@ class Raw2Film:
 
     def process_image(self, src):
         """Manages image processing pipeline."""
-        if self.first:
+        if self.first and self.sleep_time:
             self.first = False
             process_id = current_process()._identity[0]
-            sleep(self.sleep_time * (process_id - 1))
+            time.sleep(self.sleep_time * (process_id - 1))
+            print("developing", src, process_id, flush=True)
 
         rgb, metadata = self.raw_to_linear(src)
 
@@ -376,7 +377,7 @@ def main(argv):
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
-    cores = None
+    cores = os.cpu_count()
     params = {}
     for arg in argv:
         if arg[0] == '"' and arg[1] == '"':
@@ -389,8 +390,7 @@ def main(argv):
         elif command == 'formats':
             return formats_message()
         elif command.startswith('cores='):
-            cores = int(command.split('=')[1])
-            params['sleep_time'] = 60 / cores
+            cores = min(int(command.split('=')[1]), cores)
         elif command in bool_params:
             params[command] = True
         elif command == 'list_cameras':
@@ -426,6 +426,11 @@ def main(argv):
 
     raw2film = Raw2Film(**params)
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
+
+    start = time.time()
+    raw2film.process_image(files.pop(0))
+    end = time.time()
+    raw2film.sleep_time = (end - start) / cores
 
     with Pool(cores) as p:
         p.map(raw2film.process_image, files)
