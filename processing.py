@@ -93,7 +93,7 @@ class Raw2Film:
             self.process_image(src)
         except KeyboardInterrupt:
             return False
-        return True
+        return src
 
     def process_image(self, src: str):
         """Manages image processing pipeline."""
@@ -116,8 +116,6 @@ class Raw2Film:
             self.add_metadata(file, metadata)
         if self.organize:
             self.organize_files(src, file_list, metadata)
-
-        print(f"{src} processed successfully", flush=True)
 
     def raw_to_linear(self, src):
         """Takes raw file location and outputs linear rgb data and metadata."""
@@ -432,7 +430,11 @@ def main(argv):
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
 
     start = time.time()
-    if not raw2film.process_runner((0, files.pop(0))):
+    counter = 1
+    result = raw2film.process_runner((0, files.pop(0)))
+    if result:
+        print(f"{result} processed successfully {counter}/{len(files) + 1}")
+    else:
         cleaner(files, raw2film)
         sys.exit()
     end = time.time()
@@ -441,6 +443,9 @@ def main(argv):
     with Pool(params['cores']) as p:
         try:
             for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
+                if result:
+                    counter += 1
+                    print(f"{result} processed successfully {counter}/{len(files) + 1}")
                 if not result:
                     raise KeyboardInterrupt
         except KeyboardInterrupt:
