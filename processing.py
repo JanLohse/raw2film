@@ -91,7 +91,6 @@ class Raw2Film:
             self.first = False
             process_id = current_process()._identity[0]
             time.sleep(self.sleep_time * (process_id - 1))
-            print("developing", src, process_id, flush=True)
 
         rgb, metadata = self.raw_to_linear(src)
 
