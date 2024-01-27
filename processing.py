@@ -88,7 +88,7 @@ class Raw2Film:
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
         try:
-            if run_count < self.cores:
+            if 0 < run_count < self.cores:
                 time.sleep(self.sleep_time * run_count)
             self.process_image(src)
         except KeyboardInterrupt:
@@ -433,6 +433,7 @@ def main(argv):
 
     start = time.time()
     if not raw2film.process_runner((0, files.pop(0))):
+        cleaner(files, raw2film)
         sys.exit()
     end = time.time()
     raw2film.sleep_time = (end - start) / params['cores']
@@ -446,10 +447,20 @@ def main(argv):
             p.terminate()
             p.join()
             print("terminating...")
-            files = [file.split('.')[0] for file in files]
-            for file in os.listdir():
-                if file.split('.')[0].split('_')[0] in files and file.endswith(('.tiff', '.jpg')):
-                    os.remove(file)
+            cleaner(files, raw2film)
+            
+
+def cleaner(files, raw2film):
+    files = [file.split('.')[0] for file in files]
+    if raw2film.tiff:
+        endings = ()
+    elif not raw2film.organize:
+        endings = ('.tiff')
+    else:
+        endings = ('tiff', '.jpg')
+    for file in os.listdir():
+        if file.split('.')[0].split('_')[0] in files and file.endswith(endings):
+            os.remove(file)
 
 
 def fail(arg):
