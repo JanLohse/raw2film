@@ -421,6 +421,8 @@ def main(argv):
                 params['luts'] = parameter.split(',')
             elif command == 'artist':
                 params['artist'] = parameter
+            elif command == 'format':
+                params['width'], params['height'] = Raw2Film.FORMATS[parameter]
             else:
                 fail(arg)
         else:
@@ -497,6 +499,7 @@ Options:
   --no-correct      Turn off lens correction.
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
+  --format=<f>      Set simulated film area to that specified by format <f>.
   --width=<w>       Set simulated film width to w mm.
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
