@@ -472,15 +472,8 @@ def main(argv):
 
 
 def cleaner(files, raw2film):
-    files = [file.split('.')[0] for file in files]
-    if raw2film.tiff:
-        endings = ()
-    elif not raw2film.organize:
-        endings = ('.tiff')
-    else:
-        endings = ('tiff', '.jpg')
     for file in os.listdir():
-        if file.split('.')[0].split('_')[0] in files and file.endswith(endings):
+        if (raw2film.organize and file.endswith('.jpg')) or (not raw2film.tiff and file.endswith('.tiff')):
             os.remove(file)
 
 
