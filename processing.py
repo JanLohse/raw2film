@@ -315,7 +315,7 @@ class Raw2Film:
         """Loads tiff file and applies LUT, generates jpg."""
         file_name = src.split('.')[0]
         if self.rename:
-            date_str = metadata['EXIF:DateTimeOriginal'].translate({ord(i): None for i in ' :'})
+            date_str = metadata['EXIF:DateTimeOriginal'].translate({ord(i): None for i in ' :'}) + src.split(".")[0][-3:]
             if len(self.luts) == 1:
                 file_name = f"IMG_{date_str}"
             else:
@@ -451,7 +451,7 @@ def main(argv):
     if result:
         print(f"{result} processed successfully {counter}/{len(files) + 1}")
     else:
-        cleaner(files, raw2film)
+        cleaner(raw2film)
         sys.exit()
     end = time.time()
     raw2film.sleep_time = (end - start) / params['cores']
@@ -468,10 +468,11 @@ def main(argv):
             p.terminate()
             p.join()
             print("terminating...")
-            cleaner(files, raw2film)
+            cleaner(raw2film)
 
 
-def cleaner(files, raw2film):
+def cleaner(raw2film):
+    time.sleep(1)
     for file in os.listdir():
         if (raw2film.organize and file.endswith('.jpg')) or (not raw2film.tiff and file.endswith('.tiff')):
             os.remove(file)
