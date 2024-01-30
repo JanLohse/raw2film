@@ -54,7 +54,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
-                 cores=None, sleep_time=0):
+                 cores=None, sleep_time=0, rename=True):
         if luts is None:
             luts = ["Kodak_Standard.cube", "Eterna_Standard.cube", "BW.cube"]
         if color is None:
@@ -84,6 +84,7 @@ class Raw2Film:
         self.correct = correct
         self.sleep_time = sleep_time
         self.cores = cores
+        self.rename = rename
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -108,7 +109,7 @@ class Raw2Film:
         if self.tiff:
             return
 
-        file_list = [self.apply_lut(src, self.luts, i) for i in range(len(self.luts))]
+        file_list = [self.apply_lut(src, i, metadata) for i in range(len(self.luts))]
         file_list = [self.convert_jpg(file) for file in file_list]
         os.remove(src.split('.')[0] + "_log.tiff")
 
@@ -310,20 +311,28 @@ class Raw2Film:
         b = ndimage.gaussian_filter(b, sigma=sigma)
         return np.dstack((r, g, b))
 
-    @staticmethod
-    def apply_lut(src, luts, index):
+    def apply_lut(self, src, index, metadata):
         """Loads tiff file and applies LUT, generates jpg."""
-        extension = '.tiff'
-        if index:
-            if luts[0].split('_')[0] == luts[index].split('_')[0]:
-                extension = '_' + luts[index].split('_')[-1].split('.')[0] + extension
+        file_name = src.split('.')[0]
+        if self.rename:
+            date_str = metadata['EXIF:DateTimeOriginal'].translate({ord(i): None for i in ' :'})
+            if len(self.luts) == 1:
+                file_name = f"IMG_{date_str}"
             else:
-                extension = '_' + luts[index].split('_')[0].split('.')[0] + extension
-        if os.path.exists(src.split('.')[0] + extension):
-            os.remove(src.split('.')[0] + ".tiff")
-        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=luts[index]).output(
-            src.split('.')[0] + extension, loglevel="quiet").run()
-        return src.split('.')[0] + extension
+                file_name = f"IMG_{index + 1}_BURST{date_str}"
+                if index == 0:
+                    file_name += "_COVER"
+        else:
+            if index:
+                if self.luts[0].split('_')[0] == self.luts[index].split('_')[0]:
+                    file_name += '_' + self.luts[index].split('_')[-1].split('.')[0]
+                else:
+                    file_name += '_' + self.luts[index].split('_')[0].split('.')[0]
+        if os.path.exists(file_name + '.tiff'):
+            os.remove(file_name + ".tiff")
+        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=self.luts[index]).output(
+            file_name + '.tiff', loglevel="quiet").run()
+        return file_name + '.tiff'
 
     def convert_jpg(self, src):
         """Converts to jpg and removes src tiff file."""
@@ -362,10 +371,15 @@ class Raw2Film:
 
         # move files
         self.move_file(src, path + '/RAW/')
-        if file_list:
-            self.move_file(file_list.pop(0), path)
-        for file in file_list:
-            self.move_file(file, path + '/' + file.split('_')[-1].split('.')[0] + '/')
+        for index, file in enumerate(file_list):
+            path_extension = ""
+            if index:
+                if self.luts[0].split('_')[0] == self.luts[index].split('_')[0]:
+                    path_extension = self.luts[index].split('_')[-1].split('.')[0] + '/'
+                else:
+                    path_extension += self.luts[index].split('_')[0].split('.')[0] + '/'
+            self.move_file(file, path + path_extension)
+
 
     @staticmethod
     def move_file(src, path):
@@ -377,7 +391,7 @@ class Raw2Film:
 
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
-                   'tungsten_wb', 'daylight_wb', 'tiff', 'correct']
+                   'tungsten_wb', 'daylight_wb', 'tiff', 'correct', 'rename']
     float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
 
     params = {'cores': os.cpu_count()}
@@ -455,7 +469,7 @@ def main(argv):
             p.join()
             print("terminating...")
             cleaner(files, raw2film)
-            
+
 
 def cleaner(files, raw2film):
     files = [file.split('.')[0] for file in files]
@@ -497,6 +511,8 @@ Options:
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
   --no-correct      Turn off lens correction.
+  --no-rename       Keep original file names with LUT name extension to prevent duplicate names.
+                    Default will rename to match Google Photos burst naming convention.
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
   --format=<f>      Set simulated film area to that specified by format <f>.
