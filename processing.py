@@ -467,11 +467,11 @@ def main(argv):
         except KeyboardInterrupt:
             p.terminate()
             p.join()
-            print("terminating...")
             cleaner(raw2film)
 
 
 def cleaner(raw2film):
+    print("terminating...")
     time.sleep(1)
     for file in os.listdir():
         if (raw2film.organize and file.endswith('.jpg')) or (not raw2film.tiff and file.endswith('.tiff')):
