@@ -216,7 +216,7 @@ class Raw2Film:
             rgb = self.crop_image(rgb, aspect=self.width / self.height)
 
         # adjust exposure
-        if 'EXIF:FNumber' in metadata:
+        if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber']:
             rgb *= metadata['EXIF:FNumber'] ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         else:
             rgb *= 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
