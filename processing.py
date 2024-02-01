@@ -222,7 +222,7 @@ class Raw2Film:
             rgb *= 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         # adjust exposure if ND filter is used on Fuji X100 camera (sadly imprecise)
         if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
-                and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.33):
+                and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
         exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
         middle, max_under, max_over, slope, slope_offset = -3, -.75, 1., .9, .5
