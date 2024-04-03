@@ -132,7 +132,7 @@ class Raw2Film:
             rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), output_bps=16, no_auto_bright=True,
                                   use_camera_wb=self.camera_wb, use_auto_wb=self.auto_wb,
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
-        rgb = rgb.astype(dtype='float32')
+        rgb = rgb.astype(dtype='float64')
         rgb /= 2 ** 16 - 1
 
         if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
@@ -140,7 +140,7 @@ class Raw2Film:
             tungsten_rgb = self.kelvin_to_BT2020(4400)
             rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
 
-        lower, upper, max_amount = 2400, 8000, 1200
+        lower, upper, max_amount = 2200, 7800, 1000
         if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
             image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
             value, target = image_kelvin, image_kelvin
