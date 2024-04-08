@@ -54,9 +54,9 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
-                 cores=None, sleep_time=0, rename=True):
+                 cores=None, sleep_time=0, rename=False):
         if luts is None:
-            luts = ["Kodak_Standard.cube", "Eterna_Standard.cube", "BW.cube"]
+            luts = ["fuji_standard.cube", "bw.cube"]
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
@@ -505,8 +505,7 @@ Options:
   --daylight_wb     Forces the use of daylight white balance.
   --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
   --no-correct      Turn off lens correction.
-  --no-rename       Keep original file names with LUT name extension to prevent duplicate names.
-                    Default will rename to match Google Photos burst naming convention.
+  --rename          Rename to match Google Photos photo stack naming scheme.
   --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
   --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
   --format=<f>      Set simulated film area to that specified by format <f>.
