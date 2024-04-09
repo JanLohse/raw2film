@@ -140,7 +140,7 @@ class Raw2Film:
             tungsten_rgb = self.kelvin_to_BT2020(4400)
             rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
 
-        lower, upper, max_amount = 2200, 7800, 1000
+        lower, upper, max_amount = 2400, 8000, 1200
         if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
             image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
             value, target = image_kelvin, image_kelvin
