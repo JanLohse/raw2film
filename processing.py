@@ -225,7 +225,7 @@ class Raw2Film:
                 and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
         exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
-        middle, max_under, max_over, slope, slope_offset = -3, -.75, 1., .9, .5
+        middle, max_under, max_over, slope, slope_offset = -3, -.75, .66, .9, .5
         lower_bound = -exposure + middle + max_under
         sloped = -slope * exposure + middle + slope_offset
         upper_bound = -exposure + middle + max_over
