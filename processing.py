@@ -56,7 +56,7 @@ class Raw2Film:
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
                  cores=None, sleep_time=0, rename=False):
         if luts is None:
-            luts = ["Vivid_Standard.cube", "BW.cube"]
+            luts = ["Fuji_Standard.cube", "BW.cube"]
         if color is None:
             color = [0, 0, 0]
         self.crop = crop
