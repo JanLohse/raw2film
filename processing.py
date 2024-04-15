@@ -1,17 +1,23 @@
 import os
 import sys
 import time
-from multiprocessing import Pool
+from multiprocessing import Pool, Semaphore
 
 import colour
+import cupy
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
+import cupy as cp
 import numpy as np
 import rawpy
 from lensfunpy import util as lensfunpy_util
+from cupyx.scipy import ndimage as cdimage
 from scipy import ndimage
+
+cupy.cuda.set_allocator(None)
+cupy.cuda.set_pinned_memory_allocator(None)
 
 
 class Raw2Film:
@@ -91,21 +97,25 @@ class Raw2Film:
         try:
             if 0 < run_count < self.cores:
                 time.sleep(self.sleep_time * run_count)
-            self.process_image(src)
+            self.process_image(src, run_count)
         except KeyboardInterrupt:
             return False
         return src
 
-    def process_image(self, src: str):
+    def process_image(self, src: str, run_count):
         """Manages image processing pipeline."""
 
         rgb, metadata = self.raw_to_linear(src)
-
         if self.correct:
-            rgb = self.lens_correction(rgb, metadata)
+            rgb = np.asarray(self.lens_correction(rgb, metadata))
 
-        self.film_emulation(src, rgb, metadata)
+        if not run_count:
+            rgb = self.film_emulation(src, rgb, metadata)
+        else:
+            with semaphore:
+                rgb = self.film_emulation(src, rgb, metadata)
 
+        self.save_tiff(src, rgb, metadata)
         if self.tiff:
             return
 
@@ -135,30 +145,11 @@ class Raw2Film:
         rgb = rgb.astype(dtype='float64')
         rgb /= 2 ** 16 - 1
 
-        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
-            daylight_rgb = self.kelvin_to_BT2020(5600)
-            tungsten_rgb = self.kelvin_to_BT2020(4400)
-            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
-
-        lower, upper, max_amount = 2400, 8000, 1200
-        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
-            image_kelvin = self.BT2020_to_kelvin([np.mean(x) for x in np.dsplit(rgb, 3)])
-            value, target = image_kelvin, image_kelvin
-            if image_kelvin <= lower:
-                value, target = lower, lower + max_amount
-            elif lower < image_kelvin < lower + 2 * max_amount:
-                target = 0.5 * value + 0.5 * (lower + 2 * max_amount)
-            elif upper - max_amount < image_kelvin < upper:
-                target = 0.5 * value + 0.5 * (upper - max_amount)
-            elif upper <= image_kelvin:
-                value, target = upper, upper - max_amount
-            rgb = np.dot(rgb, np.diag(self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)))
-
         return rgb, metadata
 
     @staticmethod
     def BT2020_to_kelvin(rgb):
-        XYZ = colour.RGB_to_XYZ(rgb, "ITU-R BT.2020")
+        XYZ = colour.RGB_to_XYZ(rgb.get(), "ITU-R BT.2020")
         xy = colour.XYZ_to_xy(XYZ)
         CCT = colour.xy_to_CCT(xy, "Hernandez 1999")
         return CCT
@@ -168,7 +159,7 @@ class Raw2Film:
         xy = colour.CCT_to_xy(kelvin, "Kang 2002")
         XYZ = colour.xy_to_XYZ(xy)
         rgb = colour.XYZ_to_RGB(XYZ, "ITU-R BT.2020")
-        return rgb
+        return cp.asarray(rgb)
 
     # noinspection PyUnresolvedReferences
     def lens_correction(self, rgb, metadata):
@@ -210,6 +201,26 @@ class Raw2Film:
         return cam, lens
 
     def film_emulation(self, src, rgb, metadata):
+        rgb = cp.asarray(rgb)
+        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
+            daylight_rgb = self.kelvin_to_BT2020(5600)
+            tungsten_rgb = self.kelvin_to_BT2020(4400)
+            rgb = cp.dot(rgb, cp.diag(daylight_rgb / tungsten_rgb))
+
+        lower, upper, max_amount = 2400, 8000, 1200
+        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
+            image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
+            value, target = image_kelvin, image_kelvin
+            if image_kelvin <= lower:
+                value, target = lower, lower + max_amount
+            elif lower < image_kelvin < lower + 2 * max_amount:
+                target = 0.5 * value + 0.5 * (lower + 2 * max_amount)
+            elif upper - max_amount < image_kelvin < upper:
+                target = 0.5 * value + 0.5 * (upper - max_amount)
+            elif upper <= image_kelvin:
+                value, target = upper, upper - max_amount
+            rgb = cp.dot(rgb, cp.diag(self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)))
+
         """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
         # crop to specified aspect ratio
         if self.crop:
@@ -224,7 +235,7 @@ class Raw2Film:
         if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
                 and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
-        exposure = self.calc_exposure(ndimage.gaussian_filter(rgb, sigma=3))
+        exposure = self.calc_exposure(cdimage.gaussian_filter(rgb, sigma=3))
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .66, .9, .5
         lower_bound = -exposure + middle + max_under
         sloped = -slope * exposure + middle + slope_offset
@@ -239,30 +250,29 @@ class Raw2Film:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
 
         if self.sharpen:
-            rgb = np.log2(rgb + 2 ** -16)
-            rgb = rgb + np.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-            rgb = np.exp2(rgb) - 2 ** -16
+            rgb = cp.log2(rgb + 2 ** -16)
+            rgb = rgb + cp.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
+            rgb = cp.exp2(rgb) - 2 ** -16
 
         if self.halation:
             threshold = .2
-            r, g, b = np.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
-            r = ndimage.gaussian_filter(r, sigma=2.2 * scale)
-            g = .8 * ndimage.gaussian_filter(g, sigma=2 * scale)
-            b = ndimage.gaussian_filter(b, sigma=0.3 * scale)
-            rgb += np.clip(np.dstack((r, g, b)) - np.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
+            r, g, b = cp.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
+            r = cdimage.gaussian_filter(r, sigma=2.2 * scale)
+            g = .8 * cdimage.gaussian_filter(g, sigma=2 * scale)
+            b = cdimage.gaussian_filter(b, sigma=0.3 * scale)
+            rgb += cp.clip(np.dstack((r, g, b)) - cp.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
 
         if self.grain:
-            rgb = np.log2(rgb + 2 ** -16)
-            noise = np.random.rand(*rgb.shape) - .5
-            noise = ndimage.gaussian_filter(noise, sigma=.5 * scale)
+            rgb = cp.log2(rgb + 2 ** -16)
+            noise = cp.random.rand(*rgb.shape) - .5
+            noise = cdimage.gaussian_filter(noise, sigma=.5 * scale)
             rgb += noise * (scale / 2)
-            rgb = np.exp2(rgb) - 2 ** -16
+            rgb = cp.exp2(rgb) - 2 ** -16
 
-        # generate logarithmic tiff file
-        rgb = colour.models.log_encoding_ARRILogC3(rgb)
-        rgb = np.clip(np.dot(rgb, self.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
-        rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
-        imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
+        rgb = rgb.get()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+        cp.get_default_memory_pool().free_all_blocks()
+        return rgb
 
     def crop_image(self, rgb, aspect=1.5):
         """Crops rgb data to aspect ratio."""
@@ -287,9 +297,9 @@ class Raw2Film:
         return rgb
 
     @staticmethod
-    def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
+    def calc_exposure(rgb, lum_vec=cp.array([.2127, .7152, .0722]), crop=.8):
         """Calculates exposure value of the rgb image."""
-        lum_mat = np.dot(np.clip(np.dot(rgb, Raw2Film.REC2020_TO_REC709), a_min=0, a_max=None), lum_vec)
+        lum_mat = cp.dot(np.clip(cp.dot(rgb, cp.asarray(Raw2Film.REC2020_TO_REC709)), a_min=0, a_max=None), lum_vec)
         if 0 < crop < 1:
             ratio = lum_mat.shape[0] / lum_mat.shape[1]
             if ratio > 1:
@@ -300,16 +310,22 @@ class Raw2Film:
                 ratio = 1 / ratio
                 height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * crop) / 2)
             lum_mat = lum_mat[width: -width, height: -height]
-        return np.average(np.log2(lum_mat + np.ones_like(lum_mat) * 2 ** -16))
+        return cp.average(cp.log2(lum_mat + cp.ones_like(lum_mat) * 2 ** -16))
 
     @staticmethod
     def gaussian_blur(rgb, sigma=1):
         """Applies gaussian blur per channel of rgb image."""
-        r, g, b = np.dsplit(rgb, 3)
-        r = ndimage.gaussian_filter(r, sigma=sigma)
-        g = ndimage.gaussian_filter(g, sigma=sigma)
-        b = ndimage.gaussian_filter(b, sigma=sigma)
-        return np.dstack((r, g, b))
+        r, g, b = cp.dsplit(rgb, 3)
+        r = cdimage.gaussian_filter(r, sigma=sigma)
+        g = cdimage.gaussian_filter(g, sigma=sigma)
+        b = cdimage.gaussian_filter(b, sigma=sigma)
+        return cp.dstack((r, g, b))
+
+    def save_tiff(self, src, rgb, metadata):
+        rgb = colour.models.log_encoding_ARRILogC3(rgb)
+        rgb = np.clip(np.dot(rgb, self.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
+        rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
+        imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
 
     def apply_lut(self, src, index, metadata):
         """Loads tiff file and applies LUT, generates jpg."""
@@ -389,6 +405,11 @@ class Raw2Film:
         os.replace(src, path + src)
 
 
+def init_child(semaphore_):
+    global semaphore
+    semaphore = semaphore_
+
+
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct', 'rename']
@@ -456,7 +477,8 @@ def main(argv):
     end = time.time()
     raw2film.sleep_time = (end - start) / params['cores']
 
-    with Pool(params['cores']) as p:
+    semaphore = Semaphore(1)
+    with Pool(params['cores'], initializer=init_child, initargs=(semaphore,)) as p:
         try:
             for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
                 if result:
@@ -552,7 +574,6 @@ def list_lenses():
     for lens in db.lenses:
         print(lens.maker, ":", lens.model)
     return
-
 
 # runs image processing on all raw files in parallel
 if __name__ == '__main__':
