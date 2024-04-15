@@ -4,7 +4,6 @@ import time
 from multiprocessing import Pool
 
 import colour
-import cupy
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
