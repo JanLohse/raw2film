@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import math
 from multiprocessing import Pool, Semaphore
 
 import colour
@@ -60,7 +61,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
-                 cores=None, sleep_time=0, rename=False):
+                 cores=None, sleep_time=0, rename=False, rotation=0):
         if luts is None:
             luts = ["Fuji_Standard.cube", "BW.cube"]
         if color is None:
@@ -91,6 +92,7 @@ class Raw2Film:
         self.sleep_time = sleep_time
         self.cores = cores
         self.rename = rename
+        self.rotation = rotation
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -202,6 +204,10 @@ class Raw2Film:
 
     def film_emulation(self, src, rgb, metadata):
         rgb = cp.asarray(rgb)
+
+        if self.rotation:
+            rgb = self.rotate(rgb)
+
         if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
             daylight_rgb = self.kelvin_to_BT2020(5600)
             tungsten_rgb = self.kelvin_to_BT2020(4400)
@@ -272,6 +278,32 @@ class Raw2Film:
         rgb = rgb.get()
         cp.get_default_pinned_memory_pool().free_all_blocks()
         cp.get_default_memory_pool().free_all_blocks()
+        return rgb
+
+    def rotate(self, rgb):
+        degrees = self.rotation % 360
+
+        while degrees > 45:
+            rgb = cp.rot90(rgb, k=1)
+            degrees -= 90
+        if degrees:
+            input_height = rgb.shape[0]
+            input_width = rgb.shape[1]
+            rgb = cdimage.rotate(rgb, angle=degrees, reshape=True)
+            aspect_ratio = input_height / input_width
+            rotated_ratio = rgb.shape[0] / rgb.shape[1]
+            angle = math.fabs(degrees) * math.pi / 180
+
+            if aspect_ratio < 1:
+                total_height = input_height / rotated_ratio
+            else:
+                total_height = input_width
+
+            w = total_height / (aspect_ratio * math.sin(angle) + math.cos(angle))
+            h = w * aspect_ratio
+            crop_height = (rgb.shape[0] - h) // 2
+            crop_width = (rgb.shape[1] - w) // 2
+            rgb = rgb[crop_height: rgb.shape[0] - crop_height, crop_width: rgb.shape[1] - crop_width]
         return rgb
 
     def crop_image(self, rgb, aspect=1.5):
@@ -413,7 +445,7 @@ def init_child(semaphore_):
 def main(argv):
     bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
                    'tungsten_wb', 'daylight_wb', 'tiff', 'correct', 'rename']
-    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd']
+    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd', 'rotation']
 
     params = {'cores': os.cpu_count()}
     for arg in argv:
@@ -535,6 +567,7 @@ Options:
   --height=<h>      Set simulated film height to h mm.
   --ratio=<r>       Set canvas aspect ratio to r.
           <w>/<h>   Set canvas aspect ratio to w/h.
+  --rotation=<d>    Rotates image by angle of d degrees.
   --scale=<s>       Multiply canvas size by s.
   --color=<hex>     Set canvas color to #hex.
   --artist=<name>   Set artist name in metadata to name.
