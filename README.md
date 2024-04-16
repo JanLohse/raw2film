@@ -12,11 +12,13 @@ Install required packages as follows:
 - [`SciPy`](https://pypi.org/project/SciPy/)
 - [`lensfunpy`](https://pypi.org/project/lensfunpy/)
 
-Optional (speeds up distortion correction):
+Optional:
 - [`opencv-python`](https://pypi.org/project/opencv-python/)
+- [`cupy`](https://pypi.org/project/cupy/)
 
 ## Usage
 Put `processing.py` and the `.cube` files in the same folder as the raw images and run `processing.py`.
+With a working `cupy` installation `processing_cuda.py` can be used instead to make use of gpu acceleration.
 
 Get a list of parameters with the argument `--help`.
 
@@ -38,6 +40,5 @@ Then add the identifier and `lensfunpy` tag to the databases in `processing.py`.
 - Film emulation LUTs based on [Filmbox](https://videovillage.com/filmbox/):
   - Natural/Standard/Vibrant: Variants with different saturation and black levels.
   - Kodak: Kodak Vision3 250D with Kodak 2383 print film.
-  - Fuji: Kodak Vision3 250D with Fuji 3513 print film.
-  - Eterna: Fuji Eterna 250T with Fuji 3513 print film.
+  - Fuji: Fuji Eterna Vivid 160T 8543 with Fuji 3513 print film.
   - BW: Kodak Double-X black and white film.
