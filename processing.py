@@ -457,29 +457,29 @@ def hex_color(arg):
 def main():
     parser = argparse.ArgumentParser(
         description="Develop and organize all raw files in the current directory by running processing.py.")
-    parser.add_argument('--formats', dest='formats', help="Print built-in film formats.", default=False, const=True,
-                        nargs='?')
-    parser.add_argument('--list_cameras', dest='list_cameras', help="Print all cameras from lensfunpy.", default=False,
-                        const=True, nargs='?')
-    parser.add_argument('--list_lenses', dest='list_lenses', help="Print all lenses from lensfunpy.", default=False,
-                        const=True, nargs='?')
-    parser.add_argument('--no-crop', dest='crop', help="Preserve source aspect ratio.", default=True, const=False,
-                        nargs='?')
-    parser.add_argument('--no-blur', dest='blur', help="Turn off gaussian blur filter.", default=True, const=False,
-                        nargs='?')
-    parser.add_argument('--no-sharpen', dest='sharpen', help="Turn off sharpening filter.", default=True, const=False,
-                        nargs='?')
-    parser.add_argument('--no-halation', dest='halation', help="Turn off halation.", default=True, const=False,
-                        nargs='?')
+    parser.add_argument('--formats', dest='formats', help="Print built-in film formats.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--list_cameras', dest='list_cameras', help="Print all cameras from lensfunpy.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--list_lenses', dest='list_lenses', help="Print all lenses from lensfunpy.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--no-crop', dest='crop', help="Preserve source aspect ratio.",
+                        default=True, const=False, nargs='?')
+    parser.add_argument('--no-blur', dest='blur', help="Turn off gaussian blur filter.",
+                        default=True, const=False, nargs='?')
+    parser.add_argument('--no-sharpen', dest='sharpen', help="Turn off sharpening filter.",
+                        default=True, const=False, nargs='?')
+    parser.add_argument('--no-halation', dest='halation', help="Turn off halation.",
+                        default=True, const=False, nargs='?')
     parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", default=True, const=False, nargs='?')
-    parser.add_argument('--no-organize', dest='organize', help="Do no organize files.", default=True, const=False,
-                        nargs='?')
-    parser.add_argument('--no-correct', dest='correct', help="Turn off lens correction", default=True, const=False,
-                        nargs='?')
-    parser.add_argument('--canvas', dest='canvas', help="Add canvas to output image.", default=False, const=True,
-                        nargs='?')
-    parser.add_argument('--no-cuda', dest='cuda', help="Turn off GPU acceleration.", default=True, const=False,
-                        nargs='?')
+    parser.add_argument('--no-organize', dest='organize', help="Do no organize files.",
+                        default=True, const=False, nargs='?')
+    parser.add_argument('--no-correct', dest='correct', help="Turn off lens correction",
+                        default=True, const=False, nargs='?')
+    parser.add_argument('--canvas', dest='canvas', help="Add canvas to output image.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--no-cuda', dest='cuda', help="Turn off GPU acceleration.",
+                        default=True, const=False, nargs='?')
     parser.add_argument('--wb', dest='wb', help="Specify white balance mode.", default='standard',
                         choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'])
     parser.add_argument('--daylight_wb', dest='daylight_wb', help="Forces the use of daylight white balance.",
@@ -493,15 +493,14 @@ def main():
     parser.add_argument('--height', dest='height', help="Simulated film height in mm.", type=fraction, default=24)
     parser.add_argument('--ratio', dest='ratio', help="Canvas aspect ratio.", type=fraction, default="4/5")
     parser.add_argument('--scale', dest='scale', help="Canvas border scale.", type=fraction, default=1.)
-    parser.add_argument('--rotation', dest='rotation', help="Angle by which to rotate image.", type=fraction,
-                        default=0.)
+    parser.add_argument('--rotation', dest='rotation', help="Angle by which to rotate image.",
+                        type=fraction, default=0.)
     parser.add_argument('--color', dest='color', help="Color of canvas as hex value.", type=hex_color, default="000000")
     parser.add_argument('--artist', dest='artist', help="Artist name in metadata.", type=str, default="Jan Lohse")
-    parser.add_argument('--luts', dest='luts', help="Specify list of LUTs separated by comma.", type=str,
-                        default=["Fuji_Standard.cube", "BW.cube"], nargs='+')
-    parser.add_argument('--nd', dest='nd',
-                        help="0:No ND adjustment. 1: Automatic 3 stop ND recognition for Fuji X100 cameras. "
-                             "2: Force 3 stop ND adjustment.", type=int, default=1)
+    parser.add_argument('--luts', dest='luts', help="Specify list of LUTs separated by comma.",
+                        type=str, default=["Fuji_Standard.cube", "BW.cube"], nargs='+')
+    parser.add_argument('--nd', dest='nd', help="0:No ND adjustment. 1: Automatic 3 stop ND recognition for Fuji X100 "
+                                                "cameras. 2: Force 3 stop ND adjustment.", type=int, default=1)
     parser.add_argument('--cores', dest='cores', help="How many cpu threads to use. Default is maximum available",
                         type=int, default=0)
 
