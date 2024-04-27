@@ -3,6 +3,7 @@ import math
 import os
 import sys
 import time
+import warnings
 from multiprocessing import Pool, Semaphore
 
 import colour
@@ -524,7 +525,7 @@ def main():
             cp.cuda.set_pinned_memory_allocator(None)
         except ImportError:
             args.cuda = False
-            raise Warning("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
+            warning.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
