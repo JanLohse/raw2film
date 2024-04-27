@@ -6,20 +6,16 @@ import time
 from multiprocessing import Pool, Semaphore
 
 import colour
-import cupy
-import cupy as cp
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
+import numpy as cp
 import numpy as np
 import rawpy
-from cupyx.scipy import ndimage as cdimage
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
-
-cupy.cuda.set_allocator(None)
-cupy.cuda.set_pinned_memory_allocator(None)
+from scipy import ndimage as cdimage
 
 
 class Raw2Film:
@@ -62,7 +58,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 **args):
+                 cuda=False, **args):
         self.crop = crop
         self.blur = blur
         self.sharpen = sharpen
@@ -87,6 +83,7 @@ class Raw2Film:
         self.cores = cores
         self.rename = rename
         self.rotation = rotation
+        self.cuda = cuda
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -145,7 +142,7 @@ class Raw2Film:
 
     @staticmethod
     def BT2020_to_kelvin(rgb):
-        XYZ = colour.RGB_to_XYZ(rgb.get(), "ITU-R BT.2020")
+        XYZ = colour.RGB_to_XYZ(rgb, "ITU-R BT.2020")
         xy = colour.XYZ_to_xy(XYZ)
         CCT = colour.xy_to_CCT(xy, "Hernandez 1999")
         return CCT
@@ -209,7 +206,10 @@ class Raw2Film:
 
         lower, upper, max_amount = 2400, 8000, 1200
         if self.wb == 'standard':
-            image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
+            if self.cuda:
+                image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]).get())
+            else:
+                image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
@@ -269,9 +269,10 @@ class Raw2Film:
             rgb += noise * (scale / 2)
             rgb = cp.exp2(rgb) - 2 ** -16
 
-        rgb = rgb.get()
-        cp.get_default_pinned_memory_pool().free_all_blocks()
-        cp.get_default_memory_pool().free_all_blocks()
+        if self.cuda:
+            rgb = rgb.get()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            cp.get_default_memory_pool().free_all_blocks()
         return rgb
 
     def rotate(self, rgb):
@@ -323,9 +324,10 @@ class Raw2Film:
         return rgb
 
     @staticmethod
-    def calc_exposure(rgb, lum_vec=cp.array([.2127, .7152, .0722]), crop=.8):
+    def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
         """Calculates exposure value of the rgb image."""
-        lum_mat = cp.dot(np.clip(cp.dot(rgb, Raw2Film.REC2020_TO_REC709), a_min=0, a_max=None), lum_vec)
+        lum_mat = cp.dot(np.clip(cp.dot(rgb, cp.asarray(Raw2Film.REC2020_TO_REC709)), a_min=0, a_max=None),
+                         cp.asarray(lum_vec))
         if 0 < crop < 1:
             ratio = lum_mat.shape[0] / lum_mat.shape[1]
             if ratio > 1:
@@ -475,6 +477,8 @@ def main():
                         nargs='?')
     parser.add_argument('--canvas', dest='canvas', help="Add canvas to output image.", default=False, const=True,
                         nargs='?')
+    parser.add_argument('--no-cuda', dest='cuda', help="Turn off GPU acceleration.", default=True, const=False,
+                        nargs='?')
     parser.add_argument('--wb', dest='wb', help="Specify white balance mode.", default='standard',
                         choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'])
     parser.add_argument('--daylight_wb', dest='daylight_wb', help="Forces the use of daylight white balance.",
@@ -510,6 +514,17 @@ def main():
         return list_cameras()
     if args.list_lenses:
         return list_lenses()
+
+    if args.cuda:
+        try:
+            global cp, cdimage
+            from cupyx.scipy import ndimage as cdimage
+            import cupy as cp
+            cp.cuda.set_allocator(None)
+            cp.cuda.set_pinned_memory_allocator(None)
+        except ImportError:
+            args.cuda = False
+            raise Warning("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
