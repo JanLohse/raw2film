@@ -1,20 +1,21 @@
+import argparse
+import math
 import os
 import sys
 import time
-import math
 from multiprocessing import Pool, Semaphore
 
 import colour
 import cupy
+import cupy as cp
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
-import cupy as cp
 import numpy as np
 import rawpy
-from lensfunpy import util as lensfunpy_util
 from cupyx.scipy import ndimage as cdimage
+from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
 
 cupy.cuda.set_allocator(None)
@@ -60,12 +61,8 @@ class Raw2Film:
 
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
-                 auto_wb=False, camera_wb=False, tungsten_wb=False, daylight_wb=False, exp=0, zoom=1., correct=True,
-                 cores=None, sleep_time=0, rename=False, rotation=0):
-        if luts is None:
-            luts = ["Fuji_Standard.cube", "BW.cube"]
-        if color is None:
-            color = [0, 0, 0]
+                 wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
+                 **args):
         self.crop = crop
         self.blur = blur
         self.sharpen = sharpen
@@ -80,10 +77,7 @@ class Raw2Film:
         self.output_color = color
         self.artist = artist
         self.luts = luts
-        self.auto_wb = auto_wb
-        self.camera_wb = camera_wb
-        self.tungsten_wb = tungsten_wb
-        self.daylight_wb = daylight_wb
+        self.wb = wb
         self.tiff = tiff
         self.exp = exp
         self.zoom = zoom
@@ -142,7 +136,7 @@ class Raw2Film:
         with rawpy.imread(src) as raw:
             # noinspection PyUnresolvedReferences
             rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), output_bps=16, no_auto_bright=True,
-                                  use_camera_wb=self.camera_wb, use_auto_wb=self.auto_wb,
+                                  use_camera_wb=(self.wb == 'camera'), use_auto_wb=(self.wb == 'auto'),
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
         rgb = rgb.astype(dtype='float64')
         rgb /= 2 ** 16 - 1
@@ -208,13 +202,13 @@ class Raw2Film:
         if self.rotation:
             rgb = self.rotate(rgb)
 
-        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and self.tungsten_wb:
+        if self.wb == 'tungsten':
             daylight_rgb = self.kelvin_to_BT2020(5600)
             tungsten_rgb = self.kelvin_to_BT2020(4400)
             rgb = cp.dot(rgb, cp.diag(daylight_rgb / tungsten_rgb))
 
         lower, upper, max_amount = 2400, 8000, 1200
-        if not self.camera_wb and not self.auto_wb and not self.daylight_wb and not self.tungsten_wb:
+        if self.wb == 'standard':
             image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
@@ -363,7 +357,8 @@ class Raw2Film:
         """Loads tiff file and applies LUT, generates jpg."""
         file_name = src.split('.')[0]
         if self.rename:
-            date_str = metadata['EXIF:DateTimeOriginal'].translate({ord(i): None for i in ' :'}) + src.split(".")[0][-3:]
+            date_str = metadata['EXIF:DateTimeOriginal'].translate({ord(i): None for i in ' :'}) + src.split(".")[0][
+                                                                                                   -3:]
             if len(self.luts) == 1:
                 file_name = f"IMG_{date_str}"
             else:
@@ -428,7 +423,6 @@ class Raw2Film:
                     path_extension += self.luts[index].split('_')[0].split('.')[0] + '/'
             self.move_file(file, path + path_extension)
 
-
     @staticmethod
     def move_file(src, path):
         """Moves src file to path."""
@@ -442,61 +436,85 @@ def init_child(semaphore_):
     semaphore = semaphore_
 
 
-def main(argv):
-    bool_params = ['crop', 'blur', 'sharpen', 'halation', 'grain', 'organize', 'canvas', 'camera_wb', 'auto_wb',
-                   'tungsten_wb', 'daylight_wb', 'tiff', 'correct', 'rename']
-    float_params = ['width', 'height', 'ratio', 'scale', 'exp', 'zoom', 'nd', 'rotation']
+def fraction(arg):
+    if "/" in str(arg):
+        return float(arg.split('/')[0]) / float(arg.split('/')[1])
+    else:
+        return float(arg)
 
-    params = {'cores': os.cpu_count()}
-    for arg in argv:
-        if arg[0] == '"' and arg[1] == '"':
-            arg = arg[1:-1]
-        if not arg.startswith('--'):
-            fail(arg)
-        command = arg[2:]
-        if command == 'help':
-            return help_message()
-        elif command == 'formats':
-            return formats_message()
-        elif command.startswith('cores'):
-            params['cores'] = min(int(command.split('=')[1]), params['cores'])
-        elif command in bool_params:
-            params[command] = True
-        elif command == 'list_cameras':
-            return list_cameras()
-        elif command == 'list_lenses':
-            return list_lenses()
-        elif command.startswith('no-'):
-            command = command[3:]
-            if command not in bool_params:
-                fail(arg)
-            params[command] = False
-        elif '=' in command:
-            command, parameter = command.split('=')
-            if parameter[0] == '"' and parameter[1] == '"':
-                parameter = parameter[1:-1]
-            if command in float_params:
-                if '/' in parameter:
-                    parameter = parameter.split('/')
-                    parameter = float(parameter[0]) / float(parameter[1])
-                else:
-                    parameter = float(parameter)
-                params[command] = parameter
-            elif command == 'color':
-                params['color'] = list(int(parameter[i:i + 2], 16) for i in (0, 2, 4))
-            elif command == 'lut':
-                params['luts'] = parameter.split(',')
-            elif command == 'artist':
-                params['artist'] = parameter
-            elif command == 'format':
-                params['width'], params['height'] = Raw2Film.FORMATS[parameter]
-            else:
-                fail(arg)
-        else:
-            fail(arg)
 
-    raw2film = Raw2Film(**params)
+def hex_color(arg):
+    if str(arg) == "white":
+        return [255, 255, 255]
+    if str(arg) == "black":
+        return [0, 0, 0]
+    return list(int(arg[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Develop and organize all raw files in the current directory by running processing.py.")
+    parser.add_argument('--formats', dest='formats', help="Print built-in film formats.", default=False, const=True,
+                        nargs='?')
+    parser.add_argument('--list_cameras', dest='list_cameras', help="Print all cameras from lensfunpy.", default=False,
+                        const=True, nargs='?')
+    parser.add_argument('--list_lenses', dest='list_lenses', help="Print all lenses from lensfunpy.", default=False,
+                        const=True, nargs='?')
+    parser.add_argument('--no-crop', dest='crop', help="Preserve source aspect ratio.", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--no-blur', dest='blur', help="Turn off gaussian blur filter.", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--no-sharpen', dest='sharpen', help="Turn off sharpening filter.", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--no-halation', dest='halation', help="Turn off halation.", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", default=True, const=False, nargs='?')
+    parser.add_argument('--no-organize', dest='organize', help="Do no organize files.", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--no-correct', dest='correct', help="Turn off lens correction", default=True, const=False,
+                        nargs='?')
+    parser.add_argument('--canvas', dest='canvas', help="Add canvas to output image.", default=False, const=True,
+                        nargs='?')
+    parser.add_argument('--wb', dest='wb', help="Specify white balance mode.", default='standard',
+                        choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'])
+    parser.add_argument('--daylight_wb', dest='daylight_wb', help="Forces the use of daylight white balance.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--tiff', dest='tiff', help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--rename', dest='rename', help="Rename to match Google Photos photo stacking naming scheme",
+                        default=False, const=True, nargs='?')
+    parser.add_argument('--exp', dest='exp', help="By how many stops to adjust exposure", type=fraction, default=0)
+    parser.add_argument('--width', dest='width', help="Simulated film width in mm.", type=fraction, default=36)
+    parser.add_argument('--height', dest='height', help="Simulated film height in mm.", type=fraction, default=24)
+    parser.add_argument('--ratio', dest='ratio', help="Canvas aspect ratio.", type=fraction, default="4/5")
+    parser.add_argument('--scale', dest='scale', help="Canvas border scale.", type=fraction, default=1.)
+    parser.add_argument('--rotation', dest='rotation', help="Angle by which to rotate image.", type=fraction,
+                        default=0.)
+    parser.add_argument('--color', dest='color', help="Color of canvas as hex value.", type=hex_color, default="000000")
+    parser.add_argument('--artist', dest='artist', help="Artist name in metadata.", type=str, default="Jan Lohse")
+    parser.add_argument('--luts', dest='luts', help="Specify list of LUTs separated by comma.", type=str,
+                        default=["Fuji_Standard.cube", "BW.cube"], nargs='+')
+    parser.add_argument('--nd', dest='nd',
+                        help="0:No ND adjustment. 1: Automatic 3 stop ND recognition for Fuji X100 cameras. "
+                             "2: Force 3 stop ND adjustment.", type=int, default=1)
+    parser.add_argument('--cores', dest='cores', help="How many cpu threads to use. Default is maximum available",
+                        type=int, default=0)
+
+    args = parser.parse_args()
+
+    if not args.cores:
+        args.cores = os.cpu_count()
+    if args.formats:
+        return formats_message()
+    if args.list_cameras:
+        return list_cameras()
+    if args.list_lenses:
+        return list_lenses()
+
+    raw2film = Raw2Film(**vars(args))
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
+    if not files:
+        return
 
     start = time.time()
     counter = 1
@@ -507,10 +525,10 @@ def main(argv):
         cleaner(raw2film)
         sys.exit()
     end = time.time()
-    raw2film.sleep_time = (end - start) / params['cores']
+    raw2film.sleep_time = (end - start) / args.cores
 
     semaphore = Semaphore(1)
-    with Pool(params['cores'], initializer=init_child, initargs=(semaphore,)) as p:
+    with Pool(args.cores, initializer=init_child, initargs=(semaphore,)) as p:
         try:
             for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
                 if result:
@@ -530,57 +548,6 @@ def cleaner(raw2film):
     for file in os.listdir():
         if (raw2film.organize and file.endswith('.jpg')) or (not raw2film.tiff and file.endswith('.tiff')):
             os.remove(file)
-
-
-def fail(arg):
-    print(f"Argument {arg} unknown. Use --help to get more info.")
-    sys.exit()
-
-
-def help_message():
-    """Outputs a guide to raw2film."""
-    print("""Develop and organize all raw files in the current directory by running processing.py.
-
-Options:
-  --help            Print help.
-  --formats         Print built-in film formats.
-  --list_cameras    Print all cameras from lensfunpy.
-  --list_lenses     Print all lenses from lensfunpy.
-  --no-crop         Preserve source aspect ratio.
-  --no-blur         Turn off gaussian blur filter.
-  --no-sharpen      Turn off sharpening filter.
-  --no-halation     Turn off halation.
-  --no-grain        Turn off grain.
-  --no-organize     Do not organize files.
-  --canvas          Add canvas to output images.
-  --auto_wb         Use automatic white balance adjustment from rawpy.
-  --camera_wb       Use as-shot white balance. --auto_wb has priority if both are used.
-  --tungsten_wb     Forces the use of tungsten white balance.
-  --daylight_wb     Forces the use of daylight white balance.
-  --tiff            Output ARRI LogC3 .tiff files. Used to test and develop LUTs.
-  --no-correct      Turn off lens correction.
-  --rename          Rename to match Google Photos photo stack naming scheme.
-  --exp=<f>         Set how many stops f to increase or decrease the exposure of the output.
-  --zoom=<z>        By what factor z to zoom into the original image. Value should be at least 1.
-  --format=<f>      Set simulated film area to that specified by format <f>.
-  --width=<w>       Set simulated film width to w mm.
-  --height=<h>      Set simulated film height to h mm.
-  --ratio=<r>       Set canvas aspect ratio to r.
-          <w>/<h>   Set canvas aspect ratio to w/h.
-  --rotation=<d>    Rotates image by angle of d degrees.
-  --scale=<s>       Multiply canvas size by s.
-  --color=<hex>     Set canvas color to #hex.
-  --artist=<name>   Set artist name in metadata to name.
-  --lut=<1,2,...>   Set output LUTs to those listed. Separate LUT names with ',' and leave no space.
-                    LUT 1 is the primary LUT. Others are saved to subfolders.
-  --nd=<1>          0: Turn of ND adjustment.
-                    1: Apply 3 stop nd filter adjustment on X100 cameras if deemed necessary. 
-                    2: Force 3 stop nd adjustment. 
-  --cores=<c>       How many (virtual) cpu cores c to use. Default is all available.
-
-All boolean options can be used with no- or without, depending on which value is desired.
-Above we show the options used to change the default value.
-""")
 
 
 def formats_message():
@@ -611,4 +578,4 @@ def list_lenses():
 
 # runs image processing on all raw files in parallel
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    main()
