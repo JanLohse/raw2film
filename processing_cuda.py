@@ -525,7 +525,7 @@ def main():
             cp.cuda.set_pinned_memory_allocator(None)
         except ImportError:
             args.cuda = False
-            warning.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
+            warnings.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
