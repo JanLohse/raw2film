@@ -15,7 +15,6 @@ import lensfunpy
 import numpy as cp
 import numpy as np
 import rawpy
-import skimage
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
 from scipy import ndimage as cdimage
@@ -270,7 +269,7 @@ class Raw2Film:
             noise = cp.random.rand(*rgb.shape) - .5
             noise = self.gaussian_filter(noise, sigma=.5 * scale)
             if not self.cuda:
-                noise = cdimage.gaussian_filter(noise, axes=2, sigma=.5 * scale)
+                noise = cdimage.gaussian_filter(noise, axes=2, sigma=.5 * scale, truncate=2.5)
             rgb += noise * (scale / 2)
             rgb = cp.exp2(rgb) - 2 ** -16
 
