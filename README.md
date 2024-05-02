@@ -11,9 +11,9 @@ Install required packages as follows:
 - [`PyExifTool`](https://pypi.org/project/PyExifTool/)
 - [`SciPy`](https://pypi.org/project/SciPy/)
 - [`lensfunpy`](https://pypi.org/project/lensfunpy/)
+- [`opencv-python`](https://pypi.org/project/opencv-python/)
 
 Optional:
-- [`opencv-python`](https://pypi.org/project/opencv-python/)
 - [`cupy`](https://pypi.org/project/cupy/)
 
 ## Usage
