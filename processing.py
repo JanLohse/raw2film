@@ -384,15 +384,22 @@ class Raw2Film:
                     file_name += "_COVER"
         else:
             if index:
-                if self.luts[0].split('_')[0] == self.luts[index].split('_')[0]:
-                    file_name += '_' + self.luts[index].split('_')[-1].split('.')[0]
-                else:
-                    file_name += '_' + self.luts[index].split('_')[0].split('.')[0]
+                reference = Raw2Film.lut_name_ending(self.luts[0])
+                for ending in Raw2Film.lut_name_ending(self.luts[index]):
+                    if ending not in reference:
+                        file_name += '_' + ending
         if os.path.exists(file_name + '.tiff'):
             os.remove(file_name + ".tiff")
         ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=self.luts[index]).output(
             file_name + '.tiff', loglevel="quiet").run()
         return file_name + '.tiff'
+
+    @staticmethod
+    def lut_name_ending(name):
+        name = name.split('/')[-1]
+        name = name.split('\\')[-1]
+        name = name.split('.')[0]
+        return name.split('_')
 
     def convert_jpg(self, src):
         """Converts to jpg and removes src tiff file."""
