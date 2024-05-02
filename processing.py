@@ -267,9 +267,9 @@ class Raw2Film:
         if self.grain:
             rgb = cp.log2(rgb + 2 ** -16)
             noise = cp.random.rand(*rgb.shape) - .5
-            noise = self.gaussian_filter(noise, sigma=.5 * scale)
-            if not self.cuda:
-                noise = cdimage.gaussian_filter(noise, axes=2, sigma=.5 * scale, truncate=2.5)
+            noise = self.gaussian_blur(noise, sigma=.5 * scale)
+            noise = cdimage.gaussian_filter1d(noise, axis=2, sigma=.5 * scale)
+            noise = cp.dot(noise, cp.array([[1, 0, 0], [0, 1.2, 0], [0, 0, .5]]))
             rgb += noise * (scale / 2)
             rgb = cp.exp2(rgb) - 2 ** -16
 
@@ -477,52 +477,47 @@ def hex_color(arg):
 def main():
     parser = argparse.ArgumentParser(
         description="Develop and organize all raw files in the current directory by running processing.py.")
-    parser.add_argument('--formats', dest='formats', help="Print built-in film formats.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--list_cameras', dest='list_cameras', help="Print all cameras from lensfunpy.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--list_lenses', dest='list_lenses', help="Print all lenses from lensfunpy.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--no-crop', dest='crop', help="Preserve source aspect ratio.",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--no-blur', dest='blur', help="Turn off gaussian blur filter.",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--no-sharpen', dest='sharpen', help="Turn off sharpening filter.",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--no-halation', dest='halation', help="Turn off halation.",
-                        default=True, const=False, nargs='?')
+    parser.add_argument('--formats', default=False, const=True, nargs='?', help="Print built-in film formats.")
+    parser.add_argument('--list_cameras', default=False, const=True, nargs='?',
+                        help="Print all cameras from lensfunpy.")
+    parser.add_argument('--list_lenses', default=False, const=True, nargs='?', help="Print all lenses from lensfunpy.")
+    parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
+    parser.add_argument('--no-crop', dest='crop', default=True, const=False, nargs='?',
+                        help="Preserve source aspect ratio.")
+    parser.add_argument('--no-blur', dest='blur', default=True, const=False, nargs='?',
+                        help="Turn off gaussian blur filter.")
+    parser.add_argument('--no-sharpen', dest='sharpen', default=True, const=False, nargs='?',
+                        help="Turn off sharpening filter.")
+    parser.add_argument('--no-halation', dest='halation', default=True, const=False, nargs='?',
+                        help="Turn off halation.")
     parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", default=True, const=False, nargs='?')
-    parser.add_argument('--no-organize', dest='organize', help="Do no organize files.",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--no-correct', dest='correct', help="Turn off lens correction",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--canvas', dest='canvas', help="Add canvas to output image.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--no-cuda', dest='cuda', help="Turn off GPU acceleration.",
-                        default=True, const=False, nargs='?')
-    parser.add_argument('--wb', dest='wb', help="Specify white balance mode.", default='standard',
-                        choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'])
-    parser.add_argument('--daylight_wb', dest='daylight_wb', help="Forces the use of daylight white balance.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--tiff', dest='tiff', help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--rename', dest='rename', help="Rename to match Google Photos photo stacking naming scheme",
-                        default=False, const=True, nargs='?')
-    parser.add_argument('--exp', dest='exp', help="By how many stops to adjust exposure", type=fraction, default=0)
-    parser.add_argument('--width', dest='width', help="Simulated film width in mm.", type=fraction, default=36)
-    parser.add_argument('--height', dest='height', help="Simulated film height in mm.", type=fraction, default=24)
-    parser.add_argument('--ratio', dest='ratio', help="Canvas aspect ratio.", type=fraction, default="4/5")
-    parser.add_argument('--scale', dest='scale', help="Canvas border scale.", type=fraction, default=1.)
-    parser.add_argument('--rotation', dest='rotation', help="Angle by which to rotate image.",
-                        type=fraction, default=0.)
-    parser.add_argument('--color', dest='color', help="Color of canvas as hex value.", type=hex_color, default="000000")
-    parser.add_argument('--artist', dest='artist', help="Artist name in metadata.", type=str, default="Jan Lohse")
-    parser.add_argument('--luts', dest='luts', help="Specify list of LUTs separated by comma.",
-                        type=str, default=["Fuji_Standard.cube", "BW.cube"], nargs='+')
-    parser.add_argument('--nd', dest='nd', help="0:No ND adjustment. 1: Automatic 3 stop ND recognition for Fuji X100 "
-                                                "cameras. 2: Force 3 stop ND adjustment.", type=int, default=1)
-    parser.add_argument('--cores', dest='cores', help="How many cpu threads to use. Default is maximum available",
-                        type=int, default=0)
+    parser.add_argument('--no-organize', dest='organize', default=True, const=False, nargs='?',
+                        help="Do no organize files.")
+    parser.add_argument('--no-correct', dest='correct', default=True, const=False, nargs='?',
+                        help="Turn off lens correction")
+    parser.add_argument('--canvas', default=False, const=True, nargs='?', help="Add canvas to output image.")
+    parser.add_argument('--no-cuda', dest='cuda', default=True, const=False, nargs='?',
+                        help="Turn off GPU acceleration.")
+    parser.add_argument('--wb', default='standard', choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'],
+                        help="Specify white balance mode.")
+    parser.add_argument('--tiff', default=False, const=True, nargs='?',
+                        help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.")
+    parser.add_argument('--rename', default=False, const=True, nargs='?',
+                        help="Rename to match Google Photos photo stacking naming scheme")
+    parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
+    parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
+    parser.add_argument('--height', type=fraction, default=24, help="Simulated film height in mm.")
+    parser.add_argument('--ratio', type=fraction, default="4/5", help="Canvas aspect ratio.")
+    parser.add_argument('--scale', type=fraction, default=1., help="Canvas border scale.")
+    parser.add_argument('--rotation', type=fraction, default=0., help="Angle by which to rotate image.")
+    parser.add_argument('--color', type=hex_color, default="000000", help="Color of canvas as hex value.")
+    parser.add_argument('--artist', type=str, default="Jan Lohse", help="Artist name in metadata.")
+    parser.add_argument('--luts', type=str, default=["Fuji_Standard.cube", "BW.cube"], nargs='+',
+                        help="Specify list of LUTs separated by comma.")
+    parser.add_argument('--nd', type=int, default=1, help="0:No ND adjustment. 1: Automatic 3 stop ND recognition "
+                                                          "for Fuji X100 cameras. 2: Force 3 stop ND adjustment.")
+    parser.add_argument('--cores', type=int, default=0,
+                        help="How many cpu threads to use. Default is maximum available")
 
     args = parser.parse_args()
 
@@ -534,6 +529,8 @@ def main():
         return list_cameras()
     if args.list_lenses:
         return list_lenses()
+    if args.format:
+        args.width, args.height = Raw2Film.FORMATS[args.format]
 
     if args.cuda:
         try:
