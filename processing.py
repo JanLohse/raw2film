@@ -7,6 +7,7 @@ import warnings
 from multiprocessing import Pool, Semaphore
 
 import colour
+import cv2 as cv
 import exiftool
 import ffmpeg
 import imageio.v2 as imageio
@@ -14,6 +15,7 @@ import lensfunpy
 import numpy as cp
 import numpy as np
 import rawpy
+import skimage
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
 from scipy import ndimage as cdimage
@@ -109,7 +111,7 @@ class Raw2Film:
             with semaphore:
                 rgb = self.film_emulation(src, rgb, metadata)
 
-        self.save_tiff(src, rgb, metadata)
+        Raw2Film.save_tiff(src, rgb)
         if self.tiff:
             return
 
@@ -208,9 +210,9 @@ class Raw2Film:
         lower, upper, max_amount = 2400, 8000, 1200
         if self.wb == 'standard':
             if self.cuda:
-                image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]).get())
+                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]).get())
             else:
-                image_kelvin = self.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
+                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
@@ -236,7 +238,7 @@ class Raw2Film:
         if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
                 and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
-        exposure = self.calc_exposure(cdimage.gaussian_filter(rgb, sigma=3))
+        exposure = self.calc_exposure(self.gaussian_filter(rgb, sigma=3))
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .66, .9, .5
         lower_bound = -exposure + middle + max_under
         sloped = -slope * exposure + middle + slope_offset
@@ -258,15 +260,17 @@ class Raw2Film:
         if self.halation:
             threshold = .2
             r, g, b = cp.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
-            r = cdimage.gaussian_filter(r, sigma=2.2 * scale)
-            g = .8 * cdimage.gaussian_filter(g, sigma=2 * scale)
-            b = cdimage.gaussian_filter(b, sigma=0.3 * scale)
+            r = self.gaussian_filter(r, sigma=2.2 * scale)
+            g = .8 * self.gaussian_filter(g, sigma=2 * scale)
+            b = self.gaussian_filter(b, sigma=0.3 * scale)
             rgb += cp.clip(np.dstack((r, g, b)) - cp.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
 
         if self.grain:
             rgb = cp.log2(rgb + 2 ** -16)
             noise = cp.random.rand(*rgb.shape) - .5
-            noise = cdimage.gaussian_filter(noise, sigma=.5 * scale)
+            noise = self.gaussian_filter(noise, sigma=.5 * scale)
+            if not self.cuda:
+                noise = cdimage.gaussian_filter(noise, axes=2, sigma=.5 * scale)
             rgb += noise * (scale / 2)
             rgb = cp.exp2(rgb) - 2 ** -16
 
@@ -341,18 +345,28 @@ class Raw2Film:
             lum_mat = lum_mat[width: -width, height: -height]
         return cp.average(cp.log2(lum_mat + cp.ones_like(lum_mat) * 2 ** -16))
 
-    @staticmethod
-    def gaussian_blur(rgb, sigma=1):
-        """Applies gaussian blur per channel of rgb image."""
-        r, g, b = cp.dsplit(rgb, 3)
-        r = cdimage.gaussian_filter(r, sigma=sigma)
-        g = cdimage.gaussian_filter(g, sigma=sigma)
-        b = cdimage.gaussian_filter(b, sigma=sigma)
-        return cp.dstack((r, g, b))
+    def gaussian_filter(self, input, sigma=1):
+        """Compute gaussian filter"""
+        if self.cuda:
+            return cdimage.gaussian_filter(input, sigma=sigma)
+        else:
+            return cv.GaussianBlur(input, ksize=(0, 0), sigmaX=sigma)
 
-    def save_tiff(self, src, rgb, metadata):
+    def gaussian_blur(self, rgb, sigma=1):
+        """Applies gaussian blur per channel of rgb image."""
+        if self.cuda:
+            r, g, b = cp.dsplit(rgb, 3)
+            r = self.gaussian_filter(r, sigma=sigma)
+            g = self.gaussian_filter(g, sigma=sigma)
+            b = self.gaussian_filter(b, sigma=sigma)
+            return cp.dstack((r, g, b))
+        else:
+            return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
+
+    @staticmethod
+    def save_tiff(src, rgb):
         rgb = colour.models.log_encoding_ARRILogC3(rgb)
-        rgb = np.clip(np.dot(rgb, self.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
+        rgb = np.clip(np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
         imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
 
