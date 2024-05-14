@@ -579,13 +579,12 @@ def main():
     raw2film.sleep_time = (end - start) / args.cores
 
     semaphore = Semaphore(1)
-    start = time.time()
     with Pool(args.cores, initializer=init_child, initargs=(semaphore,)) as p:
         try:
             for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
                 if result:
                     counter += 1
-                    print(f"{result} processed successfully {counter}/{len(files) + 1} avg {(time.time() - start) / (counter - 1):.2f}s")
+                    print(f"{result} processed successfully {counter}/{len(files) + 1}")
                 if not result:
                     raise KeyboardInterrupt
         except KeyboardInterrupt:
