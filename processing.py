@@ -12,13 +12,26 @@ import exiftool
 import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
-import numpy as cp
 import numpy as np
+try:
+    import cupy as cp
+    is_cupy_available = True
+except ModuleNotFoundError:
+    import numpy as np
+    is_cupy_available = False
 import rawpy
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
-from scipy import ndimage as cdimage
-
+try:
+    import cupy as cp
+    from cupyx.scipy import ndimage as cdimage
+    is_cupy_available = True
+    cp.cuda.set_allocator(None)
+    cp.cuda.set_pinned_memory_allocator(None)
+except ModuleNotFoundError:
+    import numpy as np
+    from scipy import ndimage as cdimage
+    is_cupy_available = False
 
 class Raw2Film:
     METADATA_KEYS = [
@@ -46,7 +59,7 @@ class Raw2Film:
     REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
                                    [-.1576, 0.8805, 0.0077],
                                    [0.0615, 0.1946, 1.0275]])
-    REC2020_TO_REC709 = cp.array([[1.6605, -.1246, -.0182],
+    REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
     CAMERA_DB = {"X100S": "Fujifilm : X100S",
@@ -104,11 +117,11 @@ class Raw2Film:
         if self.correct:
             rgb = np.asarray(self.lens_correction(rgb, metadata))
 
-        if not run_count:
-            rgb = self.film_emulation(src, rgb, metadata)
+        if not run_count or not self.cuda:
+            rgb = self.film_emulation(rgb, metadata)
         else:
             with semaphore:
-                rgb = self.film_emulation(src, rgb, metadata)
+                rgb = self.film_emulation(rgb, metadata)
 
         Raw2Film.save_tiff(src, rgb)
         if self.tiff:
@@ -149,8 +162,10 @@ class Raw2Film:
         CCT = colour.xy_to_CCT(xy, "Hernandez 1999")
         return CCT
 
-    @staticmethod
-    def kelvin_to_BT2020(kelvin):
+    def kelvin_to_BT2020(self, kelvin):
+        global cp
+        if not self.cuda:
+            cp = np
         xy = colour.CCT_to_xy(kelvin, "Kang 2002")
         XYZ = colour.xy_to_XYZ(xy)
         rgb = colour.XYZ_to_RGB(XYZ, "ITU-R BT.2020")
@@ -195,7 +210,11 @@ class Raw2Film:
                 lens = self.LENS_DB[key].split(':')
         return cam, lens
 
-    def film_emulation(self, src, rgb, metadata):
+    def film_emulation(self, rgb, metadata):
+        global cp, cdimage
+        if not self.cuda:
+            cp = np
+            cdimage = ndimage
         rgb = cp.asarray(rgb)
 
         if self.rotation:
@@ -280,6 +299,10 @@ class Raw2Film:
         return rgb
 
     def rotate(self, rgb):
+        global cp, cdimage
+        if not self.cuda:
+            cp = np
+            cdimage = ndimage
         degrees = self.rotation % 360
 
         while degrees > 45:
@@ -327,10 +350,12 @@ class Raw2Film:
 
         return rgb
 
-    @staticmethod
-    def calc_exposure(rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
+    def calc_exposure(self, rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
         """Calculates exposure value of the rgb image."""
-        lum_mat = cp.dot(np.clip(cp.dot(rgb, cp.asarray(Raw2Film.REC2020_TO_REC709)), a_min=0, a_max=None),
+        global cp
+        if not self.cuda:
+            cp = np
+        lum_mat = cp.dot(np.clip(cp.dot(rgb, cp.asarray(self.REC2020_TO_REC709)), a_min=0, a_max=None),
                          cp.asarray(lum_vec))
         if 0 < crop < 1:
             ratio = lum_mat.shape[0] / lum_mat.shape[1]
@@ -344,14 +369,14 @@ class Raw2Film:
             lum_mat = lum_mat[width: -width, height: -height]
         return cp.average(cp.log2(lum_mat + cp.ones_like(lum_mat) * 2 ** -16))
 
-    def gaussian_filter(self, input, sigma=1):
+    def gaussian_filter(self, input, sigma=1.):
         """Compute gaussian filter"""
         if self.cuda:
             return cdimage.gaussian_filter(input, sigma=sigma)
         else:
             return cv.GaussianBlur(input, ksize=(0, 0), sigmaX=sigma)
 
-    def gaussian_blur(self, rgb, sigma=1):
+    def gaussian_blur(self, rgb, sigma=1.):
         """Applies gaussian blur per channel of rgb image."""
         if self.cuda:
             r, g, b = cp.dsplit(rgb, 3)
@@ -532,17 +557,10 @@ def main():
     if args.format:
         args.width, args.height = Raw2Film.FORMATS[args.format]
 
-    if args.cuda:
-        try:
-            global cp, cdimage
-            from cupyx.scipy import ndimage as cdimage
-            import cupy as cp
-            cp.cuda.set_allocator(None)
-            cp.cuda.set_pinned_memory_allocator(None)
-        except ImportError:
-            args.cuda = False
-            warnings.formatwarning = lambda msg, cat, *args, **kwargs: f'{cat.__name__}: {msg}\n'
-            warnings.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
+    if args.cuda and not is_cupy_available:
+        args.cuda = False
+        warnings.formatwarning = lambda msg, cat, *args, **kwargs: f'{cat.__name__}: {msg}\n'
+        warnings.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
     files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
@@ -561,12 +579,13 @@ def main():
     raw2film.sleep_time = (end - start) / args.cores
 
     semaphore = Semaphore(1)
+    start = time.time()
     with Pool(args.cores, initializer=init_child, initargs=(semaphore,)) as p:
         try:
             for result in p.imap_unordered(raw2film.process_runner, enumerate(files)):
                 if result:
                     counter += 1
-                    print(f"{result} processed successfully {counter}/{len(files) + 1}")
+                    print(f"{result} processed successfully {counter}/{len(files) + 1} avg {(time.time() - start) / (counter - 1):.2f}s")
                 if not result:
                     raise KeyboardInterrupt
         except KeyboardInterrupt:
