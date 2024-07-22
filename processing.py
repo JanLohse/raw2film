@@ -4,6 +4,8 @@ import os
 import sys
 import time
 import warnings
+from shutil import copy
+from pathlib import Path
 from multiprocessing import Pool, Semaphore
 
 import colour
@@ -502,6 +504,8 @@ def hex_color(arg):
 def main():
     parser = argparse.ArgumentParser(
         description="Develop and organize all raw files in the current directory by running processing.py.")
+    parser.add_argument('file', default=None, nargs='?', type=str,
+                        help="Name of file from subfolder to edit without extension. Can also be range with '-'")
     parser.add_argument('--formats', default=False, const=True, nargs='?', help="Print built-in film formats.")
     parser.add_argument('--list_cameras', default=False, const=True, nargs='?',
                         help="Print all cameras from lensfunpy.")
@@ -556,6 +560,9 @@ def main():
         return list_lenses()
     if args.format:
         args.width, args.height = Raw2Film.FORMATS[args.format]
+
+    if args.file:
+        copy_from_subfolder(args.file)
 
     if args.cuda and not is_cupy_available:
         args.cuda = False
@@ -625,6 +632,30 @@ def list_lenses():
     for lens in db.lenses:
         print(lens.maker, ":", lens.model)
     return
+
+
+def copy_from_subfolder(file):
+    name_start = file.split('-')[0]
+    if '-' in file:
+        end = file.split('-')[1]
+        name_end = name_start[:-len(end)] + end
+    else:
+        name_end = file
+    if name_start > name_end:
+        name_start, name_end = name_end, name_start
+
+    found_any = False
+
+    for path in Path().rglob('./*/*.*'):
+        filename = str(path).split('\\')[-1]
+        name = '.'.join(filename.split('.')[:-1])
+        if name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST):
+            found_any = True
+            if not os.path.isfile(filename):
+                copy(path, '.', )
+
+    if not found_any:
+        print("No matching files have been found.")
 
 
 # runs image processing on all raw files in parallel
