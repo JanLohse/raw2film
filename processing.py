@@ -416,7 +416,20 @@ class Raw2Film:
                         file_name += '_' + ending
         if os.path.exists(file_name + '.tiff'):
             os.remove(file_name + ".tiff")
-        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=self.luts[index]).output(
+        if os.path.exists(self.luts[index]):
+            lut_path = self.luts[index]
+        else:
+            for folder in ['lut', 'luts', 'cube', 'looks', 'look', 'style']:
+                if os.path.exists(folder + "/" + self.luts[index]):
+                    lut_path = folder + "/" + self.luts[index]
+                    break
+        print(self.luts[index], lut_path)
+        try:
+            lut_path
+        except NameError:
+            print(f"LUT {self.luts[index]} not found")
+            return
+        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut_path).output(
             file_name + '.tiff', loglevel="quiet").run()
         return file_name + '.tiff'
 
