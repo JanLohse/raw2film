@@ -454,6 +454,7 @@ class Raw2Film:
         """Adds metadata to image file."""
         metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in self.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
+        metadata['EXIF:ExposureCompensation'] = self.exp
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
 
