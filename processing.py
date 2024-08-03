@@ -423,7 +423,6 @@ class Raw2Film:
                 if os.path.exists(folder + "/" + self.luts[index]):
                     lut_path = folder + "/" + self.luts[index]
                     break
-        print(self.luts[index], lut_path)
         try:
             lut_path
         except NameError:
@@ -547,6 +546,8 @@ def main():
                         help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.")
     parser.add_argument('--rename', default=False, const=True, nargs='?',
                         help="Rename to match Google Photos photo stacking naming scheme")
+    parser.add_argument('--keep-exp', default=False, const=True, nargs='?',
+                        help="Keep the exposure of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
     parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
     parser.add_argument('--height', type=fraction, default=24, help="Simulated film height in mm.")
@@ -555,7 +556,7 @@ def main():
     parser.add_argument('--rotation', type=fraction, default=0., help="Angle by which to rotate image.")
     parser.add_argument('--color', type=hex_color, default="000000", help="Color of canvas as hex value.")
     parser.add_argument('--artist', type=str, default="Jan Lohse", help="Artist name in metadata.")
-    parser.add_argument('--luts', type=str, default=["Fuji_Natural.cube", "BW.cube"], nargs='+',
+    parser.add_argument('--luts', type=str, default=["Fuji_Standard.cube", "BW.cube"], nargs='+',
                         help="Specify list of LUTs separated by comma.")
     parser.add_argument('--nd', type=int, default=1, help="0:No ND adjustment. 1: Automatic 3 stop ND recognition "
                                                           "for Fuji X100 cameras. 2: Force 3 stop ND adjustment.")
