@@ -1,5 +1,6 @@
 import argparse
 import math
+import operator
 import os
 import sys
 import time
@@ -75,7 +76,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 cuda=False, **args):
+                 cuda=False, keep_exp=False, **args):
         self.crop = crop
         self.blur = blur
         self.sharpen = sharpen
@@ -101,6 +102,7 @@ class Raw2Film:
         self.rename = rename
         self.rotation = rotation
         self.cuda = cuda
+        self.keep_exp = keep_exp
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -116,14 +118,20 @@ class Raw2Film:
         """Manages image processing pipeline."""
 
         rgb, metadata = self.raw_to_linear(src)
+
+        if self.keep_exp:
+            exp_comp = self.find_exp(src, self.exp)
+        else:
+            exp_comp = self.exp
+
         if self.correct:
             rgb = np.asarray(self.lens_correction(rgb, metadata))
 
         if not run_count or not self.cuda:
-            rgb = self.film_emulation(rgb, metadata)
+            rgb = self.film_emulation(rgb, metadata, exp_comp)
         else:
             with semaphore:
-                rgb = self.film_emulation(rgb, metadata)
+                rgb = self.film_emulation(rgb, metadata, exp_comp)
 
         Raw2Film.save_tiff(src, rgb)
         if self.tiff:
@@ -134,7 +142,7 @@ class Raw2Film:
         os.remove(src.split('.')[0] + "_log.tiff")
 
         for file in file_list:
-            self.add_metadata(file, metadata)
+            self.add_metadata(file, metadata, exp_comp)
         if self.organize:
             self.organize_files(src, file_list, metadata)
 
@@ -212,7 +220,7 @@ class Raw2Film:
                 lens = self.LENS_DB[key].split(':')
         return cam, lens
 
-    def film_emulation(self, rgb, metadata):
+    def film_emulation(self, rgb, metadata, exp_comp):
         global cp, cdimage
         if not self.cuda:
             cp = np
@@ -244,7 +252,6 @@ class Raw2Film:
                 value, target = upper, upper - max_amount
             rgb = cp.dot(rgb, cp.diag(self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)))
 
-        """Adjusts exposure, aspect ratio and texture, and outputs tiff file in ARRI LogC3 color space."""
         # crop to specified aspect ratio
         if self.crop:
             rgb = self.crop_image(rgb, aspect=self.width / self.height)
@@ -264,7 +271,7 @@ class Raw2Film:
         sloped = -slope * exposure + middle + slope_offset
         upper_bound = -exposure + middle + max_over
         adjustment = max(lower_bound, min(sloped, upper_bound))
-        rgb *= 2 ** (adjustment + self.exp)
+        rgb *= 2 ** (adjustment + exp_comp)
 
         # texture
         scale = max(rgb.shape) / (80 * self.width)
@@ -371,6 +378,27 @@ class Raw2Film:
             lum_mat = lum_mat[width: -width, height: -height]
         return cp.average(cp.log2(lum_mat + cp.ones_like(lum_mat) * 2 ** -16))
 
+    def find_exp(self, src, fallback_exp=0.):
+        """Search for exposure compensation in already processed file."""
+        # search for candidate files
+        options = []
+        for path in Path().rglob(f'*{src.split(".")[0]}*.jpg'):
+            path = str(path)
+            split_path = path.split("\\")
+            options.append((path, split_path[-1].split('.')[0], len(split_path)))
+
+        # return fallback if no candidates found
+        if not options:
+            return fallback_exp
+
+        # pick candidate with the shortest path and the shortest name
+        path = sorted(options, key=operator.itemgetter(2, 1))[0][0]
+
+        # return exposure compensation value of reference file
+        with exiftool.ExifToolHelper() as et:
+            exp_comp = et.get_metadata(path)[0]['EXIF:ExposureCompensation']
+        return exp_comp
+
     def gaussian_filter(self, input, sigma=1.):
         """Compute gaussian filter"""
         if self.cuda:
@@ -462,11 +490,11 @@ class Raw2Film:
         canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
         return canvas.astype(dtype='uint8')
 
-    def add_metadata(self, src, metadata):
+    def add_metadata(self, src, metadata, exp_comp):
         """Adds metadata to image file."""
         metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in self.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
-        metadata['EXIF:ExposureCompensation'] = self.exp
+        metadata['EXIF:ExposureCompensation'] = exp_comp
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
 
@@ -546,7 +574,7 @@ def main():
                         help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.")
     parser.add_argument('--rename', default=False, const=True, nargs='?',
                         help="Rename to match Google Photos photo stacking naming scheme")
-    parser.add_argument('--keep-exp', default=False, const=True, nargs='?',
+    parser.add_argument('--keep-exp', dest='keep_exp', default=False, const=True, nargs='?',
                         help="Keep the exposure of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
     parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
