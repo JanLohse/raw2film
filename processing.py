@@ -76,7 +76,7 @@ class Raw2Film:
     def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 cuda=False, keep_exp=False, **args):
+                 cuda=False, keep_exp=False, gamma=1., **args):
         self.crop = crop
         self.blur = blur
         self.sharpen = sharpen
@@ -103,6 +103,7 @@ class Raw2Film:
         self.rotation = rotation
         self.cuda = cuda
         self.keep_exp = keep_exp
+        self.gamma = gamma
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -305,6 +306,11 @@ class Raw2Film:
             rgb = rgb.get()
             cp.get_default_pinned_memory_pool().free_all_blocks()
             cp.get_default_memory_pool().free_all_blocks()
+
+        # adjust gamma while preserving middle grey exposure
+        if self.gamma != 1.:
+            rgb = 0.25 * (4 * rgb)**self.gamma
+
         return rgb
 
     def rotate(self, rgb):
@@ -577,6 +583,7 @@ def main():
     parser.add_argument('--keep-exp', dest='keep_exp', default=False, const=True, nargs='?',
                         help="Keep the exposure of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
+    parser.add_argument('--gamma', type=fraction, default=1., help="Adjust gamma curve without effecting middle exposure")
     parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
     parser.add_argument('--height', type=fraction, default=24, help="Simulated film height in mm.")
     parser.add_argument('--ratio', type=fraction, default="4/5", help="Canvas aspect ratio.")
