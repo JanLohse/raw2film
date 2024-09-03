@@ -5,9 +5,9 @@ import os
 import sys
 import time
 import warnings
-from shutil import copy
-from pathlib import Path
 from multiprocessing import Pool, Semaphore
+from pathlib import Path
+from shutil import copy
 
 import colour
 import cv2 as cv
@@ -16,25 +16,32 @@ import ffmpeg
 import imageio.v2 as imageio
 import lensfunpy
 import numpy as np
+
 try:
     import cupy as cp
+
     is_cupy_available = True
 except ModuleNotFoundError:
     import numpy as np
+
     is_cupy_available = False
 import rawpy
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
+
 try:
     import cupy as cp
     from cupyx.scipy import ndimage as cdimage
+
     is_cupy_available = True
     cp.cuda.set_allocator(None)
     cp.cuda.set_pinned_memory_allocator(None)
 except ModuleNotFoundError:
     import numpy as np
     from scipy import ndimage as cdimage
+
     is_cupy_available = False
+
 
 class Raw2Film:
     METADATA_KEYS = [
@@ -286,12 +293,14 @@ class Raw2Film:
             rgb = cp.exp2(rgb) - 2 ** -16
 
         if self.halation:
-            threshold = .2
-            r, g, b = cp.dsplit(np.clip(rgb - threshold, a_min=0, a_max=None), 3)
+            threshold, maximum, slope_start, slope = .2, 2, .8, .33
+            rgb_limited = cp.clip(cp.minimum(rgb - threshold, rgb * slope - slope * (slope_start + threshold)
+                                             + slope_start), a_min=0, a_max=maximum)
+            r, g, b = cp.dsplit(rgb_limited, 3)
             r = self.gaussian_filter(r, sigma=2.2 * scale)
             g = .8 * self.gaussian_filter(g, sigma=2 * scale)
             b = self.gaussian_filter(b, sigma=0.3 * scale)
-            rgb += cp.clip(np.dstack((r, g, b)) - cp.clip(rgb - threshold, a_min=0, a_max=None), a_min=0, a_max=None)
+            rgb += cp.clip(cp.dstack((r, g, b)) - rgb_limited, a_min=0, a_max=maximum)
 
         if self.grain:
             rgb = cp.log2(rgb + 2 ** -16)
@@ -302,14 +311,14 @@ class Raw2Film:
             rgb += noise * (scale / 2)
             rgb = cp.exp2(rgb) - 2 ** -16
 
+        # adjust gamma while preserving middle grey exposure
+        if self.gamma != 1.:
+            rgb = 0.2 * (5 * rgb) ** self.gamma
+
         if self.cuda:
             rgb = rgb.get()
             cp.get_default_pinned_memory_pool().free_all_blocks()
             cp.get_default_memory_pool().free_all_blocks()
-
-        # adjust gamma while preserving middle grey exposure
-        if self.gamma != 1.:
-            rgb = 0.25 * (4 * rgb)**self.gamma
 
         return rgb
 
@@ -583,7 +592,8 @@ def main():
     parser.add_argument('--keep-exp', dest='keep_exp', default=False, const=True, nargs='?',
                         help="Keep the exposure of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
-    parser.add_argument('--gamma', type=fraction, default=1., help="Adjust gamma curve without effecting middle exposure")
+    parser.add_argument('--gamma', type=fraction, default=1.,
+                        help="Adjust gamma curve without effecting middle exposure")
     parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
     parser.add_argument('--height', type=fraction, default=24, help="Simulated film height in mm.")
     parser.add_argument('--ratio', type=fraction, default="4/5", help="Canvas aspect ratio.")
