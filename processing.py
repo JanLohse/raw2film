@@ -284,6 +284,16 @@ class Raw2Film:
         # texture
         scale = max(rgb.shape) / (80 * self.width)
 
+        if self.halation:
+            threshold, maximum, slope_start, slope = .2, 3, .8, .33
+            rgb_limited = cp.clip(cp.minimum(rgb - threshold, rgb * slope - slope * (slope_start + threshold)
+                                             + slope_start), a_min=0, a_max=maximum)
+            r, g, b = cp.dsplit(rgb_limited, 3)
+            r = self.gaussian_filter(r, sigma=2.2 * scale)
+            g = .8 * self.gaussian_filter(g, sigma=2 * scale)
+            b = self.gaussian_filter(b, sigma=0.3 * scale)
+            rgb += cp.clip(cp.dstack((r, g, b)) - rgb_limited, a_min=0, a_max=None)
+
         if self.blur:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
 
@@ -291,16 +301,6 @@ class Raw2Film:
             rgb = cp.log2(rgb + 2 ** -16)
             rgb = rgb + cp.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
             rgb = cp.exp2(rgb) - 2 ** -16
-
-        if self.halation:
-            threshold, maximum, slope_start, slope = .2, 2, .8, .33
-            rgb_limited = cp.clip(cp.minimum(rgb - threshold, rgb * slope - slope * (slope_start + threshold)
-                                             + slope_start), a_min=0, a_max=maximum)
-            r, g, b = cp.dsplit(rgb_limited, 3)
-            r = self.gaussian_filter(r, sigma=2.2 * scale)
-            g = .8 * self.gaussian_filter(g, sigma=2 * scale)
-            b = self.gaussian_filter(b, sigma=0.3 * scale)
-            rgb += cp.clip(cp.dstack((r, g, b)) - rgb_limited, a_min=0, a_max=maximum)
 
         if self.grain:
             rgb = cp.log2(rgb + 2 ** -16)
