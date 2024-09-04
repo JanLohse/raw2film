@@ -313,7 +313,7 @@ class Raw2Film:
 
         # adjust gamma while preserving middle grey exposure
         if self.gamma != 1.:
-            rgb = 0.2 * (5 * rgb) ** self.gamma
+            rgb = 0.2 * (5 * np.clip(rgb, a_min=0, a_max=None)) ** self.gamma
 
         if self.cuda:
             rgb = rgb.get()
