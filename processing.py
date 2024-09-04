@@ -347,8 +347,8 @@ class Raw2Film:
 
             w = total_height / (aspect_ratio * math.sin(angle) + math.cos(angle))
             h = w * aspect_ratio
-            crop_height = (rgb.shape[0] - h) // 2
-            crop_width = (rgb.shape[1] - w) // 2
+            crop_height = int((rgb.shape[0] - h) // 2)
+            crop_width = int((rgb.shape[1] - w) // 2)
             rgb = rgb[crop_height: rgb.shape[0] - crop_height, crop_width: rgb.shape[1] - crop_width]
         return rgb
 
