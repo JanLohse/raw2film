@@ -572,6 +572,8 @@ def main():
     parser.add_argument('--list_cameras', default=False, const=True, nargs='?',
                         help="Print all cameras from lensfunpy.")
     parser.add_argument('--list_lenses', default=False, const=True, nargs='?', help="Print all lenses from lensfunpy.")
+    parser.add_argument('--cleanup', default=False, const=True, nargs='?',
+                        help="Delete RAW files if JPEG was deleted. Requires files to be specified")
     parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
     parser.add_argument('--no-crop', dest='crop', default=True, const=False, nargs='?',
                         help="Preserve source aspect ratio.")
@@ -624,6 +626,8 @@ def main():
         return list_cameras()
     if args.list_lenses:
         return list_lenses()
+    if args.cleanup:
+        return cleanup_files(args.file)
     if args.format:
         args.width, args.height = Raw2Film.FORMATS[args.format]
 
@@ -701,14 +705,7 @@ def list_lenses():
 
 
 def copy_from_subfolder(file):
-    name_start = file.split('-')[0]
-    if '-' in file:
-        end = file.split('-')[1]
-        name_end = name_start[:-len(end)] + end
-    else:
-        name_end = file
-    if name_start > name_end:
-        name_start, name_end = name_end, name_start
+    name_start, name_end = prep_file_name(file)
 
     found_any = False
 
@@ -722,6 +719,44 @@ def copy_from_subfolder(file):
 
     if not found_any:
         print("No matching files have been found.")
+
+
+def cleanup_files(file):
+    if not file:
+        print("Specify the files to clean to avoid errors")
+        return
+
+    name_start, name_end = prep_file_name(file)
+
+    for path in Path().rglob('./*/*.*'):
+        filename = str(path).split('\\')[-1]
+        name = filename.split('.')[0].split('_')[0]
+        if name_start <= name <= name_end and (filename.lower().endswith(Raw2Film.EXTENSION_LIST) or
+                                               (filename.lower().endswith('jpg') and '_' in filename)):
+            if not any(Path().rglob(f'*{name}.jpg')) and not os.path.isfile(filename):
+                print("deleted", filename)
+                os.remove(path)
+
+    # remove empty subfolders
+    for dir_path, dir_names, _ in os.walk('.', topdown=False):
+        for dir_name in dir_names:
+            full_path = os.path.join(dir_path, dir_name)
+            if not os.listdir(full_path) and '20' in full_path:
+                print("deleted", full_path)
+                os.rmdir(full_path)
+
+
+def prep_file_name(file):
+    name_start = file.split('-')[0]
+    if '-' in file:
+        end = file.split('-')[1]
+        name_end = name_start[:-len(end)] + end
+    else:
+        name_end = file
+    if name_start > name_end:
+        name_start, name_end = name_end, name_start
+
+    return name_start, name_end
 
 
 # runs image processing on all raw files in parallel
