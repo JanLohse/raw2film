@@ -128,18 +128,18 @@ class Raw2Film:
         rgb, metadata = self.raw_to_linear(src)
 
         if self.keep_exp:
-            exp_comp = self.find_exp(src, self.exp)
+            exp_comp, gamma = self.find_exp(src, self.exp)
         else:
-            exp_comp = self.exp
+            exp_comp, gamma = self.exp, self.gamma
 
         if self.correct:
             rgb = np.asarray(self.lens_correction(rgb, metadata))
 
         if not run_count or not self.cuda:
-            rgb = self.film_emulation(rgb, metadata, exp_comp)
+            rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
         else:
             with semaphore:
-                rgb = self.film_emulation(rgb, metadata, exp_comp)
+                rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
 
         Raw2Film.save_tiff(src, rgb)
         if self.tiff:
@@ -150,7 +150,7 @@ class Raw2Film:
         os.remove(src.split('.')[0] + "_log.tiff")
 
         for file in file_list:
-            self.add_metadata(file, metadata, exp_comp)
+            self.add_metadata(file, metadata, exp_comp, gamma)
         if self.organize:
             self.organize_files(src, file_list, metadata)
 
@@ -228,7 +228,7 @@ class Raw2Film:
                 lens = self.LENS_DB[key].split(':')
         return cam, lens
 
-    def film_emulation(self, rgb, metadata, exp_comp):
+    def film_emulation(self, rgb, metadata, exp_comp=0., gamma=1.):
         global cp, cdimage
         if not self.cuda:
             cp = np
@@ -312,8 +312,8 @@ class Raw2Film:
             rgb = cp.exp2(rgb) - 2 ** -16
 
         # adjust gamma while preserving middle grey exposure
-        if self.gamma != 1.:
-            rgb = 0.2 * (5 * np.clip(rgb, a_min=0, a_max=None)) ** self.gamma
+        if gamma != 1.:
+            rgb = 0.2 * (5 * np.clip(rgb, a_min=0, a_max=None)) ** gamma
 
         if self.cuda:
             rgb = rgb.get()
@@ -404,15 +404,20 @@ class Raw2Film:
 
         # return fallback if no candidates found
         if not options:
-            return fallback_exp
+            return fallback_exp, self.gamma
 
         # pick candidate with the shortest path and the shortest name
         path = sorted(options, key=operator.itemgetter(2, 1))[0][0]
 
         # return exposure compensation value of reference file
         with exiftool.ExifToolHelper() as et:
-            exp_comp = et.get_metadata(path)[0]['EXIF:ExposureCompensation']
-        return exp_comp
+            meta = et.get_metadata(path)[0]
+            exp_comp = meta['EXIF:ExposureCompensation']
+            try:
+                gamma = meta['EXIF:Gamma']
+            except KeyError:
+                gamma = self.gamma
+        return exp_comp, gamma
 
     def gaussian_filter(self, input, sigma=1.):
         """Compute gaussian filter"""
@@ -505,11 +510,12 @@ class Raw2Film:
         canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
         return canvas.astype(dtype='uint8')
 
-    def add_metadata(self, src, metadata, exp_comp):
+    def add_metadata(self, src, metadata, exp_comp, gamma):
         """Adds metadata to image file."""
         metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in self.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
         metadata['EXIF:ExposureCompensation'] = exp_comp
+        metadata['EXIF:Gamma'] = gamma
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
 
@@ -590,10 +596,10 @@ def main():
     parser.add_argument('--rename', default=False, const=True, nargs='?',
                         help="Rename to match Google Photos photo stacking naming scheme")
     parser.add_argument('--keep-exp', dest='keep_exp', default=False, const=True, nargs='?',
-                        help="Keep the exposure of previously rendered images.")
+                        help="Keep the exposure and gamma of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
     parser.add_argument('--gamma', type=fraction, default=1.,
-                        help="Adjust gamma curve without effecting middle exposure")
+                        help="Adjust gamma curve without effecting middle exposure to change contrast")
     parser.add_argument('--width', type=fraction, default=36, help="Simulated film width in mm.")
     parser.add_argument('--height', type=fraction, default=24, help="Simulated film height in mm.")
     parser.add_argument('--ratio', type=fraction, default="4/5", help="Canvas aspect ratio.")
