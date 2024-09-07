@@ -313,7 +313,10 @@ class Raw2Film:
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
-            rgb = 0.2 * (5 * np.clip(rgb, a_min=0, a_max=None)) ** gamma
+            lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
+            gamma_mat = 0.2 * (5 * cp.clip(lum_mat, a_min=0, a_max=None)) ** gamma
+
+            rgb = cp.multiply(rgb, cp.dstack([cp.divide(gamma_mat, lum_mat)] * 3))
 
         if self.cuda:
             rgb = rgb.get()
@@ -379,8 +382,8 @@ class Raw2Film:
         global cp
         if not self.cuda:
             cp = np
-        lum_mat = cp.dot(np.clip(cp.dot(rgb, cp.asarray(self.REC2020_TO_REC709)), a_min=0, a_max=None),
-                         cp.asarray(lum_vec))
+        lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
+
         if 0 < crop < 1:
             ratio = lum_mat.shape[0] / lum_mat.shape[1]
             if ratio > 1:
