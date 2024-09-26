@@ -8,6 +8,7 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
+from itertools import chain
 
 import colour
 import cv2 as cv
@@ -569,7 +570,7 @@ def hex_color(arg):
 def main():
     parser = argparse.ArgumentParser(
         description="Develop and organize all raw files in the current directory by running processing.py.")
-    parser.add_argument('file', default=None, nargs='?', type=str,
+    parser.add_argument('file', default=None, nargs='*', type=str,
                         help="Name of file from subfolder to edit without extension. Can also be range with '-'")
     parser.add_argument('--formats', default=False, const=True, nargs='?', help="Print built-in film formats.")
     parser.add_argument('--list_cameras', default=False, const=True, nargs='?',
@@ -635,7 +636,9 @@ def main():
         args.width, args.height = Raw2Film.FORMATS[args.format]
 
     if args.file:
-        files = copy_from_subfolder(args.file)
+        files = []
+        for file in args.file:
+            files += copy_from_subfolder(file)
         if not files:
             print("No matching files have been found.")
     else:
@@ -713,7 +716,6 @@ def list_lenses():
 def copy_from_subfolder(file):
     name_start, name_end = prep_file_name(file)
 
-    found_any = False
     files = []
 
     for path in Path().rglob('./*/*.*'):
