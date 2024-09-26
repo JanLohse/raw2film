@@ -612,7 +612,7 @@ def main():
     parser.add_argument('--rotation', type=fraction, default=0., help="Angle by which to rotate image.")
     parser.add_argument('--color', type=hex_color, default="000000", help="Color of canvas as hex value.")
     parser.add_argument('--artist', type=str, default="Jan Lohse", help="Artist name in metadata.")
-    parser.add_argument('--luts', type=str, default=["Fuji_Standard.cube", "BW.cube"], nargs='+',
+    parser.add_argument('--luts', type=str, default=["Fuji_Standard.cube"], nargs='+',
                         help="Specify list of LUTs separated by comma.")
     parser.add_argument('--nd', type=int, default=1, help="0:No ND adjustment. 1: Automatic 3 stop ND recognition "
                                                           "for Fuji X100 cameras. 2: Force 3 stop ND adjustment.")
@@ -635,7 +635,13 @@ def main():
         args.width, args.height = Raw2Film.FORMATS[args.format]
 
     if args.file:
-        copy_from_subfolder(args.file)
+        files = copy_from_subfolder(args.file)
+        if not files:
+            print("No matching files have been found.")
+    else:
+        files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
+    if not files:
+        return
 
     if args.cuda and not is_cupy_available:
         args.cuda = False
@@ -643,9 +649,6 @@ def main():
         warnings.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
-    files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
-    if not files:
-        return
 
     start = time.time()
     counter = 1
@@ -711,17 +714,17 @@ def copy_from_subfolder(file):
     name_start, name_end = prep_file_name(file)
 
     found_any = False
+    files = []
 
     for path in Path().rglob('./*/*.*'):
         filename = str(path).split('\\')[-1]
         name = filename.split('.')[0]
         if name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST):
-            found_any = True
+            files.append(filename)
             if not os.path.isfile(filename):
                 copy(path, '.', )
 
-    if not found_any:
-        print("No matching files have been found.")
+    return files
 
 
 def cleanup_files(file):
