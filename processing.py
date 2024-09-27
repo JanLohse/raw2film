@@ -8,15 +8,15 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
-from itertools import chain
 
 import colour
 import cv2 as cv
 import exiftool
 import ffmpeg
-import imageio.v2 as imageio
+import imageio.v3 as imageio
 import lensfunpy
 import numpy as np
+
 
 try:
     import cupy as cp
@@ -446,7 +446,7 @@ class Raw2Film:
         rgb = colour.models.log_encoding_ARRILogC3(rgb)
         rgb = np.clip(np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
-        imageio.imsave(src.split(".")[0] + "_log.tiff", rgb)
+        imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
 
     def apply_lut(self, src, index, metadata):
         """Loads tiff file and applies LUT, generates jpg."""
@@ -497,7 +497,7 @@ class Raw2Film:
         os.remove(src)
         if self.canvas:
             image = self.add_canvas(image)
-        imageio.imsave(src.split('.')[0] + '.jpg', image, quality=100)
+        imageio.imwrite(src.split('.')[0] + '.jpg', image, quality=-1)
         return src.split('.')[0] + '.jpg'
 
     def add_canvas(self, image):
