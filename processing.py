@@ -718,7 +718,7 @@ def copy_from_subfolder(file):
 
     files = []
 
-    for path in Path().rglob('./*/*.*'):
+    for path in Path().rglob('./*.*'):
         filename = str(path).split('\\')[-1]
         name = filename.split('.')[0]
         if name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST):
