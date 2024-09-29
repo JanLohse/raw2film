@@ -1,4 +1,4 @@
-import argparse
+import configargparse as argparse
 import math
 import operator
 import os
@@ -620,7 +620,12 @@ def main():
     parser.add_argument('--cores', type=int, default=0,
                         help="How many cpu threads to use. Default is maximum available")
 
+    if os.path.isfile('config.txt'):
+        parser.add_argument('--config', is_config_file=True, default='config.txt')
+
     args = parser.parse_args()
+
+    print(args.luts)
 
     if not args.cores:
         args.cores = os.cpu_count()
