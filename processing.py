@@ -497,7 +497,7 @@ class Raw2Film:
         os.remove(src)
         if self.canvas:
             image = self.add_canvas(image)
-        imageio.imwrite(src.split('.')[0] + '.jpg', image, quality=-1)
+        imageio.imwrite(src.split('.')[0] + '.jpg', image, quality=100)
         return src.split('.')[0] + '.jpg'
 
     def add_canvas(self, image):
