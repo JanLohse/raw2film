@@ -625,8 +625,6 @@ def main():
 
     args = parser.parse_args()
 
-    print(args.luts)
-
     if not args.cores:
         args.cores = os.cpu_count()
     if args.formats:
