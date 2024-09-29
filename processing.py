@@ -572,36 +572,28 @@ def main():
         description="Develop and organize all raw files in the current directory by running processing.py.")
     parser.add_argument('file', default=None, nargs='*', type=str,
                         help="Name of file from subfolder to edit without extension. Can also be range with '-'")
-    parser.add_argument('--formats', default=False, const=True, nargs='?', help="Print built-in film formats.")
-    parser.add_argument('--list_cameras', default=False, const=True, nargs='?',
-                        help="Print all cameras from lensfunpy.")
-    parser.add_argument('--list_lenses', default=False, const=True, nargs='?', help="Print all lenses from lensfunpy.")
-    parser.add_argument('--cleanup', default=False, const=True, nargs='?',
+    parser.add_argument('--formats', action='store_true', help="Print built-in film formats.")
+    parser.add_argument('--list_cameras', action='store_true', help="Print all cameras from lensfunpy.")
+    parser.add_argument('--list_lenses', action='store_true', help="Print all lenses from lensfunpy.")
+    parser.add_argument('--cleanup', action='store_true',
                         help="Delete RAW files if JPEG was deleted. Requires files to be specified")
     parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
-    parser.add_argument('--no-crop', dest='crop', default=True, const=False, nargs='?',
-                        help="Preserve source aspect ratio.")
-    parser.add_argument('--no-blur', dest='blur', default=True, const=False, nargs='?',
-                        help="Turn off gaussian blur filter.")
-    parser.add_argument('--no-sharpen', dest='sharpen', default=True, const=False, nargs='?',
-                        help="Turn off sharpening filter.")
-    parser.add_argument('--no-halation', dest='halation', default=True, const=False, nargs='?',
-                        help="Turn off halation.")
-    parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", default=True, const=False, nargs='?')
-    parser.add_argument('--no-organize', dest='organize', default=True, const=False, nargs='?',
-                        help="Do no organize files.")
-    parser.add_argument('--no-correct', dest='correct', default=True, const=False, nargs='?',
-                        help="Turn off lens correction")
-    parser.add_argument('--canvas', default=False, const=True, nargs='?', help="Add canvas to output image.")
-    parser.add_argument('--no-cuda', dest='cuda', default=True, const=False, nargs='?',
-                        help="Turn off GPU acceleration.")
+    parser.add_argument('--no-crop', dest='crop', action='store_false', help="Preserve source aspect ratio.")
+    parser.add_argument('--no-blur', dest='blur', action='store_false', help="Turn off gaussian blur filter.")
+    parser.add_argument('--no-sharpen', dest='sharpen', action='store_false', help="Turn off sharpening filter.")
+    parser.add_argument('--no-halation', dest='halation', action='store_false', help="Turn off halation.")
+    parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", action='store_false')
+    parser.add_argument('--no-organize', dest='organize', action='store_false', help="Do no organize files.")
+    parser.add_argument('--no-correct', dest='correct', action='store_false', help="Turn off lens correction")
+    parser.add_argument('--canvas', action='store_true', help="Add canvas to output image.")
+    parser.add_argument('--no-cuda', dest='cuda', action='store_false', help="Turn off GPU acceleration.")
     parser.add_argument('--wb', default='standard', choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'],
                         help="Specify white balance mode.")
-    parser.add_argument('--tiff', default=False, const=True, nargs='?',
+    parser.add_argument('--tiff', action='store_true',
                         help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.")
-    parser.add_argument('--rename', default=False, const=True, nargs='?',
+    parser.add_argument('--rename', action='store_true',
                         help="Rename to match Google Photos photo stacking naming scheme")
-    parser.add_argument('--keep-exp', dest='keep_exp', default=False, const=True, nargs='?',
+    parser.add_argument('--keep-exp', dest='keep_exp', action='store_true',
                         help="Keep the exposure and gamma of previously rendered images.")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
     parser.add_argument('--gamma', type=fraction, default=1.,
