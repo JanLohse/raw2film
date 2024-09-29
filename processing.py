@@ -631,7 +631,9 @@ def main():
     if args.list_lenses:
         return list_lenses()
     if args.cleanup:
-        return cleanup_files(args.file)
+        for file in args.file:
+            cleanup_files(file)
+        return
     if args.format:
         args.width, args.height = Raw2Film.FORMATS[args.format]
 
