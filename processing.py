@@ -17,7 +17,6 @@ import imageio.v3 as imageio
 import lensfunpy
 import numpy as np
 
-
 try:
     import cupy as cp
 
@@ -314,7 +313,8 @@ class Raw2Film:
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
-            lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
+            lum_mat = cp.dot(rgb,
+                             cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
             gamma_mat = 0.2 * (5 * cp.clip(lum_mat, a_min=0, a_max=None)) ** gamma
 
             rgb = cp.multiply(rgb, cp.dstack([cp.divide(gamma_mat, lum_mat)] * 3))
@@ -723,7 +723,8 @@ def copy_from_subfolder(file):
     for path in Path().rglob('./*.*'):
         filename = str(path).split('\\')[-1]
         name = filename.split('.')[0]
-        if name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST):
+        if (name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST)
+                and filename not in files):
             files.append(filename)
             if not os.path.isfile(filename):
                 copy(path, '.', )
