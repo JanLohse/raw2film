@@ -457,9 +457,15 @@ class Raw2Film:
                             distance)
         rgb = achromatic - distance * achromatic
         # convert to arri log C
-        rgb = colour.models.log_encoding_ARRILogC3(rgb)
+        rgb = Raw2Film.encode_ARRILogC3(rgb)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
         imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
+
+    @staticmethod
+    def encode_ARRILogC3(x):
+        cut, a, b, c, d, e, f, _e_cut_f = 0.010591, 5.555556, 0.052272, 0.247190, 0.385537, 5.367655, 0.092809, 0.149658
+
+        return np.where(x > cut, c * np.log10(a * x + b) + d, e * x + f)
 
     def apply_lut(self, src, index, metadata):
         """Loads tiff file and applies LUT, generates jpg."""
