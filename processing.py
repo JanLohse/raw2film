@@ -1,4 +1,3 @@
-import configargparse as argparse
 import math
 import operator
 import os
@@ -10,6 +9,7 @@ from pathlib import Path
 from shutil import copy
 
 import colour
+import configargparse as argparse
 import cv2 as cv
 import exiftool
 import ffmpeg
@@ -443,8 +443,21 @@ class Raw2Film:
 
     @staticmethod
     def save_tiff(src, rgb):
+        # convert to arri wcg
+        rgb = np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG)
+        # compute achromaticity (max rgb value per pixel)
+        achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
+        # compute distance to gamut
+        distance = (achromatic - rgb) / achromatic
+        # smoothing parameter
+        a = .2
+        # compress distance
+        distance = np.where(distance > 1 - a,
+                            1 - a + a * ((distance - 1 + a) / a) / (np.sqrt(1 + ((distance - 1 + a) / a) ** 2)),
+                            distance)
+        rgb = achromatic - distance * achromatic
+        # convert to arri log C
         rgb = colour.models.log_encoding_ARRILogC3(rgb)
-        rgb = np.clip(np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG), a_min=0, a_max=1)
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
         imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
 
