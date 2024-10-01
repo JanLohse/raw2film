@@ -13,6 +13,7 @@ import cv2 as cv
 import exiftool
 import ffmpeg
 import imageio.v3 as imageio
+from PIL import Image
 import lensfunpy
 import numpy as np
 
@@ -129,16 +130,27 @@ class Raw2Film:
 
     def process_image(self, src: str, run_count):
         """Manages image processing pipeline."""
+        total = time.time()
+        start = time.time()
 
         rgb, metadata = self.raw_to_linear(src)
+
+        print(f"raw_to_linear  {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         if self.keep_exp:
             exp_comp, gamma = self.find_exp(src, self.exp)
         else:
             exp_comp, gamma = self.exp, self.gamma
 
+        print(f"find_exp       {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         if self.correct:
             rgb = np.asarray(self.lens_correction(rgb, metadata))
+
+        print(f"lens_correct   {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         if not run_count or not self.cuda:
             rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
@@ -146,18 +158,38 @@ class Raw2Film:
             with semaphore:
                 rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
 
+        print(f"film_emulation {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         Raw2Film.save_tiff(src, rgb)
         if self.tiff:
             return
 
+        print(f"save_tiff      {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         file_list = [self.apply_lut(src, i, metadata) for i in range(len(self.luts))]
+
+        print(f"apply_lut      {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         file_list = [self.convert_jpg(file) for file in file_list]
         os.remove(src.split('.')[0] + "_log.tiff")
 
+        print(f"convert_jpg    {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         for file in file_list:
             self.add_metadata(file, metadata, exp_comp, gamma)
+
+        print(f"add_metadata   {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         if self.organize:
             self.organize_files(src, file_list, metadata)
+
+        print(f"organize_files {time.time() - start:5.2f}s", flush=True)
+        print(f"=>             {time.time() - total:5.2f}s", flush=True)
 
     def raw_to_linear(self, src):
         """Takes raw file location and outputs linear rgb data and metadata."""
@@ -262,6 +294,7 @@ class Raw2Film:
         return cam, lens
 
     def film_emulation(self, rgb, metadata, exp_comp=0., gamma=1.):
+        start = time.time()
         global cp, cdimage
         if not self.cuda:
             cp = np
@@ -270,7 +303,8 @@ class Raw2Film:
 
         if self.rotation:
             rgb = self.rotate(rgb)
-
+        print(f"  init         {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         if self.wb == 'tungsten':
             daylight_rgb = self.kelvin_to_BT2020(5600)
             tungsten_rgb = self.kelvin_to_BT2020(4400)
@@ -279,9 +313,9 @@ class Raw2Film:
         lower, upper, max_amount = 2400, 8000, 1200
         if self.wb == 'standard':
             if self.cuda:
-                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]).get())
+                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.mean(rgb, axis=(0, 1)).get())
             else:
-                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.asarray([cp.mean(x) for x in cp.dsplit(rgb, 3)]))
+                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.mean(rgb, axis=(0, 1)))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
@@ -291,11 +325,17 @@ class Raw2Film:
                 target = 0.5 * value + 0.5 * (upper - max_amount)
             elif upper <= image_kelvin:
                 value, target = upper, upper - max_amount
-            rgb = cp.dot(rgb, cp.diag(self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)))
+            rgb *= self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)
+
+        print(f"  wb           {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         # crop to specified aspect ratio
         if self.crop:
             rgb = self.crop_image(rgb, aspect=self.width / self.height)
+
+        print(f"  crop         {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         # adjust exposure
         if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber']:
@@ -306,13 +346,16 @@ class Raw2Film:
         if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
                 and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
-        exposure = self.calc_exposure(self.gaussian_filter(rgb, sigma=3))
+        exposure = self.calc_exposure(rgb)
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .66, .9, .5
         lower_bound = -exposure + middle + max_under
         sloped = -slope * exposure + middle + slope_offset
         upper_bound = -exposure + middle + max_over
         adjustment = max(lower_bound, min(sloped, upper_bound))
         rgb *= 2 ** (adjustment + exp_comp)
+
+        print(f"  exposure     {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         # texture
         scale = max(rgb.shape) / (80 * self.width)
@@ -327,22 +370,54 @@ class Raw2Film:
             b = self.gaussian_filter(b, sigma=0.3 * scale)
             rgb += cp.clip(cp.dstack((r, g, b)) - rgb_limited, a_min=0, a_max=None)
 
+        print(f"  halation     {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         if self.blur:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
 
+        print(f"  blur         {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         if self.sharpen:
-            rgb = cp.log2(rgb + 2 ** -16)
+            start2 = time.time()
+            rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
+            print(f"    log        {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
             rgb = rgb + cp.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-            rgb = cp.exp2(rgb) - 2 ** -16
+            print(f"    add        {time.time() - start2:5.2f}s", flush=True)
+            if not self.grain:
+                start2 = time.time()
+                rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
+                print(f"    exp        {time.time() - start2:5.2f}s", flush=True)
+
+        print(f"  sharpen      {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         if self.grain:
-            rgb = cp.log2(rgb + 2 ** -16)
+            if not self.sharpen:
+                rgb = cp.log2(rgb + 2 ** -16)
+            start2 = time.time()
             noise = cp.random.rand(*rgb.shape) - .5
+            print(f"    random     {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
             noise = self.gaussian_blur(noise, sigma=.5 * scale)
+            print(f"    gaussian   {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
             noise = cdimage.gaussian_filter1d(noise, axis=2, sigma=.5 * scale)
-            noise = cp.dot(noise, cp.array([[1, 0, 0], [0, 1.2, 0], [0, 0, .5]]))
+            print(f"    gaussian1d {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
+            noise *= cp.array([1, 1.2, 0.5])
+            print(f"    dot        {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
             rgb += noise * (scale / 2)
-            rgb = cp.exp2(rgb) - 2 ** -16
+            print(f"    add_noise  {time.time() - start2:5.2f}s", flush=True)
+            start2 = time.time()
+            rgb = cp.exp(rgb * cp.log(2))
+            print(f"    exp2       {time.time() - start2:5.2f}s", flush=True)
+
+        print(f"  grain        {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
@@ -352,10 +427,15 @@ class Raw2Film:
 
             rgb = cp.multiply(rgb, cp.dstack([cp.divide(gamma_mat, lum_mat)] * 3))
 
+        print(f"  gamma        {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         if self.cuda:
             rgb = rgb.get()
             cp.get_default_pinned_memory_pool().free_all_blocks()
             cp.get_default_memory_pool().free_all_blocks()
+
+        print(f"  cuda         {time.time() - start:5.2f}s", flush=True)
 
         return rgb
 
@@ -428,7 +508,7 @@ class Raw2Film:
                 ratio = 1 / ratio
                 height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * crop) / 2)
             lum_mat = lum_mat[width: -width, height: -height]
-        return cp.average(cp.log2(lum_mat + cp.ones_like(lum_mat) * 2 ** -16))
+        return cp.average(cp.log(lum_mat + cp.ones_like(lum_mat) * 2 ** -16)) / cp.log(2)
 
     def find_exp(self, src, fallback_exp=0.):
         """Search for exposure compensation in already processed file."""
@@ -476,29 +556,53 @@ class Raw2Film:
 
     @staticmethod
     def save_tiff(src, rgb):
+        start = time.time()
         # convert to arri wcg
         rgb = np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG)
+        print(f"  arriwcg      {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         # compute achromaticity (max rgb value per pixel)
         achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
+
+        print(f"  achromatic   {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
+
         # compute distance to gamut
         distance = (achromatic - rgb) / achromatic
         # smoothing parameter
+
+        print(f"  distance     {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         a = .2
         # compress distance
         distance = np.where(distance > 1 - a,
-                            1 - a + a * ((distance - 1 + a) / a) / (np.sqrt(1 + ((distance - 1 + a) / a) ** 2)),
+                            1 - a + (distance - 1 + a) / (np.sqrt(1 + ((distance - 1) / a + 1) ** 2)),
                             distance)
+
+        print(f"  compression  {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         rgb = achromatic - distance * achromatic
         # convert to arri log C
+
+        print(f"  mapping      {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         rgb = Raw2Film.encode_ARRILogC3(rgb)
+
+        print(f"  logc         {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
+
+        print(f"  uint16       {time.time() - start:5.2f}s", flush=True)
+        start = time.time()
         imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
+
+        print(f"  tiff         {time.time() - start:5.2f}s", flush=True)
 
     @staticmethod
     def encode_ARRILogC3(x):
         cut, a, b, c, d, e, f = 0.010591, 5.555556, 0.052272, 0.247190, 0.385537, 5.367655, 0.092809
 
-        return np.where(x > cut, c * np.log10(a * x + b) + d, e * x + f)
+        return np.where(x > cut, (c / np.log(10)) * np.log(a * x + b) + d, e * x + f)
 
     def apply_lut(self, src, index, metadata):
         """Loads tiff file and applies LUT, generates jpg."""
@@ -545,10 +649,10 @@ class Raw2Film:
 
     def convert_jpg(self, src):
         """Converts to jpg and removes src tiff file."""
-        image = (imageio.imread(src) / 2 ** 8).astype(dtype='uint8')
+        image = Image.open(src).convert('RGB')
         os.remove(src)
         if self.canvas:
-            image = self.add_canvas(image)
+            image = self.add_canvas(np.array(image))
         imageio.imwrite(src.split('.')[0] + '.jpg', image, quality=100)
         return src.split('.')[0] + '.jpg'
 
