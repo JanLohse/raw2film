@@ -8,7 +8,6 @@ from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
 
-import colour
 import configargparse as argparse
 import cv2 as cv
 import exiftool
@@ -72,6 +71,12 @@ class Raw2Film:
     REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
                                   [-.0728, -.0084, 1.1187]])
+    REC2020_TO_XYZ = np.array([[0.6369580, 0.1446169, 0.1688810],
+                               [0.2627002, 0.6779981, 0.0593017],
+                               [0.0000000, 0.0280727, 1.0609851]])
+    XYZ_TO_REC2020 = np.array([[1.7166512, -0.3556708, -0.2533663],
+                               [-0.6666844, 1.6164812, 0.0157685],
+                               [0.0176399, -0.0427706, 0.9421031]])
     CAMERA_DB = {"X100S": "Fujifilm : X100S",
                  "DMC-GX80": "Panasonic : DMC-GX80",
                  "DC-FZ10002": "Panasonic : DC-FZ10002"}
@@ -175,8 +180,9 @@ class Raw2Film:
 
     @staticmethod
     def BT2020_to_kelvin(rgb):
-        XYZ = colour.RGB_to_XYZ(rgb, "ITU-R BT.2020")
-        x, y = colour.XYZ_to_xy(XYZ)
+        XYZ = np.dot(Raw2Film.REC2020_TO_XYZ, rgb)
+        x = XYZ[0] / np.sum(XYZ)
+        y = XYZ[1] / np.sum(XYZ)
         n = (x - 0.3366) / (y - 0.1735)
         CCT = (-949.86315 + 6253.80338 * np.exp(-n / 0.92159) + 28.70599 * np.exp(-n / 0.20039)
                + 0.00004 * np.exp(-n / 0.07125))
@@ -187,6 +193,7 @@ class Raw2Film:
         if not self.cuda:
             cp = np
 
+        # This section is ripped from the Colour Science package:
         CCT_3 = CCT ** 3
         CCT_2 = CCT ** 2
 
@@ -211,8 +218,8 @@ class Raw2Film:
         k = 3.0817580 * x_3 - 5.8733867 * x_2 + 3.75112997 * x - 0.37001483
         y = np.select(cnd_l, [i, j, k])
 
-        XYZ = colour.xy_to_XYZ(cp.array([x, y]))
-        rgb = colour.XYZ_to_RGB(XYZ, "ITU-R BT.2020")
+        XYZ = np.array([x / y, 1, (1 - x - y) / y])
+        rgb = np.dot(Raw2Film.XYZ_TO_REC2020, XYZ)
         return cp.asarray(rgb)
 
     # noinspection PyUnresolvedReferences
