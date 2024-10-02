@@ -1,4 +1,3 @@
-colour-science==0.4.4
 ffmpeg_python==0.2.0
 imageio==2.34.1
 lensfunpy==1.14.0
