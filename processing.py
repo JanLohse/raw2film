@@ -486,13 +486,14 @@ class Raw2Film:
 
         # compute distance to gamut
         distance = (achromatic - rgb) / achromatic
-        # smoothing parameter
 
-        a = .2
+        # smoothing parameter
+        a = 0.2
+        # precompute smooth compression function
+        x = np.linspace(1 - a, 1 + a, 16)
+        y = 1 - a + (x - 1 + a) / (np.sqrt(1 + ((x - 1) / a + 1) ** 2))
         # compress distance
-        distance = np.where(distance > 1 - a,
-                            1 - a + (distance - 1 + a) / (np.sqrt(1 + ((distance - 1) / a + 1) ** 2)),
-                            distance)
+        distance = np.interp(distance, np.concatenate((np.array([0]), x)), np.concatenate((np.array([0]), y)))
 
         rgb = achromatic - distance * achromatic
         # convert to arri log C
