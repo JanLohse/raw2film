@@ -3,7 +3,6 @@ Automatic raw image development with built-in film emulation.
 
 ## Installation
 Install required packages as follows:
-- [`colour-science`](https://pypi.org/project/colour-science/)
 - [`ffmpeg-python`](https://pypi.org/project/ffmpeg-python/)
 - [`imageio`](https://pypi.org/project/imageio/)
 - [`numpy`](https://pypi.org/project/numpy/)
@@ -12,6 +11,7 @@ Install required packages as follows:
 - [`SciPy`](https://pypi.org/project/SciPy/)
 - [`lensfunpy`](https://pypi.org/project/lensfunpy/)
 - [`opencv-python`](https://pypi.org/project/opencv-python/)
+- [`pillow`](https://pypi.org/project/pillow/)
 
 Optional:
 - [`cupy`](https://pypi.org/project/cupy/)

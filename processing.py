@@ -13,9 +13,9 @@ import cv2 as cv
 import exiftool
 import ffmpeg
 import imageio.v3 as imageio
-from PIL import Image
 import lensfunpy
 import numpy as np
+from PIL import Image
 
 try:
     import cupy as cp
