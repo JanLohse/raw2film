@@ -16,6 +16,7 @@ import imageio.v3 as imageio
 import lensfunpy
 import numpy as np
 from PIL import Image
+from sympy import ceiling
 
 try:
     import cupy as cp
@@ -319,14 +320,10 @@ class Raw2Film:
         scale = max(rgb.shape) / (80 * self.width)
 
         if self.halation:
-            threshold, maximum, slope_start, slope = .2, 3, .8, .33
-            rgb_limited = cp.clip(cp.minimum(rgb - threshold, rgb * slope - slope * (slope_start + threshold)
-                                             + slope_start), a_min=0, a_max=maximum)
-            r, g, b = cp.dsplit(rgb_limited, 3)
-            r = self.gaussian_filter(r, sigma=2.2 * scale)
-            g = .8 * self.gaussian_filter(g, sigma=2 * scale)
-            b = self.gaussian_filter(b, sigma=0.3 * scale)
-            rgb += cp.clip(cp.dstack((r, g, b)) - rgb_limited, a_min=0, a_max=None)
+            blured = self.exponential_blur(rgb, 16 * scale)
+            color_factors = cp.array([1, 0.5, 0])
+            rgb += cp.multiply(blured, color_factors)
+            rgb = cp.divide(rgb, color_factors + 1)
 
         if self.blur:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
@@ -476,6 +473,22 @@ class Raw2Film:
             return cp.dstack((r, g, b))
         else:
             return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
+
+    def exponential_blur(self, rgb, size):
+        size = math.ceil(size)
+        kernel = np.zeros((size, size))
+        radius = math.floor(size / 2)
+
+        for i in range(size):
+            for j in range(size):
+                dist = (i - size / 2) ** 2 + (j - size / 2) ** 2
+                if not dist:
+                    dist = 1
+                kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
+
+        kernel /= np.sum(kernel)
+
+        return cv.filter2D(rgb, -1, kernel)
 
     @staticmethod
     def save_tiff(src, rgb):
