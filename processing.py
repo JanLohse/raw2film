@@ -330,7 +330,7 @@ class Raw2Film:
 
         if self.halation:
             blured = self.exponential_blur(rgb, 20 * scale)
-            color_factors = cp.array([1.2, 0.6, 0])
+            color_factors = cp.array([1., 0.5, 0])
             rgb += cp.multiply(blured, color_factors)
             rgb = cp.divide(rgb, color_factors + 1)
 
