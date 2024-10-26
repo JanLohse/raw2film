@@ -319,23 +319,23 @@ class Raw2Film:
         # texture
         scale = max(rgb.shape) / (80 * self.width)
 
-        if self.halation:
-            blured = self.exponential_blur(rgb, 16 * scale)
-            color_factors = cp.array([1, 0.5, 0])
-            rgb += cp.multiply(blured, color_factors)
-            rgb = cp.divide(rgb, color_factors + 1)
-
         if self.blur:
             rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
 
         if self.sharpen:
             rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             rgb = rgb + cp.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-            if not self.grain:
+            if not self.grain or self.halation:
                 rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
 
+        if self.halation:
+            blured = self.exponential_blur(rgb, 20 * scale)
+            color_factors = cp.array([1.2, 0.6, 0])
+            rgb += cp.multiply(blured, color_factors)
+            rgb = cp.divide(rgb, color_factors + 1)
+
         if self.grain:
-            if not self.sharpen:
+            if not self.sharpen or self.halation:
                 rgb = cp.log2(rgb + 2 ** -16)
             noise = cp.random.rand(*rgb.shape) - .5
             noise = self.gaussian_blur(noise, sigma=.5 * scale)
