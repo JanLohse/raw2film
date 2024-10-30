@@ -86,13 +86,12 @@ class Raw2Film:
                "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
                "DC-FZ10002": "Leica : FZ1000 & compatibles"}
 
-    def __init__(self, crop=True, blur=True, sharpen=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
+    def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
                  cuda=False, keep_exp=False, gamma=1., **args):
         self.crop = crop
-        self.blur = blur
-        self.sharpen = sharpen
+        self.resolution = resolution
         self.halation = halation
         self.grain = grain
         self.organize = organize
@@ -324,14 +323,14 @@ class Raw2Film:
             rgb += cp.multiply(blured, color_factors)
             rgb = cp.divide(rgb, color_factors + 1)
 
-        if self.blur:
+        if self.resolution:
             rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             rgb = self.film_sharpness(rgb, scale)
             if not self.grain:
                 rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
 
         if self.grain:
-            if not self.blur:
+            if not self.resolution:
                 rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             noise = cp.random.rand(*rgb.shape) - .5
             noise = self.gaussian_blur(noise, sigma=scale / 160)
@@ -687,8 +686,7 @@ def main():
                         help="Delete RAW files if JPEG was deleted. Requires files to be specified")
     parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
     parser.add_argument('--no-crop', dest='crop', action='store_false', help="Preserve source aspect ratio.")
-    parser.add_argument('--no-blur', dest='blur', action='store_false', help="Turn off gaussian blur filter.")
-    parser.add_argument('--no-sharpen', dest='sharpen', action='store_false', help="Turn off sharpening filter.")
+    parser.add_argument('--no-resolution', dest='resolution', action='store_false', help="Turn off blur and sharpen.")
     parser.add_argument('--no-halation', dest='halation', action='store_false', help="Turn off halation.")
     parser.add_argument('--no-grain', dest='grain', help="Turn off halation.", action='store_false')
     parser.add_argument('--no-organize', dest='organize', action='store_false', help="Do no organize files.")
