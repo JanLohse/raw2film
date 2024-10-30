@@ -16,7 +16,6 @@ import imageio.v3 as imageio
 import lensfunpy
 import numpy as np
 from PIL import Image
-from sympy import ceiling
 
 try:
     import cupy as cp
@@ -317,32 +316,29 @@ class Raw2Film:
         rgb *= 2 ** (adjustment + exp_comp)
 
         # texture
-        scale = max(rgb.shape) / (80 * self.width)
-
-        if self.blur:
-            rgb = self.gaussian_blur(rgb, sigma=.5 * scale)
-
-        if self.sharpen:
-            rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
-            rgb = rgb + cp.clip(rgb - self.gaussian_blur(rgb, sigma=scale), a_min=-2, a_max=2)
-            if not self.grain or self.halation:
-                rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
+        scale = max(rgb.shape) / self.width  # pixels per mm
 
         if self.halation:
-            blured = self.exponential_blur(rgb, 20 * scale)
-            color_factors = cp.array([1., 0.5, 0])
+            blured = self.exponential_blur(rgb, scale / 5)
+            color_factors = cp.array([1.2, 0.5, 0])
             rgb += cp.multiply(blured, color_factors)
             rgb = cp.divide(rgb, color_factors + 1)
 
+        if self.blur:
+            rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
+            rgb = self.film_sharpness(rgb, scale)
+            if not self.grain:
+                rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
+
         if self.grain:
-            if not self.sharpen or self.halation:
-                rgb = cp.log2(rgb + 2 ** -16)
+            if not self.blur:
+                rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             noise = cp.random.rand(*rgb.shape) - .5
-            noise = self.gaussian_blur(noise, sigma=.5 * scale)
-            noise = cdimage.gaussian_filter1d(noise, axis=2, sigma=.5 * scale)
+            noise = self.gaussian_blur(noise, sigma=scale / 160)
+            noise = cdimage.gaussian_filter1d(noise, axis=2, sigma=scale / 160)
             noise *= cp.array([1, 1.2, 0.5])
-            rgb += noise * (scale / 2)
-            rgb = cp.exp(rgb * cp.log(2))
+            rgb += noise * (scale / 160)
+            rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
@@ -473,6 +469,43 @@ class Raw2Film:
             return cp.dstack((r, g, b))
         else:
             return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
+
+    def mtf_curve(self, x, a, b, c, d):
+        gauss = lambda z: a * math.exp(- (x - b) ** 2 / (2 * (b / 3) ** 2))
+        linear = lambda z: c * z + d
+
+        y_1 = gauss(x)
+        y_2 = linear(x)
+
+        base = 1000
+
+        return y_1 + y_2 - math.log(base ** y_1 + base ** y_2, base)
+
+    def film_sharpness(self, rgb, scale, size=None):
+        # red_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.035, 0.844, -1.1206, 1.460)
+        # green_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.049, 1.054, -0.8546, 1.214)
+        # blue_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.071, 1.099, -0.6927, 0.985)
+        kernel_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.1, 1.2, -0.85, 1.22)
+
+        if size is None:
+            size = int(scale)
+            if not size % 2:
+                size += 1
+
+        distances = np.fromfunction(lambda x, y: (size // 2 - x) ** 2 + (size // 2 - y) ** 2, (size, size))
+        frequencies = np.sqrt(distances)
+        frequencies[size // 2, size // 2] = 10 ** -5
+        frequencies = scale / frequencies
+
+        kernel = 1 - np.vectorize(kernel_mtf)(frequencies)
+
+        distances[size // 2, size // 2] = 1
+        kernel /= distances
+        kernel /= np.sum(kernel)
+
+        rgb = cv.filter2D(rgb, -1, kernel)
+
+        return rgb
 
     def exponential_blur(self, rgb, size):
         size = math.ceil(size)
