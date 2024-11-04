@@ -93,7 +93,7 @@ class Raw2Film:
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 cuda=False, keep_exp=False, gamma=1., **args):
+                 cuda=False, keep_exp=False, gamma=1., bw_grain=False, **args):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -120,6 +120,7 @@ class Raw2Film:
         self.cuda = cuda
         self.keep_exp = keep_exp
         self.gamma = gamma
+        self.bw_grain = bw_grain
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -336,17 +337,26 @@ class Raw2Film:
         if self.grain:
             if not self.resolution:
                 rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
-            start2 = time.time()
-            noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
             # compute scaling factor of exposure rms in regard to measuring device size
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
-            rough_noise = cp.multiply(noise, cp.array([11, 10, 17], dtype=cp.float32) * std_factor / 660)
-            clean_noise = cp.multiply(noise, cp.array([4, 5, 6], dtype=cp.float32) * std_factor / 660)
-            if scale * 0.0125 * 2 * math.sqrt(math.pi) > 1:
-                rough_noise = self.gaussian_blur(rough_noise, scale * 0.0125) * (
-                        scale * 0.0125 * 2 + math.sqrt(math.pi))
-            if scale * 0.005 * 2 * math.sqrt(math.pi) > 1:
-                clean_noise = self.gaussian_blur(clean_noise, scale * 0.005) * (scale * 0.005 * 2 + math.sqrt(math.pi))
+            if not self.bw_grain:
+                noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
+                rough_noise = cp.multiply(noise, cp.array([11, 10, 17], dtype=cp.float32) * std_factor / 750)
+                clean_noise = cp.multiply(noise, cp.array([4, 5, 6], dtype=cp.float32) * std_factor / 750)
+            else:
+                noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
+                rough_noise = noise * 10 * std_factor / 1500
+                clean_noise = noise * 5 * std_factor / 1500
+            rough_scale, clean_scale = 0.005, 0.002
+            if scale * rough_scale * 2 * math.sqrt(math.pi) > 1:
+                rough_noise = self.gaussian_blur(rough_noise, scale * rough_scale) * (
+                        scale * rough_scale * 2 + math.sqrt(math.pi))
+            if scale * clean_scale * 2 * math.sqrt(math.pi) > 1:
+                clean_noise = self.gaussian_blur(clean_noise, scale * clean_scale) * (
+                        scale * clean_scale * 2 + math.sqrt(math.pi))
+            if self.bw_grain:
+                rough_noise = np.repeat(rough_noise[:, :, np.newaxis], 3, axis=2)
+                clean_noise = np.repeat(clean_noise[:, :, np.newaxis], 3, axis=2)
             noise_blending = cp.clip((1 / 12) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
             rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
             rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
@@ -496,7 +506,7 @@ class Raw2Film:
     @staticmethod
     def film_sharpness(rgb, scale, size=None):
         # values modelling the mtf curve for the blue layer of kodak vision 200t
-        kernel_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.051, 1.24, -1.4, 2.26)
+        kernel_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.045, 1.24, -1.4, 2.26)
 
         if size is None:
             size = int(scale // 2)
@@ -713,6 +723,8 @@ def main():
                         help="Rename to match Google Photos photo stacking naming scheme")
     parser.add_argument('--keep-exp', dest='keep_exp', action='store_true',
                         help="Keep the exposure and gamma of previously rendered images.")
+    parser.add_argument('--bw-grain', dest='bw_grain', action='store_true',
+                        help="Monochrome insted of full color grain")
     parser.add_argument('--exp', type=fraction, default=0, help="By how many stops to adjust exposure")
     parser.add_argument('--gamma', type=fraction, default=1.,
                         help="Adjust gamma curve without effecting middle exposure to change contrast")
