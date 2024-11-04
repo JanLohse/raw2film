@@ -16,6 +16,7 @@ import imageio.v3 as imageio
 import lensfunpy
 import numpy as np
 from PIL import Image
+import torch
 
 try:
     import cupy as cp
@@ -68,16 +69,19 @@ class Raw2Film:
                '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
     REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
                                    [-.1576, 0.8805, 0.0077],
-                                   [0.0615, 0.1946, 1.0275]])
+                                   [0.0615, 0.1946, 1.0275]], dtype=np.float32)
     REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
                                   [-.5879, 1.1330, -.1006],
-                                  [-.0728, -.0084, 1.1187]])
+                                  [-.0728, -.0084, 1.1187]], dtype=np.float32)
+    REC709_TO_REC2020 = np.array([[.6274, .0691, .0164],
+                                  [.3294, .9195, .0880],
+                                  [.0433, .0114, .8956]], dtype=np.float32)
     REC2020_TO_XYZ = np.array([[0.6369580, 0.1446169, 0.1688810],
                                [0.2627002, 0.6779981, 0.0593017],
-                               [0.0000000, 0.0280727, 1.0609851]])
+                               [0.0000000, 0.0280727, 1.0609851]], dtype=np.float32)
     XYZ_TO_REC2020 = np.array([[1.7166512, -0.3556708, -0.2533663],
                                [-0.6666844, 1.6164812, 0.0157685],
-                               [0.0176399, -0.0427706, 0.9421031]])
+                               [0.0176399, -0.0427706, 0.9421031]], dtype=np.float32)
     CAMERA_DB = {"X100S": "Fujifilm : X100S",
                  "DMC-GX80": "Panasonic : DMC-GX80",
                  "DC-FZ10002": "Panasonic : DC-FZ10002"}
@@ -267,7 +271,7 @@ class Raw2Film:
         if not self.cuda:
             cp = np
             cdimage = ndimage
-        rgb = cp.asarray(rgb)
+        rgb = cp.asarray(rgb, dtype=cp.float32)
 
         if self.rotation:
             rgb = self.rotate(rgb)
@@ -318,8 +322,8 @@ class Raw2Film:
         scale = max(rgb.shape) / self.width  # pixels per mm
 
         if self.halation:
-            blured = self.exponential_blur(rgb, scale / 5)
-            color_factors = cp.array([1.2, 0.5, 0])
+            blured = self.exponential_blur(rgb, scale / 4)
+            color_factors = cp.dot(cp.array([1., 0.5, 0], dtype=cp.float32), self.REC709_TO_REC2020)
             rgb += cp.multiply(blured, color_factors)
             rgb = cp.divide(rgb, color_factors + 1)
 
@@ -332,17 +336,25 @@ class Raw2Film:
         if self.grain:
             if not self.resolution:
                 rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
-            noise = cp.random.rand(*rgb.shape) - .5
-            noise = self.gaussian_blur(noise, sigma=scale / 160)
-            noise = cdimage.gaussian_filter1d(noise, axis=2, sigma=scale / 160)
-            noise *= cp.array([1, 1.2, 0.5])
-            rgb += noise * (scale / 160)
+            start2 = time.time()
+            noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
+            # compute scaling factor of exposure rms in regard to measuring device size
+            std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
+            rough_noise = cp.multiply(noise, cp.array([11, 10, 17], dtype=cp.float32) * std_factor / 660)
+            clean_noise = cp.multiply(noise, cp.array([4, 5, 6], dtype=cp.float32) * std_factor / 660)
+            if scale * 0.0125 * 2 * math.sqrt(math.pi) > 1:
+                rough_noise = self.gaussian_blur(rough_noise, scale * 0.0125) * (
+                        scale * 0.0125 * 2 + math.sqrt(math.pi))
+            if scale * 0.005 * 2 * math.sqrt(math.pi) > 1:
+                clean_noise = self.gaussian_blur(clean_noise, scale * 0.005) * (scale * 0.005 * 2 + math.sqrt(math.pi))
+            noise_blending = cp.clip((1 / 12) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
+            rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
             rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
-            lum_mat = cp.dot(rgb,
-                             cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
+            lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709, dtype=cp.float32),
+                                         cp.asarray(cp.array([.2127, .7152, .0722], dtype=cp.float32))))
             gamma_mat = 0.2 * (5 * cp.clip(lum_mat, a_min=0, a_max=None)) ** gamma
 
             rgb = cp.multiply(rgb, cp.dstack([cp.divide(gamma_mat, lum_mat)] * 3))
@@ -484,7 +496,7 @@ class Raw2Film:
         # red_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.035, 0.844, -1.1206, 1.460)
         # green_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.049, 1.054, -0.8546, 1.214)
         # blue_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.071, 1.099, -0.6927, 0.985)
-        kernel_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.1, 1.2, -0.85, 1.22)
+        kernel_mtf = lambda x: 10 ** self.mtf_curve(math.log10(x), 0.1, 1.1, -0.85, 1.22)
 
         if size is None:
             size = int(scale)
