@@ -324,7 +324,7 @@ class Raw2Film:
 
         if self.halation:
             blured = self.exponential_blur(rgb, scale / 4)
-            color_factors = cp.dot(cp.array([1., 0.5, 0], dtype=cp.float32), self.REC709_TO_REC2020)
+            color_factors = cp.dot(cp.array([1.2, 0.5, 0], dtype=cp.float32), self.REC709_TO_REC2020)
             rgb += cp.multiply(blured, color_factors)
             rgb = cp.divide(rgb, color_factors + 1)
 
@@ -341,8 +341,8 @@ class Raw2Film:
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
             if not self.bw_grain:
                 noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
-                rough_noise = cp.multiply(noise, cp.array([11, 10, 17], dtype=cp.float32) * std_factor / 750)
-                clean_noise = cp.multiply(noise, cp.array([4, 5, 6], dtype=cp.float32) * std_factor / 750)
+                rough_noise = cp.multiply(noise, cp.array([9, 10, 23], dtype=cp.float32) * std_factor / 750)
+                clean_noise = cp.multiply(noise, cp.array([4, 5, 12], dtype=cp.float32) * std_factor / 750)
             else:
                 noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
                 rough_noise = noise * 10 * std_factor / 1500
@@ -357,7 +357,7 @@ class Raw2Film:
             if self.bw_grain:
                 rough_noise = np.repeat(rough_noise[:, :, np.newaxis], 3, axis=2)
                 clean_noise = np.repeat(clean_noise[:, :, np.newaxis], 3, axis=2)
-            noise_blending = cp.clip((1 / 12) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
+            noise_blending = cp.clip((1 / 11) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
             rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
             rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
 
