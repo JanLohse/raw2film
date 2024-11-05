@@ -339,14 +339,15 @@ class Raw2Film:
                 rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             # compute scaling factor of exposure rms in regard to measuring device size
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
+            strength = 1.33
             if not self.bw_grain:
                 noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
-                rough_noise = cp.multiply(noise, cp.array([9, 10, 23], dtype=cp.float32) * std_factor / 750)
-                clean_noise = cp.multiply(noise, cp.array([4, 5, 12], dtype=cp.float32) * std_factor / 750)
+                rough_noise = cp.multiply(noise, cp.array([9, 10, 23], dtype=cp.float32) * std_factor / 1000 * strength)
+                clean_noise = cp.multiply(noise, cp.array([4, 5, 12], dtype=cp.float32) * std_factor / 1000 * strength)
             else:
                 noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
-                rough_noise = noise * 10 * std_factor / 1500
-                clean_noise = noise * 5 * std_factor / 1500
+                rough_noise = noise * (10 * std_factor / 1000 / math.sqrt(3) * strength)
+                clean_noise = noise * (5 * std_factor / 1000 / math.sqrt(3) * strength)
             rough_scale, clean_scale = 0.005, 0.002
             if scale * rough_scale * 2 * math.sqrt(math.pi) > 1:
                 rough_noise = self.gaussian_blur(rough_noise, scale * rough_scale) * (
@@ -505,8 +506,10 @@ class Raw2Film:
 
     @staticmethod
     def film_sharpness(rgb, scale, size=None):
-        # values modelling the mtf curve for the blue layer of kodak vision 200t
-        kernel_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.045, 1.24, -1.4, 2.26)
+        # values modelling the mtf curve of kodak vision 3 200t
+        red_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.019, 1.06, -1.41, 1.95)
+        green_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.0547, 1.197, -1.06, 1.59)
+        blue_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.059, 1.287, -1.3, 2.07)
 
         if size is None:
             size = int(scale // 2)
@@ -518,13 +521,19 @@ class Raw2Film:
         frequencies[size // 2, size // 2] = 10 ** -5
         frequencies = scale / frequencies
 
-        kernel = 1 - np.vectorize(kernel_mtf)(frequencies)
+        red_kernel = 1 - np.vectorize(red_mtf)(frequencies)
+        green_kernel = 1 - np.vectorize(green_mtf)(frequencies)
+        blue_kernel = 1 - np.vectorize(blue_mtf)(frequencies)
 
         distances[size // 2, size // 2] = 1
-        kernel /= distances
-        kernel /= np.sum(kernel)
+        red_kernel /= distances
+        red_kernel /= np.sum(red_kernel)
+        green_kernel /= distances
+        green_kernel /= np.sum(green_kernel)
+        blue_kernel /= distances
+        blue_kernel /= np.sum(blue_kernel)
 
-        rgb = cv.filter2D(rgb, -1, kernel)
+        rgb = cv.filter2D(rgb, -1, np.dstack((red_kernel, green_kernel, blue_kernel)))
 
         return rgb
 
@@ -735,7 +744,7 @@ def main():
     parser.add_argument('--rotation', type=fraction, default=0., help="Angle by which to rotate image.")
     parser.add_argument('--color', type=hex_color, default="000000", help="Color of canvas as hex value.")
     parser.add_argument('--artist', type=str, default="Jan Lohse", help="Artist name in metadata.")
-    parser.add_argument('--luts', type=str, default=["Fuji_Standard.cube"], nargs='+',
+    parser.add_argument('--luts', type=str, default=["Fuji_Natural.cube"], nargs='+',
                         help="Specify list of LUTs separated by comma.")
     parser.add_argument('--nd', type=int, default=1, help="0:No ND adjustment. 1: Automatic 3 stop ND recognition "
                                                           "for Fuji X100 cameras. 2: Force 3 stop ND adjustment.")
