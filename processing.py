@@ -7,6 +7,7 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
+import matplotlib.pyplot as plt
 
 import configargparse as argparse
 import cv2 as cv
@@ -525,7 +526,7 @@ class Raw2Film:
         green_kernel = 1 - np.vectorize(green_mtf)(frequencies)
         blue_kernel = 1 - np.vectorize(blue_mtf)(frequencies)
 
-        distances[size // 2, size // 2] = 1
+        distances[size // 2, size // 2] = 4
         red_kernel /= distances
         red_kernel /= np.sum(red_kernel)
         green_kernel /= distances
