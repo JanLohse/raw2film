@@ -339,7 +339,7 @@ class Raw2Film:
                 rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
             # compute scaling factor of exposure rms in regard to measuring device size
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
-            strength = 1.33
+            strength = 1.
             if not self.bw_grain:
                 noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
                 rough_noise = cp.multiply(noise, cp.array([9, 10, 23], dtype=cp.float32) * std_factor / 1000 * strength)
