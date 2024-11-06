@@ -7,6 +7,7 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
+import matplotlib.pyplot as plt
 
 import configargparse as argparse
 import cv2 as cv
@@ -519,19 +520,22 @@ class Raw2Film:
         distances = np.fromfunction(lambda x, y: (size // 2 - x) ** 2 + (size // 2 - y) ** 2, (size, size))
         frequencies = np.sqrt(distances)
         frequencies[size // 2, size // 2] = 10 ** -5
-        frequencies = scale / frequencies
+        frequencies = scale / frequencies / 2
 
         red_kernel = 1 - np.vectorize(red_mtf)(frequencies)
         green_kernel = 1 - np.vectorize(green_mtf)(frequencies)
         blue_kernel = 1 - np.vectorize(blue_mtf)(frequencies)
 
-        distances[size // 2, size // 2] = 4
+        distances[size // 2, size // 2] = 0.25
         red_kernel /= distances
         red_kernel /= np.sum(red_kernel)
         green_kernel /= distances
         green_kernel /= np.sum(green_kernel)
         blue_kernel /= distances
         blue_kernel /= np.sum(blue_kernel)
+
+        plt.imshow(red_kernel)
+        plt.show()
 
         rgb = cv.filter2D(rgb, -1, np.dstack((red_kernel, green_kernel, blue_kernel)))
 
