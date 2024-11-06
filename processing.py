@@ -7,7 +7,6 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
-import matplotlib.pyplot as plt
 
 import configargparse as argparse
 import cv2 as cv
