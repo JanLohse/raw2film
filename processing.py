@@ -7,7 +7,6 @@ import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
 from shutil import copy
-import matplotlib.pyplot as plt
 
 import configargparse as argparse
 import cv2 as cv
@@ -506,38 +505,43 @@ class Raw2Film:
         return y_1 + y_2 - math.log(base ** y_1 + base ** y_2, base)
 
     @staticmethod
-    def film_sharpness(rgb, scale, size=None):
-        # values modelling the mtf curve of kodak vision 3 200t
-        red_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.019, 1.06, -1.41, 1.95)
-        green_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.0547, 1.197, -1.06, 1.59)
-        blue_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x), 0.059, 1.287, -1.3, 2.07)
+    def film_sharpness(rgb, scale):
+        red_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.019, 1.06, -1.41, 1.95)
+        green_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.0547, 1.197, -1.06, 1.59)
+        blue_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.059, 1.287, -1.3, 2.07)
 
-        if size is None:
-            size = int(scale // 2)
-            if not size % 2:
-                size += 1
+        size = int(scale // 2)
+        if not size % 2:
+            size += 1
 
-        distances = np.fromfunction(lambda x, y: (size // 2 - x) ** 2 + (size // 2 - y) ** 2, (size, size))
-        frequencies = np.sqrt(distances)
-        frequencies[size // 2, size // 2] = 10 ** -5
-        frequencies = scale / frequencies / 2
+        kernel = np.zeros((size, size))
+        kernel[size // 2, size // 2] = 1
+        f = np.fft.fft2(kernel)
+        f_shift = np.fft.fftshift(f)
 
-        red_kernel = 1 - np.vectorize(red_mtf)(frequencies)
-        green_kernel = 1 - np.vectorize(green_mtf)(frequencies)
-        blue_kernel = 1 - np.vectorize(blue_mtf)(frequencies)
+        frequency = np.abs(np.fft.fftfreq(size, 1 / scale)[:, None])
+        frequency_x, frequency_y = np.meshgrid(frequency, frequency)
+        frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
 
-        distances[size // 2, size // 2] = 0.25
-        red_kernel /= distances
+        red_factors = np.vectorize(red_mtf)(frequency)
+        green_factors = np.vectorize(green_mtf)(frequency)
+        blue_factors = np.vectorize(blue_mtf)(frequency)
+
+        red_shift = f_shift * red_factors
+        green_shift = f_shift * green_factors
+        blue_shift = f_shift * blue_factors
+
+        red_kernel = np.fft.ifft2(np.fft.ifftshift(red_shift)).real
+        green_kernel = np.fft.ifft2(np.fft.ifftshift(green_shift)).real
+        blue_kernel = np.fft.ifft2(np.fft.ifftshift(blue_shift)).real
+
         red_kernel /= np.sum(red_kernel)
-        green_kernel /= distances
         green_kernel /= np.sum(green_kernel)
-        blue_kernel /= distances
         blue_kernel /= np.sum(blue_kernel)
 
-        plt.imshow(red_kernel)
-        plt.show()
+        kernel = np.dstack((red_kernel, green_kernel, blue_kernel))
 
-        rgb = cv.filter2D(rgb, -1, np.dstack((red_kernel, green_kernel, blue_kernel)))
+        rgb = cv.filter2D(rgb, -1, kernel)
 
         return rgb
 
