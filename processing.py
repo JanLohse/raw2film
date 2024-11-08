@@ -89,11 +89,19 @@ class Raw2Film:
                "LUMIX G 25/F1.7": "Panasonic : Lumix G 25mm f/1.7 Asph.",
                "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
                "DC-FZ10002": "Leica : FZ1000 & compatibles"}
+    FILM_DB = {"250D": {'r_a': 1.020, 'r_f': 34, 'g_a': 1.034, 'g_f': 52, 'b_a': 1.064, 'b_f': 63,
+                        'rough': [10, 11, 17], 'clean': [4, 5, 6]},
+               "500T": {'r_a': 1.073, 'r_f': 60, 'g_a': 1.052, 'g_f': 53, 'b_a': 1.039, 'b_f': 34,
+                        'rough': [10, 14, 31], 'clean': [5, 6, 10]},
+               "200T": {'r_a': 1.008, 'r_f': 38, 'g_a': 1.092, 'g_f': 56, 'b_a': 1.120, 'b_f': 65,
+                        'rough': [9, 10, 23], 'clean': [4, 5, 12]},
+               "50D": {'r_a': 1.023, 'r_f': 36, 'g_a': 1.024, 'g_f': 44, 'b_a': 1.000, 'b_f': 36,
+                       'rough': [7, 7, 13], 'clean': [2, 3, 5]}}
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 cuda=False, keep_exp=False, gamma=1., bw_grain=False, **args):
+                 cuda=False, keep_exp=False, gamma=1., bw_grain=False, stock="250D", **args):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -121,6 +129,7 @@ class Raw2Film:
         self.keep_exp = keep_exp
         self.gamma = gamma
         self.bw_grain = bw_grain
+        self.stock = Raw2Film.FILM_DB[stock]
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -342,8 +351,10 @@ class Raw2Film:
             strength = 1.
             if not self.bw_grain:
                 noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
-                rough_noise = cp.multiply(noise, cp.array([9, 10, 23], dtype=cp.float32) * std_factor / 1000 * strength)
-                clean_noise = cp.multiply(noise, cp.array([4, 5, 12], dtype=cp.float32) * std_factor / 1000 * strength)
+                rough_noise = cp.multiply(noise, cp.array(self.stock['rough'],
+                                                          dtype=cp.float32) * std_factor / 1000 * strength)
+                clean_noise = cp.multiply(noise, cp.array(self.stock['clean'],
+                                                          dtype=cp.float32) * std_factor / 1000 * strength)
             else:
                 noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
                 rough_noise = noise * (10 * std_factor / 1000 / math.sqrt(3) * strength)
@@ -493,23 +504,19 @@ class Raw2Film:
             return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
 
     @staticmethod
-    def mtf_curve(x, a, b, c, d):
-        gauss = lambda z: a * math.exp(- (x - b) ** 2 / (2 * (b / (2 * math.pi)) ** 2))
-        linear = lambda z: c * z + d
+    def mtf_curve(a=1., f=50.):
+        assert a >= 1 and f > 0
+        b = a / (math.sqrt((2 * a - 1) * f ** 2) - math.sqrt(a - 1) * f)
+        c = - math.sqrt(a - 1)
 
-        y_1 = gauss(x)
-        y_2 = linear(x)
+        mtf = lambda x: a / (1 + (x * b + c) ** 2)
 
-        base = 1000
+        return mtf
 
-        return y_1 + y_2 - math.log(base ** y_1 + base ** y_2, base)
-
-    @staticmethod
-    def film_sharpness(rgb, scale):
-        red_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.019, 1.06, -1.41, 1.95)
-        green_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.0547, 1.197, -1.06, 1.59)
-        blue_mtf = lambda x: 10 ** Raw2Film.mtf_curve(math.log10(x + 0.000001), 0.059, 1.287, -1.3, 2.07)
-
+    def film_sharpness(self, rgb, scale):
+        red_mtf = Raw2Film.mtf_curve(self.stock['r_a'], self.stock['r_f'])
+        green_mtf = Raw2Film.mtf_curve(self.stock['g_a'], self.stock['g_f'])
+        blue_mtf = Raw2Film.mtf_curve(self.stock['b_a'], self.stock['b_f'])
         size = int(scale // 2)
         if not size % 2:
             size += 1
@@ -724,6 +731,8 @@ def main():
     parser.add_argument('--cleanup', action='store_true',
                         help="Delete RAW files if JPEG was deleted. Requires files to be specified")
     parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
+    parser.add_argument('--stock', type=str, choices=Raw2Film.FILM_DB.keys(), default="250D",
+                        help="Select film stock for grain and resolution")
     parser.add_argument('--no-crop', dest='crop', action='store_false', help="Preserve source aspect ratio.")
     parser.add_argument('--no-resolution', dest='resolution', action='store_false', help="Turn off blur and sharpen.")
     parser.add_argument('--no-halation', dest='halation', action='store_false', help="Turn off halation.")
