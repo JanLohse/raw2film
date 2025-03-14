@@ -1,9 +1,0 @@
-ffmpeg_python==0.2.0
-imageio==2.34.1
-lensfunpy==1.14.0
-numpy==1.26.4
-opencv-python==4.9.0.80
-PyExifTool==0.5.6
-rawpy==0.18.1
-scipy==1.13.0
-pillow==10.3.0

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools >= 61.0", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raw2film"
+dynamic = ["version"]
+authors = [
+  { name="Jan Lohse" },
+]
+description = "Console tool to process raw files with a analog film look."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "ffmpeg-python",
+    "imageio",
+    "lensfunpy",
+    "numpy",
+    "opencv-python",
+    "PyExifTool",
+    "rawpy",
+    "scipy",
+    "pillow"
+]
+
+[project.urls]
+Homepage = "https://github.com/JanLohse/spectral_film_lut"
+Issues = "https://github.com/JanLohse/spectral_film_lut/issues"
+
+[project.scripts]
+raw2film = "raw2film:main"
+
+[tool.setuptools_scm]
