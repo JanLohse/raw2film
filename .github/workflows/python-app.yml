@@ -21,6 +21,6 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/spectral_film_lut-*.tar.gz
+          files: dist/raw2film-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
