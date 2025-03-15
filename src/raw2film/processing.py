@@ -16,6 +16,7 @@ import torch
 from PIL import Image
 from raw2film import data, effects, color_processing
 from raw2film import utils
+from raw2film.utils import hex_color, fraction
 from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
 from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
 from spectral_film_lut.utils import create_lut
@@ -320,22 +321,6 @@ class Raw2Film:
 def init_child(semaphore_):
     global semaphore
     semaphore = semaphore_
-
-
-def fraction(arg):
-    if "/" in str(arg):
-        return float(arg.split('/')[0]) / float(arg.split('/')[1])
-    else:
-        return float(arg)
-
-
-def hex_color(arg):
-    if str(arg) == "white":
-        return [255, 255, 255]
-    if str(arg) == "black":
-        return [0, 0, 0]
-    return list(int(arg[i:i + 2], 16) for i in (0, 2, 4))
-
 
 def main():
     parser = argparse.ArgumentParser(

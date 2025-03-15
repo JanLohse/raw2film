@@ -123,3 +123,18 @@ def move_file(src, path):
     if not os.path.exists(path):
         os.makedirs(path)
     os.replace(src, path + src)
+
+
+def fraction(arg):
+    if "/" in str(arg):
+        return float(arg.split('/')[0]) / float(arg.split('/')[1])
+    else:
+        return float(arg)
+
+
+def hex_color(arg):
+    if str(arg) == "white":
+        return [255, 255, 255]
+    if str(arg) == "black":
+        return [0, 0, 0]
+    return list(int(arg[i:i + 2], 16) for i in (0, 2, 4))

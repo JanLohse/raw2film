@@ -25,6 +25,7 @@ dependencies = [
     "rawpy",
     "scipy",
     "pillow",
+    "configargparse",
     "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
 ]
 
