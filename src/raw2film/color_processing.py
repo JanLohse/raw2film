@@ -3,8 +3,7 @@ import numpy as np
 from raw2film import data
 
 
-def BT2020_to_kelvin(rgb):
-    XYZ = np.dot(data.REC2020_TO_XYZ, rgb)
+def XYZ_to_kelvin(XYZ):
     x = XYZ[0] / np.sum(XYZ)
     y = XYZ[1] / np.sum(XYZ)
     n = (x - 0.3366) / (y - 0.1735)
@@ -13,7 +12,7 @@ def BT2020_to_kelvin(rgb):
     return CCT
 
 
-def kelvin_to_BT2020(CCT):
+def kelvin_to_XYZ(CCT):
     # This section is ripped from the Colour Science package:
     CCT_3 = CCT ** 3
     CCT_2 = CCT ** 2
@@ -40,8 +39,7 @@ def kelvin_to_BT2020(CCT):
     y = np.select(cnd_l, [i, j, k])
 
     XYZ = np.array([x / y, 1, (1 - x - y) / y])
-    rgb = np.dot(data.XYZ_TO_REC2020, XYZ)
-    return rgb
+    return XYZ
 
 
 def encode_ARRILogC3(x):
@@ -49,18 +47,26 @@ def encode_ARRILogC3(x):
 
     return np.where(x > cut, (c / np.log(10)) * np.log(a * x + b) + d, e * x + f)
 
-def calc_exposure(rgb, crop=.8):
-    """Calculates exposure value of the rgb image."""
-    lum_mat = np.dot(rgb, np.dot(np.asarray(data.REC2020_TO_REC709), np.asarray(np.array([.2127, .7152, .0722]))))
 
-    if 0 < crop < 1:
-        ratio = lum_mat.shape[0] / lum_mat.shape[1]
-        if ratio > 1:
-            width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * crop) / 2)
-            height = int((lum_mat.shape[1] - lum_mat.shape[1] * crop) / 2)
-        else:
-            width = int((lum_mat.shape[0] - lum_mat.shape[0] * crop) / 2)
-            ratio = 1 / ratio
-            height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * crop) / 2)
-        lum_mat = lum_mat[width: -width, height: -height]
-    return np.average(np.log(lum_mat + np.ones_like(lum_mat) * 2 ** -16)) / np.log(2)
+def calc_exposure(rgb):
+    """Calculates exposure value of the rgb image."""
+    lum_mat = rgb[:, :, 1]
+
+    return np.average(np.log(lum_mat + 2 ** -16)) / np.log(2)
+
+
+def gamut_compression(rgb, a=0.2):
+    # compute achromaticity (max rgb value per pixel)
+    achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
+
+    # compute distance to gamut
+    distance = (achromatic - rgb) / achromatic
+
+    # smoothing parameter is a
+    # precompute smooth compression function
+    x = np.linspace(1 - a, 1 + a, 16)
+    y = 1 - a + (x - 1 + a) / (np.sqrt(1 + ((x - 1) / a + 1) ** 2))
+    # compress distance
+    distance = np.interp(distance, np.concatenate((np.array([0]), x)), np.concatenate((np.array([0]), y)))
+
+    rgb = achromatic - distance * achromatic

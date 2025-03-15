@@ -14,20 +14,22 @@ import numpy as np
 import rawpy
 import torch
 from PIL import Image
-from raw2film import data, effects, color_processing
-from raw2film import utils
-from raw2film.utils import hex_color, fraction
 from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
 from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
 from spectral_film_lut.utils import create_lut
+import colour
+
+from raw2film import data, effects, color_processing
+from raw2film import utils
+from raw2film.utils import hex_color, fraction
 
 
 class Raw2Film:
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
-                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse",
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 keep_exp=False, gamma=1., bw_grain=False, stock="250D", **kwargs):
+                 keep_exp=False, stock="250D", **kwargs):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -40,9 +42,7 @@ class Raw2Film:
         self.output_scale = scale
         self.output_color = color
         self.artist = artist
-        self.luts = luts
         self.wb = wb
-        self.tiff = tiff
         self.exp = exp
         self.zoom = zoom
         self.nd = nd
@@ -52,8 +52,6 @@ class Raw2Film:
         self.rename = rename
         self.rotation = rotation
         self.keep_exp = keep_exp
-        self.gamma = gamma
-        self.bw_grain = bw_grain
         self.stock = data.FILM_DB[stock]
         self.negative = KodakPortra400()
         self.print = KodakEnduraPremier()
@@ -74,24 +72,30 @@ class Raw2Film:
         rgb, metadata = self.raw_to_linear(src)
 
         if self.keep_exp:
-            exp_comp, gamma = self.find_exp(src, self.exp)
+            exp_comp = self.find_exp(src, self.exp)
         else:
-            exp_comp, gamma = self.exp, self.gamma
+            exp_comp = self.exp
 
         if self.correct:
             rgb = np.asarray(effects.lens_correction(rgb, metadata))
 
-        rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
+        rgb = self.film_emulation(rgb, metadata, exp_comp)
 
+        start = time.time()
         Raw2Film.save_tiff(src, rgb)
-        if self.tiff:
-            return
+        print(f"save tiff {time.time() - start:.2f} seconds", flush=True)
+        start = time.time()
 
         file = self.apply_lut(src)
-        file = self.convert_jpg(file)
-        os.remove(src.split('.')[0] + "_log.tiff")
 
-        self.add_metadata(file, metadata, exp_comp, gamma)
+        print(f"apply lut {time.time() - start:.2f} seconds", flush=True)
+        start = time.time()
+
+        # file = self.convert_jpg(file)
+        os.remove(src.split('.')[0] + "_log.tiff")
+        print(f"remove file {time.time() - start:.2f} seconds", flush=True)
+
+        self.add_metadata(file, metadata, exp_comp)
 
         if self.organize:
             utils.organize_files(src, file, metadata)
@@ -107,7 +111,7 @@ class Raw2Film:
         # convert raw file to linear data
         with rawpy.imread(src) as raw:
             # noinspection PyUnresolvedReferences
-            rgb = raw.postprocess(output_color=rawpy.ColorSpace(6), gamma=(1, 1), output_bps=16, no_auto_bright=True,
+            rgb = raw.postprocess(output_color=rawpy.ColorSpace(5), gamma=(1, 1), output_bps=16, no_auto_bright=True,
                                   use_camera_wb=(self.wb == 'camera'), use_auto_wb=(self.wb == 'auto'),
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
         rgb = rgb.astype(dtype='float64')
@@ -115,19 +119,19 @@ class Raw2Film:
 
         return rgb, metadata
 
-    def film_emulation(self, rgb, metadata, exp_comp=0., gamma=1.):
+    def film_emulation(self, rgb, metadata, exp_comp=0.):
         rgb = np.asarray(rgb, dtype=np.float32)
 
         if self.rotation:
             rgb = effects.rotate(self.rotation, rgb)
-        if self.wb == 'tungsten':
-            daylight_rgb = color_processing.kelvin_to_BT2020(5600)
-            tungsten_rgb = color_processing.kelvin_to_BT2020(4400)
-            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
 
-        lower, upper, max_amount = 2400, 8000, 1200
-        if self.wb == 'standard':
-            image_kelvin = color_processing.BT2020_to_kelvin(np.mean(rgb, axis=(0, 1)))
+        if self.wb == 'tungsten':
+            daylight_rgb = color_processing.kelvin_to_XYZ(5600)
+            tungsten_rgb = color_processing.kelvin_to_XYZ(4400)
+            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
+        elif self.wb == 'standard':
+            lower, upper, max_amount = 2400, 8000, 1200
+            image_kelvin = color_processing.XYZ_to_kelvin(np.mean(rgb, axis=(0, 1)))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
@@ -137,7 +141,7 @@ class Raw2Film:
                 target = 0.5 * value + 0.5 * (upper - max_amount)
             elif upper <= image_kelvin:
                 value, target = upper, upper - max_amount
-            rgb *= color_processing.kelvin_to_BT2020(target) / color_processing.kelvin_to_BT2020(value)
+            rgb *= color_processing.kelvin_to_XYZ(target) / color_processing.kelvin_to_XYZ(value)
 
         # crop to specified aspect ratio
         if self.crop:
@@ -165,7 +169,7 @@ class Raw2Film:
 
         if self.halation:
             blured = effects.exponential_blur(rgb, scale / 4)
-            color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_REC2020)
+            color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_XYZ)
             rgb += np.multiply(blured, color_factors)
             rgb = np.divide(rgb, color_factors + 1)
 
@@ -181,16 +185,11 @@ class Raw2Film:
             # compute scaling factor of exposure rms in regard to measuring device size
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
             strength = 1.
-            if not self.bw_grain:
-                noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), data.REC709_TO_REC2020)
-                rough_noise = np.multiply(noise, np.array(self.stock['rough'],
-                                                          dtype=np.float32) * std_factor / 1000 * strength)
-                clean_noise = np.multiply(noise, np.array(self.stock['clean'],
-                                                          dtype=np.float32) * std_factor / 1000 * strength)
-            else:
-                noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
-                rough_noise = noise * (10 * std_factor / 1000 / math.sqrt(3) * strength)
-                clean_noise = noise * (5 * std_factor / 1000 / math.sqrt(3) * strength)
+            noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), data.REC709_TO_XYZ)
+            rough_noise = np.multiply(noise, np.array(self.stock['rough'],
+                                                      dtype=np.float32) * std_factor / 1000 * strength)
+            clean_noise = np.multiply(noise, np.array(self.stock['clean'],
+                                                      dtype=np.float32) * std_factor / 1000 * strength)
             rough_scale, clean_scale = 0.005, 0.002
             if scale * rough_scale * 2 * math.sqrt(math.pi) > 1:
                 rough_noise = effects.gaussian_blur(rough_noise, scale * rough_scale) * (
@@ -198,20 +197,9 @@ class Raw2Film:
             if scale * clean_scale * 2 * math.sqrt(math.pi) > 1:
                 clean_noise = effects.gaussian_blur(clean_noise, scale * clean_scale) * (
                         scale * clean_scale * 2 + math.sqrt(math.pi))
-            if self.bw_grain:
-                rough_noise = np.repeat(rough_noise[:, :, np.newaxis], 3, axis=2)
-                clean_noise = np.repeat(clean_noise[:, :, np.newaxis], 3, axis=2)
             noise_blending = np.clip((1 / 11) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
             rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
             rgb = np.exp(rgb * np.log(2)) - 2 ** -16
-
-        # adjust gamma while preserving middle grey exposure
-        if gamma != 1.:
-            lum_mat = np.dot(rgb, np.dot(np.asarray(data.REC2020_TO_REC709, dtype=np.float32),
-                                         np.asarray(np.array([.2127, .7152, .0722], dtype=np.float32))))
-            gamma_mat = 0.2 * (5 * np.clip(lum_mat, a_min=0, a_max=None)) ** gamma
-
-            rgb = np.multiply(rgb, np.dstack([np.divide(gamma_mat, lum_mat)] * 3))
 
         return rgb
 
@@ -226,7 +214,7 @@ class Raw2Film:
 
         # return fallback if no candidates found
         if not options:
-            return fallback_exp, self.gamma
+            return fallback_exp
 
         # pick candidate with the shortest path and the shortest name
         path = sorted(options, key=operator.itemgetter(2, 1))[0][0]
@@ -235,34 +223,12 @@ class Raw2Film:
         with exiftool.ExifToolHelper() as et:
             meta = et.get_metadata(path)[0]
             exp_comp = meta['EXIF:ExposureCompensation']
-            try:
-                gamma = meta['EXIF:Gamma']
-            except KeyError:
-                gamma = self.gamma
-        return exp_comp, gamma
+        return exp_comp
 
     @staticmethod
     def save_tiff(src, rgb):
         # convert to arri wcg
-        rgb = np.dot(rgb, data.REC2020_TO_ARRIWCG)
-        # compute achromaticity (max rgb value per pixel)
-        achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
-
-        # compute distance to gamut
-        distance = (achromatic - rgb) / achromatic
-
-        # smoothing parameter
-        a = 0.2
-        # precompute smooth compression function
-        x = np.linspace(1 - a, 1 + a, 16)
-        y = 1 - a + (x - 1 + a) / (np.sqrt(1 + ((x - 1) / a + 1) ** 2))
-        # compress distance
-        distance = np.interp(distance, np.concatenate((np.array([0]), x)), np.concatenate((np.array([0]), y)))
-
-        rgb = achromatic - distance * achromatic
-        # convert to arri log C
-
-        rgb = color_processing.encode_ARRILogC3(rgb)
+        rgb = colour.XYZ_to_RGB(rgb, "ARRI Wide Gamut 3", apply_cctf_encoding=True)
 
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
 
@@ -270,13 +236,13 @@ class Raw2Film:
 
     def apply_lut(self, src):
         """Loads tiff file and applies LUT, generates jpg."""
-        file_name = src.split('.')[0]
-        if os.path.exists(file_name + '.tiff'):
-            os.remove(file_name + ".tiff")
+        file_name = src.split('.')[0] + '.jpg'
+        if os.path.exists(file_name):
+            os.remove(file_name)
         lut_path = create_lut(self.negative, self.print, input_colourspace="ARRI Wide Gamut 3")
-        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut_path).output(
-            file_name + '.tiff', loglevel="quiet").run()
-        return file_name + '.tiff'
+        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut_path).output(file_name, loglevel="quiet",
+                                                                                            **{'q:v': 1}).run()
+        return file_name
 
     @staticmethod
     def lut_name_ending(name):
@@ -308,12 +274,11 @@ class Raw2Film:
         canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
         return canvas.astype(dtype='uint8')
 
-    def add_metadata(self, src, metadata, exp_comp, gamma):
+    def add_metadata(self, src, metadata, exp_comp):
         """Adds metadata to image file."""
         metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in data.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
         metadata['EXIF:ExposureCompensation'] = exp_comp
-        metadata['EXIF:Gamma'] = gamma
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
 
@@ -321,6 +286,7 @@ class Raw2Film:
 def init_child(semaphore_):
     global semaphore
     semaphore = semaphore_
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -344,10 +310,6 @@ def main():
     parser.add_argument('--canvas', action='store_true', help="Add canvas to output image.")
     parser.add_argument('--wb', default='standard', choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'],
                         help="Specify white balance mode.")
-    parser.add_argument('--tiff', action='store_true',
-                        help="Output ARRI LogC3 .tiff files. Used to test and develop LUTs.")
-    parser.add_argument('--rename', action='store_true',
-                        help="Rename to match Google Photos photo stacking naming scheme")
     parser.add_argument('--keep-exp', dest='keep_exp', action='store_true',
                         help="Keep the exposure and gamma of previously rendered images.")
     parser.add_argument('--bw-grain', dest='bw_grain', action='store_true',
