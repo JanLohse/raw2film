@@ -24,7 +24,8 @@ dependencies = [
     "PyExifTool",
     "rawpy",
     "scipy",
-    "pillow"
+    "pillow",
+    "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
 ]
 
 [project.urls]

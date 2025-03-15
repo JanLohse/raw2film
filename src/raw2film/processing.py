@@ -3,108 +3,30 @@ import operator
 import os
 import sys
 import time
-import warnings
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
-from shutil import copy
 
 import configargparse as argparse
-import cv2 as cv
 import exiftool
 import ffmpeg
 import imageio.v3 as imageio
-import lensfunpy
 import numpy as np
-from PIL import Image
+import rawpy
 import torch
-from spectral_film_lut.utils import create_lut
+from PIL import Image
+from raw2film import data, effects, color_processing
+from raw2film import utils
 from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
 from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
-
-try:
-    import cupy as cp
-
-    is_cupy_available = True
-except ModuleNotFoundError:
-    import numpy as np
-
-    is_cupy_available = False
-import rawpy
-from lensfunpy import util as lensfunpy_util
-from scipy import ndimage
-
-try:
-    import cupy as cp
-    from cupyx.scipy import ndimage as cdimage
-
-    is_cupy_available = True
-    cp.cuda.set_allocator(None)
-    cp.cuda.set_pinned_memory_allocator(None)
-except ModuleNotFoundError:
-    import numpy as np
-    from scipy import ndimage as cdimage
-
-    is_cupy_available = False
+from spectral_film_lut.utils import create_lut
 
 
 class Raw2Film:
-    METADATA_KEYS = [
-        'GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'ShutterSpeedValue', 'FocalLength', 'Make',
-        'Saturation', 'SubSecTimeOriginal', 'SubSecTimeDigitized', 'GPSImgDirectionRef', 'ExposureProgram',
-        'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource', 'ExposureMode',
-        'Compression', 'MaxApertureValue', 'OffsetTime', 'DigitalZoomRatio', 'Contrast', 'InteropIndex',
-        'ThumbnailLength', 'DateTimeOriginal', 'OffsetTimeOriginal', 'SensingMethod', 'SubjectDistance',
-        'CreateDate', 'ExposureCompensation', 'SensitivityType', 'ApertureValue', 'ExifImageWidth', 'SensorLeftBorder',
-        'FocalPlaneYResolution', 'GPSImgDirection', 'ComponentsConfiguration', 'Flash', 'Model', 'ColorSpace',
-        'LensModel', 'XResolution', 'GPSTimeStamp', 'ISO', 'CompositeImage', 'FocalPlaneXResolution', 'SubSecTime',
-        'GPSAltitude', 'OffsetTimeDigitized', 'ExposureTime', 'LensMake', 'WhiteBalance', 'BrightnessValue',
-        'GPSLatitude', 'YResolution', 'GPSLongitude', 'YCbCrPositioning', 'Copyright', 'SubjectDistanceRange',
-        'SceneType', 'GPSAltitudeRef', 'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef', 'SensorTopBorder',
-        'SceneCaptureType', 'FNumber', 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight',
-        'SensorBottomBorder', 'SensorRightBorder', 'ProcessingSoftware']
-    EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
-    FORMATS = {'110': (17, 13),
-               '135-half': (24, 18), '135': (36, 24),
-               'xpan': (65, 24),
-               '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56),
-               '4x5': (127, 101.6), '5x7': (177.8, 127), '8x10': (254, 203.2), '11x14': (355.6, 279.4),
-               'super16': (12.42, 7.44), 'scope': (24.89, 10.4275), 'flat': (24.89, 13.454), 'academy': (24.89, 18.7),
-               '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
-    REC2020_TO_ARRIWCG = np.array([[1.0959, -.0751, -.0352],
-                                   [-.1576, 0.8805, 0.0077],
-                                   [0.0615, 0.1946, 1.0275]], dtype=np.float32)
-    REC2020_TO_REC709 = np.array([[1.6605, -.1246, -.0182],
-                                  [-.5879, 1.1330, -.1006],
-                                  [-.0728, -.0084, 1.1187]], dtype=np.float32)
-    REC709_TO_REC2020 = np.array([[.6274, .0691, .0164],
-                                  [.3294, .9195, .0880],
-                                  [.0433, .0114, .8956]], dtype=np.float32)
-    REC2020_TO_XYZ = np.array([[0.6369580, 0.1446169, 0.1688810],
-                               [0.2627002, 0.6779981, 0.0593017],
-                               [0.0000000, 0.0280727, 1.0609851]], dtype=np.float32)
-    XYZ_TO_REC2020 = np.array([[1.7166512, -0.3556708, -0.2533663],
-                               [-0.6666844, 1.6164812, 0.0157685],
-                               [0.0176399, -0.0427706, 0.9421031]], dtype=np.float32)
-    CAMERA_DB = {"X100S": "Fujifilm : X100S",
-                 "DMC-GX80": "Panasonic : DMC-GX80",
-                 "DC-FZ10002": "Panasonic : DC-FZ10002"}
-    LENS_DB = {"X100S": "Fujifilm : X100 & compatibles (Standard)",
-               "LUMIX G 25/F1.7": "Panasonic : Lumix G 25mm f/1.7 Asph.",
-               "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
-               "DC-FZ10002": "Leica : FZ1000 & compatibles"}
-    FILM_DB = {"250D": {'r_a': 1.020, 'r_f': 34, 'g_a': 1.034, 'g_f': 52, 'b_a': 1.064, 'b_f': 63,
-                        'rough': [10, 11, 17], 'clean': [4, 5, 6]},
-               "500T": {'r_a': 1.073, 'r_f': 60, 'g_a': 1.052, 'g_f': 53, 'b_a': 1.039, 'b_f': 34,
-                        'rough': [10, 14, 31], 'clean': [5, 6, 10]},
-               "200T": {'r_a': 1.008, 'r_f': 38, 'g_a': 1.092, 'g_f': 56, 'b_a': 1.120, 'b_f': 65,
-                        'rough': [9, 10, 23], 'clean': [4, 5, 12]},
-               "50D": {'r_a': 1.023, 'r_f': 36, 'g_a': 1.024, 'g_f': 44, 'b_a': 1.000, 'b_f': 36,
-                       'rough': [7, 7, 13], 'clean': [2, 3, 5]}}
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", luts=None, tiff=False,
                  wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 cuda=False, keep_exp=False, gamma=1., bw_grain=False, stock="250D", **args):
+                 keep_exp=False, gamma=1., bw_grain=False, stock="250D", **kwargs):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -128,26 +50,24 @@ class Raw2Film:
         self.cores = cores
         self.rename = rename
         self.rotation = rotation
-        self.cuda = cuda
         self.keep_exp = keep_exp
         self.gamma = gamma
         self.bw_grain = bw_grain
-        self.stock = Raw2Film.FILM_DB[stock]
+        self.stock = data.FILM_DB[stock]
         self.negative = KodakPortra400()
         self.print = KodakEnduraPremier()
-
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
         try:
             if 0 < run_count < self.cores:
                 time.sleep(self.sleep_time * run_count)
-            self.process_image(src, run_count)
+            self.process_image(src)
         except KeyboardInterrupt:
             return False
         return src
 
-    def process_image(self, src: str, run_count):
+    def process_image(self, src: str):
         """Manages image processing pipeline."""
 
         rgb, metadata = self.raw_to_linear(src)
@@ -158,13 +78,9 @@ class Raw2Film:
             exp_comp, gamma = self.exp, self.gamma
 
         if self.correct:
-            rgb = np.asarray(self.lens_correction(rgb, metadata))
+            rgb = np.asarray(effects.lens_correction(rgb, metadata))
 
-        if not run_count or not self.cuda:
-            rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
-        else:
-            with semaphore:
-                rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
+        rgb = self.film_emulation(rgb, metadata, exp_comp, gamma)
 
         Raw2Film.save_tiff(src, rgb)
         if self.tiff:
@@ -177,7 +93,7 @@ class Raw2Film:
         self.add_metadata(file, metadata, exp_comp, gamma)
 
         if self.organize:
-            self.organize_files(src, file, metadata)
+            utils.organize_files(src, file, metadata)
 
     def raw_to_linear(self, src):
         """Takes raw file location and outputs linear rgb data and metadata."""
@@ -198,109 +114,19 @@ class Raw2Film:
 
         return rgb, metadata
 
-    @staticmethod
-    def BT2020_to_kelvin(rgb):
-        XYZ = np.dot(Raw2Film.REC2020_TO_XYZ, rgb)
-        x = XYZ[0] / np.sum(XYZ)
-        y = XYZ[1] / np.sum(XYZ)
-        n = (x - 0.3366) / (y - 0.1735)
-        CCT = (-949.86315 + 6253.80338 * np.exp(-n / 0.92159) + 28.70599 * np.exp(-n / 0.20039)
-               + 0.00004 * np.exp(-n / 0.07125))
-        return CCT
-
-    def kelvin_to_BT2020(self, CCT):
-        global cp
-        if not self.cuda:
-            cp = np
-
-        # This section is ripped from the Colour Science package:
-        CCT_3 = CCT ** 3
-        CCT_2 = CCT ** 2
-
-        x = np.where(
-            CCT <= 4000,
-            -0.2661239 * 10 ** 9 / CCT_3
-            - 0.2343589 * 10 ** 6 / CCT_2
-            + 0.8776956 * 10 ** 3 / CCT
-            + 0.179910,
-            -3.0258469 * 10 ** 9 / CCT_3
-            + 2.1070379 * 10 ** 6 / CCT_2
-            + 0.2226347 * 10 ** 3 / CCT
-            + 0.24039,
-        )
-
-        x_3 = x ** 3
-        x_2 = x ** 2
-
-        cnd_l = [CCT <= 2222, np.logical_and(CCT > 2222, CCT <= 4000), CCT > 4000]
-        i = -1.1063814 * x_3 - 1.34811020 * x_2 + 2.18555832 * x - 0.20219683
-        j = -0.9549476 * x_3 - 1.37418593 * x_2 + 2.09137015 * x - 0.16748867
-        k = 3.0817580 * x_3 - 5.8733867 * x_2 + 3.75112997 * x - 0.37001483
-        y = np.select(cnd_l, [i, j, k])
-
-        XYZ = np.array([x / y, 1, (1 - x - y) / y])
-        rgb = np.dot(Raw2Film.XYZ_TO_REC2020, XYZ)
-        return cp.asarray(rgb)
-
-    # noinspection PyUnresolvedReferences
-    def lens_correction(self, rgb, metadata):
-        """Apply lens correction using lensfunpy."""
-        db = lensfunpy.Database()
-        try:
-            cam = db.find_cameras(metadata['EXIF:Make'], metadata['EXIF:Model'], loose_search=True)[0]
-            lens = db.find_lenses(cam, metadata['EXIF:LensMake'], metadata['EXIF:LensModel'], loose_search=True)[0]
-        except (KeyError, IndexError):
-            cam, lens = self.find_data(metadata)
-            if lens and cam:
-                cam = db.find_cameras(*cam, loose_search=True)[0]
-                lens = db.find_lenses(cam, *lens, loose_search=True)[0]
-            else:
-                return rgb
-        try:
-            focal_length = metadata['EXIF:FocalLength']
-            aperture = metadata['EXIF:FNumber']
-        except KeyError:
-            return rgb
-        height, width = rgb.shape[0], rgb.shape[1]
-        mod = lensfunpy.Modifier(lens, cam.crop_factor, width, height)
-        mod.initialize(focal_length, aperture, pixel_format=np.float64)
-        undistorted_cords = mod.apply_geometry_distortion()
-        rgb = np.clip(lensfunpy_util.remap(rgb, undistorted_cords), a_min=0, a_max=None)
-        mod.apply_color_modification(rgb)
-        return rgb
-
-    def find_data(self, metadata):
-        """Search for camera and lens name in metadata"""
-        values = list(metadata.values())
-        cam, lens = None, None
-        for key in self.CAMERA_DB:
-            if key in values:
-                cam = self.CAMERA_DB[key].split(':')
-        for key in self.LENS_DB:
-            if key in values:
-                lens = self.LENS_DB[key].split(':')
-        return cam, lens
-
     def film_emulation(self, rgb, metadata, exp_comp=0., gamma=1.):
-        global cp, cdimage
-        if not self.cuda:
-            cp = np
-            cdimage = ndimage
-        rgb = cp.asarray(rgb, dtype=cp.float32)
+        rgb = np.asarray(rgb, dtype=np.float32)
 
         if self.rotation:
-            rgb = self.rotate(rgb)
+            rgb = effects.rotate(self.rotation, rgb)
         if self.wb == 'tungsten':
-            daylight_rgb = self.kelvin_to_BT2020(5600)
-            tungsten_rgb = self.kelvin_to_BT2020(4400)
-            rgb = cp.dot(rgb, cp.diag(daylight_rgb / tungsten_rgb))
+            daylight_rgb = color_processing.kelvin_to_BT2020(5600)
+            tungsten_rgb = color_processing.kelvin_to_BT2020(4400)
+            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
 
         lower, upper, max_amount = 2400, 8000, 1200
         if self.wb == 'standard':
-            if self.cuda:
-                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.mean(rgb, axis=(0, 1)).get())
-            else:
-                image_kelvin = Raw2Film.BT2020_to_kelvin(cp.mean(rgb, axis=(0, 1)))
+            image_kelvin = color_processing.BT2020_to_kelvin(np.mean(rgb, axis=(0, 1)))
             value, target = image_kelvin, image_kelvin
             if image_kelvin <= lower:
                 value, target = lower, lower + max_amount
@@ -310,11 +136,11 @@ class Raw2Film:
                 target = 0.5 * value + 0.5 * (upper - max_amount)
             elif upper <= image_kelvin:
                 value, target = upper, upper - max_amount
-            rgb *= self.kelvin_to_BT2020(target) / self.kelvin_to_BT2020(value)
+            rgb *= color_processing.kelvin_to_BT2020(target) / color_processing.kelvin_to_BT2020(value)
 
         # crop to specified aspect ratio
         if self.crop:
-            rgb = self.crop_image(rgb, aspect=self.width / self.height)
+            rgb = effects.crop_image(self.zoom, rgb, aspect=self.width / self.height)
 
         # adjust exposure
         if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber']:
@@ -325,7 +151,7 @@ class Raw2Film:
         if ('x100' in metadata['EXIF:Model'].lower() and metadata['EXIF:BrightnessValue'] > 3
                 and metadata['Composite:LightValue'] - metadata['EXIF:BrightnessValue'] < 1.5):
             rgb *= 8
-        exposure = self.calc_exposure(rgb)
+        exposure = color_processing.calc_exposure(rgb)
         middle, max_under, max_over, slope, slope_offset = -3, -.75, .66, .9, .5
         lower_bound = -exposure + middle + max_under
         sloped = -slope * exposure + middle + slope_offset
@@ -337,132 +163,56 @@ class Raw2Film:
         scale = max(rgb.shape) / self.width  # pixels per mm
 
         if self.halation:
-            blured = self.exponential_blur(rgb, scale / 4)
-            color_factors = cp.dot(cp.array([1.2, 0.5, 0], dtype=cp.float32), self.REC709_TO_REC2020)
-            rgb += cp.multiply(blured, color_factors)
-            rgb = cp.divide(rgb, color_factors + 1)
+            blured = effects.exponential_blur(rgb, scale / 4)
+            color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_REC2020)
+            rgb += np.multiply(blured, color_factors)
+            rgb = np.divide(rgb, color_factors + 1)
 
         if self.resolution:
-            rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
-            rgb = self.film_sharpness(rgb, scale)
+            rgb = np.log(rgb + 2 ** -16) / np.log(2)
+            rgb = effects.film_sharpness(self.stock, rgb, scale)
             if not self.grain:
-                rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
+                rgb = np.exp(rgb * np.log(2)) - 2 ** -16
 
         if self.grain:
             if not self.resolution:
-                rgb = cp.log(rgb + 2 ** -16) / cp.log(2)
+                rgb = np.log(rgb + 2 ** -16) / np.log(2)
             # compute scaling factor of exposure rms in regard to measuring device size
             std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
             strength = 1.
             if not self.bw_grain:
-                noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), self.REC709_TO_REC2020)
-                rough_noise = cp.multiply(noise, cp.array(self.stock['rough'],
-                                                          dtype=cp.float32) * std_factor / 1000 * strength)
-                clean_noise = cp.multiply(noise, cp.array(self.stock['clean'],
-                                                          dtype=cp.float32) * std_factor / 1000 * strength)
+                noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), data.REC709_TO_REC2020)
+                rough_noise = np.multiply(noise, np.array(self.stock['rough'],
+                                                          dtype=np.float32) * std_factor / 1000 * strength)
+                clean_noise = np.multiply(noise, np.array(self.stock['clean'],
+                                                          dtype=np.float32) * std_factor / 1000 * strength)
             else:
                 noise = torch.empty(rgb.shape[:2], dtype=torch.float32).normal_().numpy()
                 rough_noise = noise * (10 * std_factor / 1000 / math.sqrt(3) * strength)
                 clean_noise = noise * (5 * std_factor / 1000 / math.sqrt(3) * strength)
             rough_scale, clean_scale = 0.005, 0.002
             if scale * rough_scale * 2 * math.sqrt(math.pi) > 1:
-                rough_noise = self.gaussian_blur(rough_noise, scale * rough_scale) * (
+                rough_noise = effects.gaussian_blur(rough_noise, scale * rough_scale) * (
                         scale * rough_scale * 2 + math.sqrt(math.pi))
             if scale * clean_scale * 2 * math.sqrt(math.pi) > 1:
-                clean_noise = self.gaussian_blur(clean_noise, scale * clean_scale) * (
+                clean_noise = effects.gaussian_blur(clean_noise, scale * clean_scale) * (
                         scale * clean_scale * 2 + math.sqrt(math.pi))
             if self.bw_grain:
                 rough_noise = np.repeat(rough_noise[:, :, np.newaxis], 3, axis=2)
                 clean_noise = np.repeat(clean_noise[:, :, np.newaxis], 3, axis=2)
-            noise_blending = cp.clip((1 / 11) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
+            noise_blending = np.clip((1 / 11) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
             rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
-            rgb = cp.exp(rgb * cp.log(2)) - 2 ** -16
+            rgb = np.exp(rgb * np.log(2)) - 2 ** -16
 
         # adjust gamma while preserving middle grey exposure
         if gamma != 1.:
-            lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709, dtype=cp.float32),
-                                         cp.asarray(cp.array([.2127, .7152, .0722], dtype=cp.float32))))
-            gamma_mat = 0.2 * (5 * cp.clip(lum_mat, a_min=0, a_max=None)) ** gamma
+            lum_mat = np.dot(rgb, np.dot(np.asarray(data.REC2020_TO_REC709, dtype=np.float32),
+                                         np.asarray(np.array([.2127, .7152, .0722], dtype=np.float32))))
+            gamma_mat = 0.2 * (5 * np.clip(lum_mat, a_min=0, a_max=None)) ** gamma
 
-            rgb = cp.multiply(rgb, cp.dstack([cp.divide(gamma_mat, lum_mat)] * 3))
-
-        if self.cuda:
-            rgb = rgb.get()
-            cp.get_default_pinned_memory_pool().free_all_blocks()
-            cp.get_default_memory_pool().free_all_blocks()
+            rgb = np.multiply(rgb, np.dstack([np.divide(gamma_mat, lum_mat)] * 3))
 
         return rgb
-
-    def rotate(self, rgb):
-        global cp, cdimage
-        if not self.cuda:
-            cp = np
-            cdimage = ndimage
-        degrees = self.rotation % 360
-
-        while degrees > 45:
-            rgb = cp.rot90(rgb, k=1)
-            degrees -= 90
-        if degrees:
-            input_height = rgb.shape[0]
-            input_width = rgb.shape[1]
-            rgb = cdimage.rotate(rgb, angle=degrees, reshape=True)
-            aspect_ratio = input_height / input_width
-            rotated_ratio = rgb.shape[0] / rgb.shape[1]
-            angle = math.fabs(degrees) * math.pi / 180
-
-            if aspect_ratio < 1:
-                total_height = input_height / rotated_ratio
-            else:
-                total_height = input_width
-
-            w = total_height / (aspect_ratio * math.sin(angle) + math.cos(angle))
-            h = w * aspect_ratio
-            crop_height = int((rgb.shape[0] - h) // 2)
-            crop_width = int((rgb.shape[1] - w) // 2)
-            rgb = rgb[crop_height: rgb.shape[0] - crop_height, crop_width: rgb.shape[1] - crop_width]
-        return rgb
-
-    def crop_image(self, rgb, aspect=1.5):
-        """Crops rgb data to aspect ratio."""
-        x, y, c = rgb.shape
-        if x > y:
-            if x > aspect * y:
-                rgb = rgb[round(x / 2 - y * aspect / 2): round(x / 2 + y * aspect / 2), :, :]
-            else:
-                rgb = rgb[:, round(y / 2 - x / aspect / 2): round(y / 2 + x / aspect / 2), :]
-        elif y > aspect * x:
-            rgb = rgb[:, round(y / 2 - x * aspect / 2): round(y / 2 + x * aspect / 2), :]
-        else:
-            rgb = rgb[round(x / 2 - y / aspect / 2): round(x / 2 + y / aspect / 2), :, :]
-
-        if self.zoom > 1:
-            x, y, c = rgb.shape
-            zoom_factor = (self.zoom - 1) / (2 * self.zoom)
-            x = round(zoom_factor * x)
-            y = round(zoom_factor * y)
-            rgb = rgb[x: -x, y: -y, :]
-
-        return rgb
-
-    def calc_exposure(self, rgb, lum_vec=np.array([.2127, .7152, .0722]), crop=.8):
-        """Calculates exposure value of the rgb image."""
-        global cp
-        if not self.cuda:
-            cp = np
-        lum_mat = cp.dot(rgb, cp.dot(cp.asarray(self.REC2020_TO_REC709), cp.asarray(cp.array([.2127, .7152, .0722]))))
-
-        if 0 < crop < 1:
-            ratio = lum_mat.shape[0] / lum_mat.shape[1]
-            if ratio > 1:
-                width = int((lum_mat.shape[0] - ratio ** .5 / ratio * lum_mat.shape[0] * crop) / 2)
-                height = int((lum_mat.shape[1] - lum_mat.shape[1] * crop) / 2)
-            else:
-                width = int((lum_mat.shape[0] - lum_mat.shape[0] * crop) / 2)
-                ratio = 1 / ratio
-                height = int((lum_mat.shape[1] - ratio ** .5 / ratio * lum_mat.shape[1] * crop) / 2)
-            lum_mat = lum_mat[width: -width, height: -height]
-        return cp.average(cp.log(lum_mat + cp.ones_like(lum_mat) * 2 ** -16)) / cp.log(2)
 
     def find_exp(self, src, fallback_exp=0.):
         """Search for exposure compensation in already processed file."""
@@ -490,93 +240,10 @@ class Raw2Film:
                 gamma = self.gamma
         return exp_comp, gamma
 
-    def gaussian_filter(self, input, sigma=1.):
-        """Compute gaussian filter"""
-        if self.cuda:
-            return cdimage.gaussian_filter(input, sigma=sigma)
-        else:
-            return cv.GaussianBlur(input, ksize=(0, 0), sigmaX=sigma)
-
-    def gaussian_blur(self, rgb, sigma=1.):
-        """Applies gaussian blur per channel of rgb image."""
-        if self.cuda:
-            r, g, b = cp.dsplit(rgb, 3)
-            r = self.gaussian_filter(r, sigma=sigma)
-            g = self.gaussian_filter(g, sigma=sigma)
-            b = self.gaussian_filter(b, sigma=sigma)
-            return cp.dstack((r, g, b))
-        else:
-            return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
-
-    @staticmethod
-    def mtf_curve(a=1., f=50.):
-        assert a >= 1 and f > 0
-        b = a / (math.sqrt((2 * a - 1) * f ** 2) - math.sqrt(a - 1) * f)
-        c = - math.sqrt(a - 1)
-
-        mtf = lambda x: a / (1 + (x * b + c) ** 2)
-
-        return mtf
-
-    def film_sharpness(self, rgb, scale):
-        red_mtf = Raw2Film.mtf_curve(self.stock['r_a'], self.stock['r_f'])
-        green_mtf = Raw2Film.mtf_curve(self.stock['g_a'], self.stock['g_f'])
-        blue_mtf = Raw2Film.mtf_curve(self.stock['b_a'], self.stock['b_f'])
-        size = int(scale // 2)
-        if not size % 2:
-            size += 1
-
-        kernel = np.zeros((size, size))
-        kernel[size // 2, size // 2] = 1
-        f = np.fft.fft2(kernel)
-        f_shift = np.fft.fftshift(f)
-
-        frequency = np.abs(np.fft.fftfreq(size, 1 / scale)[:, None])
-        frequency_x, frequency_y = np.meshgrid(frequency, frequency)
-        frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
-
-        red_factors = np.vectorize(red_mtf)(frequency)
-        green_factors = np.vectorize(green_mtf)(frequency)
-        blue_factors = np.vectorize(blue_mtf)(frequency)
-
-        red_shift = f_shift * red_factors
-        green_shift = f_shift * green_factors
-        blue_shift = f_shift * blue_factors
-
-        red_kernel = np.fft.ifft2(np.fft.ifftshift(red_shift)).real
-        green_kernel = np.fft.ifft2(np.fft.ifftshift(green_shift)).real
-        blue_kernel = np.fft.ifft2(np.fft.ifftshift(blue_shift)).real
-
-        red_kernel /= np.sum(red_kernel)
-        green_kernel /= np.sum(green_kernel)
-        blue_kernel /= np.sum(blue_kernel)
-
-        kernel = np.dstack((red_kernel, green_kernel, blue_kernel))
-
-        rgb = cv.filter2D(rgb, -1, kernel)
-
-        return rgb
-
-    def exponential_blur(self, rgb, size):
-        size = math.ceil(size)
-        kernel = np.zeros((size, size))
-        radius = math.floor(size / 2)
-
-        for i in range(size):
-            for j in range(size):
-                dist = (i - size / 2) ** 2 + (j - size / 2) ** 2
-                if not dist:
-                    dist = 1
-                kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
-
-        kernel /= np.sum(kernel)
-
-        return cv.filter2D(rgb, -1, kernel)
-
     @staticmethod
     def save_tiff(src, rgb):
         # convert to arri wcg
-        rgb = np.dot(rgb, Raw2Film.REC2020_TO_ARRIWCG)
+        rgb = np.dot(rgb, data.REC2020_TO_ARRIWCG)
         # compute achromaticity (max rgb value per pixel)
         achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
 
@@ -594,17 +261,11 @@ class Raw2Film:
         rgb = achromatic - distance * achromatic
         # convert to arri log C
 
-        rgb = Raw2Film.encode_ARRILogC3(rgb)
+        rgb = color_processing.encode_ARRILogC3(rgb)
 
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
 
         imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
-
-    @staticmethod
-    def encode_ARRILogC3(x):
-        cut, a, b, c, d, e, f = 0.010591, 5.555556, 0.052272, 0.247190, 0.385537, 5.367655, 0.092809
-
-        return np.where(x > cut, (c / np.log(10)) * np.log(a * x + b) + d, e * x + f)
 
     def apply_lut(self, src):
         """Loads tiff file and applies LUT, generates jpg."""
@@ -648,28 +309,12 @@ class Raw2Film:
 
     def add_metadata(self, src, metadata, exp_comp, gamma):
         """Adds metadata to image file."""
-        metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in self.METADATA_KEYS}
+        metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in data.METADATA_KEYS}
         metadata['EXIF:Artist'] = self.artist
         metadata['EXIF:ExposureCompensation'] = exp_comp
         metadata['EXIF:Gamma'] = gamma
         with exiftool.ExifToolHelper() as et:
             et.set_tags([src], metadata, '-overwrite_original')
-
-    def organize_files(self, src, file, metadata):
-        """Moves files into target folders."""
-        # create path
-        path = f"{metadata['EXIF:DateTimeOriginal'][:4]}/{metadata['EXIF:DateTimeOriginal'][:10].replace(':', '-')}/"
-
-        # move files
-        self.move_file(src, path + '/RAW/')
-        self.move_file(file, path)
-
-    @staticmethod
-    def move_file(src, path):
-        """Moves src file to path."""
-        if not os.path.exists(path):
-            os.makedirs(path)
-        os.replace(src, path + src)
 
 
 def init_child(semaphore_):
@@ -702,8 +347,8 @@ def main():
     parser.add_argument('--list_lenses', action='store_true', help="Print all lenses from lensfunpy.")
     parser.add_argument('--cleanup', action='store_true',
                         help="Delete RAW files if JPEG was deleted. Requires files to be specified")
-    parser.add_argument('--format', type=str, choices=Raw2Film.FORMATS.keys(), default=None, help="Select film format")
-    parser.add_argument('--stock', type=str, choices=Raw2Film.FILM_DB.keys(), default="250D",
+    parser.add_argument('--format', type=str, choices=data.FORMATS.keys(), default=None, help="Select film format")
+    parser.add_argument('--stock', type=str, choices=data.FILM_DB.keys(), default="250D",
                         help="Select film stock for grain and resolution")
     parser.add_argument('--no-crop', dest='crop', action='store_false', help="Preserve source aspect ratio.")
     parser.add_argument('--no-resolution', dest='resolution', action='store_false', help="Turn off blur and sharpen.")
@@ -712,7 +357,6 @@ def main():
     parser.add_argument('--no-organize', dest='organize', action='store_false', help="Do no organize files.")
     parser.add_argument('--no-correct', dest='correct', action='store_false', help="Turn off lens correction")
     parser.add_argument('--canvas', action='store_true', help="Add canvas to output image.")
-    parser.add_argument('--no-cuda', dest='cuda', action='store_false', help="Turn off GPU acceleration.")
     parser.add_argument('--wb', default='standard', choices=['standard', 'auto', 'daylight', 'tungsten', 'camera'],
                         help="Specify white balance mode.")
     parser.add_argument('--tiff', action='store_true',
@@ -748,33 +392,28 @@ def main():
     if not args.cores:
         args.cores = os.cpu_count()
     if args.formats:
-        return formats_message()
+        return utils.formats_message()
     if args.list_cameras:
-        return list_cameras()
+        return utils.list_cameras()
     if args.list_lenses:
-        return list_lenses()
+        return utils.list_lenses()
     if args.cleanup:
         for file in args.file:
-            cleanup_files(file)
+            utils.cleanup_files(file)
         return
     if args.format:
-        args.width, args.height = Raw2Film.FORMATS[args.format]
+        args.width, args.height = data.FORMATS[args.format]
 
     if args.file:
         files = []
         for file in args.file:
-            files += copy_from_subfolder(file)
+            files += utils.copy_from_subfolder(file)
         if not files:
             print("No matching files have been found.")
     else:
-        files = [file for file in os.listdir() if file.lower().endswith(Raw2Film.EXTENSION_LIST)]
+        files = [file for file in os.listdir() if file.lower().endswith(data.EXTENSION_LIST)]
     if not files:
         return
-
-    if args.cuda and not is_cupy_available:
-        args.cuda = False
-        warnings.formatwarning = lambda msg, cat, *args, **kwargs: f'{cat.__name__}: {msg}\n'
-        warnings.warn("Cupy not working. Turning off gpu acceleration. Supress warning with --no-cuda option.")
 
     raw2film = Raw2Film(**vars(args))
 
@@ -784,7 +423,7 @@ def main():
     if result:
         print(f"{result} processed successfully {counter}/{len(files) + 1}")
     else:
-        cleaner(raw2film)
+        utils.cleaner(raw2film)
         sys.exit()
     end = time.time()
     raw2film.sleep_time = (end - start) / args.cores
@@ -801,96 +440,7 @@ def main():
         except KeyboardInterrupt:
             p.terminate()
             p.join()
-            cleaner(raw2film)
-
-
-def cleaner(raw2film):
-    print("terminating...")
-    time.sleep(1)
-    for file in os.listdir():
-        if (raw2film.organize and file.endswith('.jpg')) or (not raw2film.tiff and file.endswith('.tiff')):
-            os.remove(file)
-
-
-def formats_message():
-    """Outputs all built-in formats."""
-    key_length = max([len(key) for key in Raw2Film.FORMATS])
-    print(f"key {' ' * (key_length - 3)} width mm x height mm")
-    for key in Raw2Film.FORMATS:
-        print(f"{key} {' ' * (key_length - len(key))} {Raw2Film.FORMATS[key][0]} mm x {Raw2Film.FORMATS[key][1]} mm")
-
-
-def list_cameras():
-    """Output cameras from lensfunpy"""
-    # noinspection PyUnresolvedReferences
-    db = lensfunpy.Database()
-    for camera in db.cameras:
-        print(camera.maker, ":", camera.model)
-    return
-
-
-def list_lenses():
-    """Output lenses from lensfunpy."""
-    # noinspection PyUnresolvedReferences
-    db = lensfunpy.Database()
-    for lens in db.lenses:
-        print(lens.maker, ":", lens.model)
-    return
-
-
-def copy_from_subfolder(file):
-    name_start, name_end = prep_file_name(file)
-
-    files = []
-
-    for path in Path().rglob('./*.*'):
-        filename = str(path).split('\\')[-1]
-        name = filename.split('.')[0]
-        if (name_start <= name <= name_end and filename.lower().endswith(Raw2Film.EXTENSION_LIST)
-                and filename not in files):
-            files.append(filename)
-            if not os.path.isfile(filename):
-                copy(path, '../..', )
-
-    return files
-
-
-def cleanup_files(file):
-    if not file:
-        print("Specify the files to clean to avoid errors")
-        return
-
-    name_start, name_end = prep_file_name(file)
-
-    for path in Path().rglob('./*/*.*'):
-        filename = str(path).split('\\')[-1]
-        name = filename.split('.')[0].split('_')[0]
-        if name_start <= name <= name_end and (filename.lower().endswith(Raw2Film.EXTENSION_LIST) or
-                                               (filename.lower().endswith('jpg') and '_' in filename)):
-            if not any(Path().rglob(f'*{name}.jpg')) and not os.path.isfile(filename):
-                print("deleted", filename)
-                os.remove(path)
-
-    # remove empty subfolders
-    for dir_path, dir_names, _ in os.walk('../..', topdown=False):
-        for dir_name in dir_names:
-            full_path = os.path.join(dir_path, dir_name)
-            if not os.listdir(full_path) and '20' in full_path:
-                print("deleted", full_path)
-                os.rmdir(full_path)
-
-
-def prep_file_name(file):
-    name_start = file.split('-')[0]
-    if '-' in file:
-        end = file.split('-')[1]
-        name_end = name_start[:-len(end)] + end
-    else:
-        name_end = file
-    if name_start > name_end:
-        name_start, name_end = name_end, name_start
-
-    return name_start, name_end
+            utils.cleaner(raw2film)
 
 
 # runs image processing on all raw files in parallel
