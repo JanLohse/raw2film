@@ -14,6 +14,7 @@ import numpy as np
 import rawpy
 import torch
 from PIL import Image
+from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
 from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
 from spectral_film_lut.utils import create_lut
@@ -28,7 +29,7 @@ class Raw2Film:
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse",
-                 wb='standard', exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
+                 exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
                  keep_exp=False, stock="250D", **kwargs):
         self.crop = crop
         self.resolution = resolution
@@ -42,7 +43,6 @@ class Raw2Film:
         self.output_scale = scale
         self.output_color = color
         self.artist = artist
-        self.wb = wb
         self.exp = exp
         self.zoom = zoom
         self.nd = nd
@@ -81,15 +81,7 @@ class Raw2Film:
 
         rgb = self.film_emulation(rgb, metadata, exp_comp)
 
-        start = time.time()
-        rgb = Raw2Film.save_tiff(src, rgb)
-        print(f"save tiff {time.time() - start:.2f} seconds", flush=True)
-        start = time.time()
-
         file = self.apply_lut(rgb, src)
-
-        print(f"apply lut {time.time() - start:.2f} seconds", flush=True)
-        start = time.time()
 
         self.add_metadata(file, metadata, exp_comp)
 
@@ -108,7 +100,7 @@ class Raw2Film:
         with rawpy.imread(src) as raw:
             # noinspection PyUnresolvedReferences
             rgb = raw.postprocess(output_color=rawpy.ColorSpace(5), gamma=(1, 1), output_bps=16, no_auto_bright=True,
-                                  use_camera_wb=(self.wb == 'camera'), use_auto_wb=(self.wb == 'auto'),
+                                  use_camera_wb=False, use_auto_wb=False,
                                   demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True)
         rgb = rgb.astype(dtype='float64')
         rgb /= 2 ** 16 - 1
@@ -121,27 +113,12 @@ class Raw2Film:
         if self.rotation:
             rgb = effects.rotate(self.rotation, rgb)
 
-        if self.wb == 'tungsten':
-            daylight_rgb = color_processing.kelvin_to_XYZ(5600)
-            tungsten_rgb = color_processing.kelvin_to_XYZ(4400)
-            rgb = np.dot(rgb, np.diag(daylight_rgb / tungsten_rgb))
-        elif self.wb == 'standard':
-            lower, upper, max_amount = 2400, 8000, 1200
-            image_kelvin = color_processing.XYZ_to_kelvin(np.mean(rgb, axis=(0, 1)))
-            value, target = image_kelvin, image_kelvin
-            if image_kelvin <= lower:
-                value, target = lower, lower + max_amount
-            elif lower < image_kelvin < lower + 2 * max_amount:
-                target = 0.5 * value + 0.5 * (lower + 2 * max_amount)
-            elif upper - max_amount < image_kelvin < upper:
-                target = 0.5 * value + 0.5 * (upper - max_amount)
-            elif upper <= image_kelvin:
-                value, target = upper, upper - max_amount
-            rgb *= color_processing.kelvin_to_XYZ(target) / color_processing.kelvin_to_XYZ(value)
-
         # crop to specified aspect ratio
         if self.crop:
             rgb = effects.crop_image(self.zoom, rgb, aspect=self.width / self.height)
+
+        # TODO: white balance
+        # TODO: resolution scaling
 
         # adjust exposure
         if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber']:
@@ -158,7 +135,7 @@ class Raw2Film:
         sloped = -slope * exposure + middle + slope_offset
         upper_bound = -exposure + middle + max_over
         adjustment = max(lower_bound, min(sloped, upper_bound))
-        rgb *= 2 ** (adjustment + exp_comp)
+        exp_comp += adjustment
 
         # texture
         scale = max(rgb.shape) / self.width  # pixels per mm
@@ -169,33 +146,23 @@ class Raw2Film:
             rgb += np.multiply(blured, color_factors)
             rgb = np.divide(rgb, color_factors + 1)
 
+        transform = FilmSpectral.generate_conversion(self.negative, mode='negative', input_colourspace=None, exp_comp=exp_comp)
+        rgb = transform(rgb)
+
         if self.resolution:
-            rgb = np.log(rgb + 2 ** -16) / np.log(2)
             rgb = effects.film_sharpness(self.stock, rgb, scale)
-            if not self.grain:
-                rgb = np.exp(rgb * np.log(2)) - 2 ** -16
 
         if self.grain:
-            if not self.resolution:
-                rgb = np.log(rgb + 2 ** -16) / np.log(2)
             # compute scaling factor of exposure rms in regard to measuring device size
-            std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2)
-            strength = 1.
+            std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2) / 6
             noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), data.REC709_TO_XYZ)
-            rough_noise = np.multiply(noise, np.array(self.stock['rough'],
-                                                      dtype=np.float32) * std_factor / 1000 * strength)
-            clean_noise = np.multiply(noise, np.array(self.stock['clean'],
-                                                      dtype=np.float32) * std_factor / 1000 * strength)
-            rough_scale, clean_scale = 0.005, 0.002
-            if scale * rough_scale * 2 * math.sqrt(math.pi) > 1:
-                rough_noise = effects.gaussian_blur(rough_noise, scale * rough_scale) * (
-                        scale * rough_scale * 2 + math.sqrt(math.pi))
-            if scale * clean_scale * 2 * math.sqrt(math.pi) > 1:
-                clean_noise = effects.gaussian_blur(clean_noise, scale * clean_scale) * (
-                        scale * clean_scale * 2 + math.sqrt(math.pi))
-            noise_blending = np.clip((1 / 11) * (rgb + 1) + 0.5, a_min=0, a_max=1) ** (1 / 3)
-            rgb += rough_noise * (1 - noise_blending) + clean_noise * noise_blending
-            rgb = np.exp(rgb * np.log(2)) - 2 ** -16
+            noise = np.multiply(noise, np.array(self.stock['clean'], dtype=np.float32) * std_factor / 1000)
+            grain_size = 0.004
+            if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
+                noise = effects.gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
+            rgb += noise
+
+        rgb = np.clip(rgb, 0, 1)
 
         return rgb
 
@@ -221,48 +188,28 @@ class Raw2Film:
             exp_comp = meta['EXIF:ExposureCompensation']
         return exp_comp
 
-    @staticmethod
-    def save_tiff(src, rgb):
-        # convert to arri wcg
-        rgb = colour.XYZ_to_RGB(rgb, "ARRI Wide Gamut 3", apply_cctf_encoding=True)
-
-        rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
-
-        return rgb
-
     def apply_lut(self, rgb, src):
         """Loads tiff file and applies LUT, generates jpg."""
         file_name = src.split('.')[0] + '.jpg'
         if os.path.exists(file_name):
             os.remove(file_name)
-        lut_path = create_lut(self.negative, self.print, input_colourspace="ARRI Wide Gamut 3")
+        lut_path = create_lut(self.negative, self.print, input_colourspace="ARRI Wide Gamut 3", mode='print')
         height, width, _ = rgb.shape
         process = (
             ffmpeg
             .input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height))
             .filter('lut3d', file=lut_path)
-            .output(file_name, loglevel="quiet", **{'q:v': 1}).overwrite_output().run_async(pipe_stdin=True)
+            .output('pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1, loglevel="quiet")
+            .run_async(pipe_stdin=True, pipe_stdout=True)
         )
-        process.stdin.write(rgb.tobytes())
+        rgb *= 2 ** 16 - 1
+        process.stdin.write(rgb.astype('uint16').tobytes())
         process.stdin.close()
+        rgb = process.stdout.read(width * height * 3)
         process.wait()
+        rgb = np.frombuffer(rgb, np.uint8).reshape([height, width, 3])
+        imageio.imwrite(file_name, rgb, quality=100)
         return file_name
-
-    @staticmethod
-    def lut_name_ending(name):
-        name = name.split('/')[-1]
-        name = name.split('\\')[-1]
-        name = name.split('.')[0]
-        return name.split('_')
-
-    def convert_jpg(self, src):
-        """Converts to jpg and removes src tiff file."""
-        image = Image.open(src).convert('RGB')
-        os.remove(src)
-        if self.canvas:
-            image = self.add_canvas(np.array(image))
-        imageio.imwrite(src.split('.')[0] + '.jpg', image, quality=100)
-        return src.split('.')[0] + '.jpg'
 
     def add_canvas(self, image):
         """Adds background canvas to image."""
