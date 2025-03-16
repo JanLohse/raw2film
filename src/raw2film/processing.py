@@ -82,18 +82,14 @@ class Raw2Film:
         rgb = self.film_emulation(rgb, metadata, exp_comp)
 
         start = time.time()
-        Raw2Film.save_tiff(src, rgb)
+        rgb = Raw2Film.save_tiff(src, rgb)
         print(f"save tiff {time.time() - start:.2f} seconds", flush=True)
         start = time.time()
 
-        file = self.apply_lut(src)
+        file = self.apply_lut(rgb, src)
 
         print(f"apply lut {time.time() - start:.2f} seconds", flush=True)
         start = time.time()
-
-        # file = self.convert_jpg(file)
-        os.remove(src.split('.')[0] + "_log.tiff")
-        print(f"remove file {time.time() - start:.2f} seconds", flush=True)
 
         self.add_metadata(file, metadata, exp_comp)
 
@@ -232,16 +228,24 @@ class Raw2Film:
 
         rgb = (rgb * (2 ** 16 - 1)).astype(dtype='uint16')
 
-        imageio.imwrite(src.split(".")[0] + "_log.tiff", rgb)
+        return rgb
 
-    def apply_lut(self, src):
+    def apply_lut(self, rgb, src):
         """Loads tiff file and applies LUT, generates jpg."""
         file_name = src.split('.')[0] + '.jpg'
         if os.path.exists(file_name):
             os.remove(file_name)
         lut_path = create_lut(self.negative, self.print, input_colourspace="ARRI Wide Gamut 3")
-        ffmpeg.input(src.split('.')[0] + "_log.tiff").filter('lut3d', file=lut_path).output(file_name, loglevel="quiet",
-                                                                                            **{'q:v': 1}).run()
+        height, width, _ = rgb.shape
+        process = (
+            ffmpeg
+            .input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height))
+            .filter('lut3d', file=lut_path)
+            .output(file_name, loglevel="quiet", **{'q:v': 1}).overwrite_output().run_async(pipe_stdin=True)
+        )
+        process.stdin.write(rgb.tobytes())
+        process.stdin.close()
+        process.wait()
         return file_name
 
     @staticmethod
