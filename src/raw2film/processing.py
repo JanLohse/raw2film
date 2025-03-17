@@ -146,11 +146,12 @@ class Raw2Film:
             rgb += np.multiply(blured, color_factors)
             rgb = np.divide(rgb, color_factors + 1)
 
-        transform = FilmSpectral.generate_conversion(self.negative, mode='negative', input_colourspace=None, exp_comp=exp_comp)
+        transform = FilmSpectral.generate_conversion(self.negative, mode='negative', input_colourspace=None, exp_comp=exp_comp,
+                                                     measure_time=True)
         rgb = transform(rgb)
 
         if self.resolution:
-            rgb = effects.film_sharpness(self.stock, rgb, scale)
+            rgb = effects.film_sharpness(self.negative, rgb, scale)
 
         if self.grain:
             # compute scaling factor of exposure rms in regard to measuring device size

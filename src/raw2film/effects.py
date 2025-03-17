@@ -4,8 +4,10 @@ import cv2 as cv
 import lensfunpy
 import numpy as np
 from lensfunpy import util as lensfunpy_util
-from raw2film import utils
 from scipy import ndimage
+from matplotlib import pyplot as plt
+
+from raw2film import utils
 
 
 def lens_correction(rgb, metadata):
@@ -97,20 +99,22 @@ def gaussian_blur(rgb, sigma=1.):
     return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
 
 
-def mtf_curve(a=1., f=50.):
-    assert a >= 1 and f > 0
-    b = a / (math.sqrt((2 * a - 1) * f ** 2) - math.sqrt(a - 1) * f)
-    c = - math.sqrt(a - 1)
-
-    mtf = lambda x: a / (1 + (x * b + c) ** 2)
-
-    return mtf
+def mtf_curve(mtf_data, lowest=1, highest=200):
+    mtf_data = {k: v for k, v in mtf_data.items() if k >= lowest}
+    if lowest not in mtf_data:
+        mtf_data[lowest] = 1
+    mtf_data = {k: v for k, v in sorted(mtf_data.items(), key=lambda item: item[0])}
+    if max(mtf_data.keys()) < highest:
+        ax, ay = list(mtf_data.items())[-1]
+        bx, by = list(mtf_data.items())[-2]
+        m = (np.log10(ay) - np.log10(by)) / (np.log10(ax) - np.log10(bx))
+        mtf_data[highest] = highest ** m * (ay / ax ** m)
+    frequencies = np.array(list(mtf_data.keys()), dtype=np.float32)
+    values = np.array(list(mtf_data.values()), dtype=np.float32)
+    return lambda x: np.interp(x, frequencies, values)
 
 
 def film_sharpness(stock, rgb, scale):
-    red_mtf = mtf_curve(stock['r_a'], stock['r_f'])
-    green_mtf = mtf_curve(stock['g_a'], stock['g_f'])
-    blue_mtf = mtf_curve(stock['b_a'], stock['b_f'])
     size = int(scale // 2)
     if not size % 2:
         size += 1
@@ -124,9 +128,14 @@ def film_sharpness(stock, rgb, scale):
     frequency_x, frequency_y = np.meshgrid(frequency, frequency)
     frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
 
-    red_factors = np.vectorize(red_mtf)(frequency)
-    green_factors = np.vectorize(green_mtf)(frequency)
-    blue_factors = np.vectorize(blue_mtf)(frequency)
+    highest = frequency.max()
+    red_mtf = mtf_curve(stock.red_mtf, highest=highest)
+    green_mtf = mtf_curve(stock.green_mtf, highest=highest)
+    blue_mtf = mtf_curve(stock.blue_mtf, highest=highest)
+
+    red_factors = red_mtf(frequency)
+    green_factors = green_mtf(frequency)
+    blue_factors = blue_mtf(frequency)
 
     red_shift = f_shift * red_factors
     green_shift = f_shift * green_factors
