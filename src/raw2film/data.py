@@ -1,25 +1,20 @@
 import numpy as np
+from spectral_film_lut import FILMSTOCKS
 
 METADATA_KEYS = ['GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'ShutterSpeedValue', 'FocalLength', 'Make',
                  'Saturation', 'SubSecTimeOriginal', 'SubSecTimeDigitized', 'GPSImgDirectionRef', 'ExposureProgram',
                  'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource',
-                 'ExposureMode',
-                 'Compression', 'MaxApertureValue', 'OffsetTime', 'DigitalZoomRatio', 'Contrast', 'InteropIndex',
-                 'ThumbnailLength',
-                 'DateTimeOriginal', 'OffsetTimeOriginal', 'SensingMethod', 'SubjectDistance', 'CreateDate',
-                 'ExposureCompensation',
-                 'SensitivityType', 'ApertureValue', 'ExifImageWidth', 'SensorLeftBorder', 'FocalPlaneYResolution',
-                 'GPSImgDirection', 'ComponentsConfiguration', 'Flash', 'Model', 'ColorSpace', 'LensModel',
-                 'XResolution',
-                 'GPSTimeStamp', 'ISO', 'CompositeImage', 'FocalPlaneXResolution', 'SubSecTime', 'GPSAltitude',
-                 'OffsetTimeDigitized', 'ExposureTime', 'LensMake', 'WhiteBalance', 'BrightnessValue', 'GPSLatitude',
-                 'YResolution',
+                 'ExposureMode', 'Compression', 'MaxApertureValue', 'OffsetTime', 'DigitalZoomRatio', 'Contrast',
+                 'InteropIndex', 'ThumbnailLength', 'DateTimeOriginal', 'OffsetTimeOriginal', 'SensingMethod',
+                 'SubjectDistance', 'CreateDate', 'ExposureCompensation', 'SensitivityType', 'ApertureValue',
+                 'ExifImageWidth', 'SensorLeftBorder', 'FocalPlaneYResolution', 'GPSImgDirection',
+                 'ComponentsConfiguration', 'Flash', 'Model', 'ColorSpace', 'LensModel', 'XResolution', 'GPSTimeStamp',
+                 'ISO', 'CompositeImage', 'FocalPlaneXResolution', 'SubSecTime', 'GPSAltitude', 'OffsetTimeDigitized',
+                 'ExposureTime', 'LensMake', 'WhiteBalance', 'BrightnessValue', 'GPSLatitude', 'YResolution',
                  'GPSLongitude', 'YCbCrPositioning', 'Copyright', 'SubjectDistanceRange', 'SceneType', 'GPSAltitudeRef',
                  'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef', 'SensorTopBorder', 'SceneCaptureType',
-                 'FNumber',
-                 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight', 'SensorBottomBorder',
-                 'SensorRightBorder',
-                 'ProcessingSoftware']
+                 'FNumber', 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight', 'SensorBottomBorder',
+                 'SensorRightBorder', 'ProcessingSoftware']
 EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
 FORMATS = {'110': (17, 13),
            '135-half': (24, 18), '135': (36, 24),
@@ -41,11 +36,3 @@ LENS_DB = {"X100S": "Fujifilm : X100 & compatibles (Standard)",
            "LUMIX G 25/F1.7": "Panasonic : Lumix G 25mm f/1.7 Asph.",
            "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
            "DC-FZ10002": "Leica : FZ1000 & compatibles"}
-FILM_DB = {"250D": {'r_a': 1.020, 'r_f': 34, 'g_a': 1.034, 'g_f': 52, 'b_a': 1.064, 'b_f': 63,
-                    'rough': [10, 11, 17], 'clean': [4, 5, 6]},
-           "500T": {'r_a': 1.073, 'r_f': 60, 'g_a': 1.052, 'g_f': 53, 'b_a': 1.039, 'b_f': 34,
-                    'rough': [10, 14, 31], 'clean': [5, 6, 10]},
-           "200T": {'r_a': 1.008, 'r_f': 38, 'g_a': 1.092, 'g_f': 56, 'b_a': 1.120, 'b_f': 65,
-                    'rough': [9, 10, 23], 'clean': [4, 5, 12]},
-           "50D": {'r_a': 1.023, 'r_f': 36, 'g_a': 1.024, 'g_f': 44, 'b_a': 1.000, 'b_f': 36,
-                   'rough': [7, 7, 13], 'clean': [2, 3, 5]}}

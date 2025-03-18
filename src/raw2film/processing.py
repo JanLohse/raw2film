@@ -13,24 +13,22 @@ import imageio.v3 as imageio
 import numpy as np
 import rawpy
 import torch
-from PIL import Image
-from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
-from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
-from spectral_film_lut.utils import create_lut
-import colour
-
 from raw2film import data, effects, color_processing
 from raw2film import utils
 from raw2film.utils import hex_color, fraction
+from spectral_film_lut.film_spectral import FilmSpectral
+from spectral_film_lut.negative_film.kodak_5207 import Kodak5207
+from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
+from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
+from spectral_film_lut.utils import create_lut
+from spectral_film_lut.film_spectral import default_dtype
 
 
 class Raw2Film:
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
-                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse",
-                 exp=0, zoom=1., correct=True, cores=None, sleep_time=0, rename=False, rotation=0,
-                 keep_exp=False, stock="250D", **kwargs):
+                 width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", exp=0, zoom=1.,
+                 correct=True, cores=None, sleep_time=0, rename=False, rotation=0, keep_exp=False, **kwargs):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -52,9 +50,9 @@ class Raw2Film:
         self.rename = rename
         self.rotation = rotation
         self.keep_exp = keep_exp
-        self.stock = data.FILM_DB[stock]
         self.negative = KodakPortra400()
         self.print = KodakEnduraPremier()
+        self.grain_stock = Kodak5207()
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -146,8 +144,8 @@ class Raw2Film:
             rgb += np.multiply(blured, color_factors)
             rgb = np.divide(rgb, color_factors + 1)
 
-        transform = FilmSpectral.generate_conversion(self.negative, mode='negative', input_colourspace=None, exp_comp=exp_comp,
-                                                     measure_time=True)
+        transform = FilmSpectral.generate_conversion(self.negative, mode='negative', input_colourspace=None,
+                                                     exp_comp=exp_comp, )
         rgb = transform(rgb)
 
         if self.resolution:
@@ -155,10 +153,16 @@ class Raw2Film:
 
         if self.grain:
             # compute scaling factor of exposure rms in regard to measuring device size
-            std_factor = math.sqrt((math.pi * 0.024) ** 2 * scale ** 2) / 6
+            std_factor = math.sqrt(math.pi) * 0.024 * scale / 6
             noise = np.dot(torch.empty(rgb.shape, dtype=torch.float32).normal_(), data.REC709_TO_XYZ)
-            noise = np.multiply(noise, np.array(self.stock['clean'], dtype=np.float32) * std_factor / 1000)
-            grain_size = 0.004
+
+            red_rms = np.interp(rgb[..., 0], self.grain_stock.red_rms_density, self.grain_stock.red_rms * std_factor)
+            green_rms = np.interp(rgb[..., 1], self.grain_stock.green_rms_density, self.grain_stock.green_rms * std_factor)
+            blue_rms = np.interp(rgb[..., 2], self.grain_stock.blue_rms_density, self.grain_stock.blue_rms * std_factor)
+            rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=default_dtype)
+
+            noise = np.multiply(noise, rms)
+            grain_size = 0.002
             if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
                 noise = effects.gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
             rgb += noise
@@ -251,8 +255,6 @@ def main():
     parser.add_argument('--cleanup', action='store_true',
                         help="Delete RAW files if JPEG was deleted. Requires files to be specified")
     parser.add_argument('--format', type=str, choices=data.FORMATS.keys(), default=None, help="Select film format")
-    parser.add_argument('--stock', type=str, choices=data.FILM_DB.keys(), default="250D",
-                        help="Select film stock for grain and resolution")
     parser.add_argument('--no-crop', dest='crop', action='store_false', help="Preserve source aspect ratio.")
     parser.add_argument('--no-resolution', dest='resolution', action='store_false', help="Turn off blur and sharpen.")
     parser.add_argument('--no-halation', dest='halation', action='store_false', help="Turn off halation.")
