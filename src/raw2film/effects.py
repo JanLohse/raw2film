@@ -6,6 +6,7 @@ import numpy as np
 from lensfunpy import util as lensfunpy_util
 from scipy import ndimage
 from matplotlib import pyplot as plt
+import torch
 
 from raw2film import utils
 
@@ -171,3 +172,21 @@ def exponential_blur(rgb, size):
     kernel /= np.sum(kernel)
 
     return cv.filter2D(rgb, -1, kernel)
+
+
+def grain(rgb, stock, scale, grain_size=0.002):
+    # compute scaling factor of exposure rms in regard to measuring device size
+    std_factor = math.sqrt(math.pi) * 0.024 * scale / 6
+    noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
+
+    red_rms = np.interp(rgb[..., 0], stock.red_rms_density, stock.red_rms * std_factor)
+    green_rms = np.interp(rgb[..., 1], stock.green_rms_density, stock.green_rms * std_factor)
+    blue_rms = np.interp(rgb[..., 2], stock.blue_rms_density, stock.blue_rms * std_factor)
+    rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
+
+    noise = np.multiply(noise, rms)
+    if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
+        start = time.time()
+        noise = effects.gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
+    rgb += noise
+    return rgb
