@@ -1,11 +1,9 @@
-import math
 import operator
 import os
 import sys
 import time
 from multiprocessing import Pool, Semaphore
 from pathlib import Path
-from matplotlib import pyplot as plt
 
 import configargparse as argparse
 import exiftool
@@ -13,17 +11,13 @@ import ffmpeg
 import imageio.v3 as imageio
 import numpy as np
 import rawpy
-import torch
-import scipy
 from raw2film import data, effects, color_processing
 from raw2film import utils
 from raw2film.utils import hex_color, fraction
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.negative_film.kodak_5207 import Kodak5207
 from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
 from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
 from spectral_film_lut.utils import create_lut
-from spectral_film_lut.film_spectral import default_dtype
 
 
 class Raw2Film:
