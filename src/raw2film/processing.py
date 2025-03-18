@@ -15,8 +15,6 @@ from raw2film import data, effects, color_processing
 from raw2film import utils
 from raw2film.utils import hex_color, fraction
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.negative_film.kodak_portra_400 import KodakPortra400
-from spectral_film_lut.print_film.kodak_endura_premier import KodakEnduraPremier
 from spectral_film_lut.utils import create_lut
 
 
@@ -24,7 +22,8 @@ class Raw2Film:
 
     def __init__(self, crop=True, resolution=True, halation=True, grain=True, organize=True, canvas=False, nd=0,
                  width=36, height=24, ratio=4 / 5, scale=1., color=None, artist="Jan Lohse", exp=0, zoom=1.,
-                 correct=True, cores=None, sleep_time=0, rename=False, rotation=0, keep_exp=False, **kwargs):
+                 correct=True, cores=None, sleep_time=0, rename=False, rotation=0, keep_exp=False,
+                 negative=None, print=None, **kwargs):
         self.crop = crop
         self.resolution = resolution
         self.halation = halation
@@ -46,8 +45,12 @@ class Raw2Film:
         self.rename = rename
         self.rotation = rotation
         self.keep_exp = keep_exp
-        self.negative = KodakPortra400()
-        self.print = KodakEnduraPremier()
+        self.negative = data.FILMSTOCKS[negative]
+        if self.negative is not None:
+            self.negative = self.negative()
+        self.print = data.FILMSTOCKS[print]
+        if self.print is not None:
+            self.print = self.print()
 
     def process_runner(self, starter: tuple[int, str]):
         run_count, src = starter
@@ -259,7 +262,8 @@ def main():
     parser.add_argument('--scale', type=fraction, default=1., help="Canvas border scale.")
     parser.add_argument('--rotation', type=fraction, default=0., help="Angle by which to rotate image.")
     parser.add_argument('--color', type=hex_color, default="000000", help="Color of canvas as hex value.")
-    parser.add_argument('--artist', type=str, default="Jan Lohse", help="Artist name in metadata.")
+    parser.add_argument('--negative', type=str, default="KodakPortra400", choices=data.FILMSTOCKS.keys())
+    parser.add_argument('--print', type=str, default="KodakEnduraPremier", choices=data.FILMSTOCKS.keys())
     parser.add_argument('--luts', type=str, default=["Fuji_Natural.cube"], nargs='+',
                         help="Specify list of LUTs separated by comma.")
     parser.add_argument('--nd', type=int, default=1, help="0:No ND adjustment. 1: Automatic 3 stop ND recognition "

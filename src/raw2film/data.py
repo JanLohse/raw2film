@@ -1,6 +1,8 @@
 import numpy as np
 from spectral_film_lut import FILMSTOCKS
 
+FILMSTOCKS[None] = None
+FILMSTOCKS["None"] = None
 METADATA_KEYS = ['GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'ShutterSpeedValue', 'FocalLength', 'Make',
                  'Saturation', 'SubSecTimeOriginal', 'SubSecTimeDigitized', 'GPSImgDirectionRef', 'ExposureProgram',
                  'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource',

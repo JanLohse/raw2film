@@ -115,6 +115,16 @@ def mtf_curve(mtf_data, lowest=1, highest=200):
     return lambda x: np.interp(x, frequencies, values)
 
 
+def mtf_kernel(mtf_data, frequency, f_shift):
+    highest = frequency.max()
+    mtf = mtf_curve(mtf_data, highest=highest)
+    factors = mtf(frequency)
+    shift = f_shift * factors
+    kernel = np.fft.ifft2(np.fft.ifftshift(shift)).real
+    kernel /= np.sum(kernel)
+    return kernel
+
+
 def film_sharpness(stock, rgb, scale):
     size = int(scale // 2)
     if not size % 2:
@@ -129,28 +139,13 @@ def film_sharpness(stock, rgb, scale):
     frequency_x, frequency_y = np.meshgrid(frequency, frequency)
     frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
 
-    highest = frequency.max()
-    red_mtf = mtf_curve(stock.red_mtf, highest=highest)
-    green_mtf = mtf_curve(stock.green_mtf, highest=highest)
-    blue_mtf = mtf_curve(stock.blue_mtf, highest=highest)
-
-    red_factors = red_mtf(frequency)
-    green_factors = green_mtf(frequency)
-    blue_factors = blue_mtf(frequency)
-
-    red_shift = f_shift * red_factors
-    green_shift = f_shift * green_factors
-    blue_shift = f_shift * blue_factors
-
-    red_kernel = np.fft.ifft2(np.fft.ifftshift(red_shift)).real
-    green_kernel = np.fft.ifft2(np.fft.ifftshift(green_shift)).real
-    blue_kernel = np.fft.ifft2(np.fft.ifftshift(blue_shift)).real
-
-    red_kernel /= np.sum(red_kernel)
-    green_kernel /= np.sum(green_kernel)
-    blue_kernel /= np.sum(blue_kernel)
-
-    kernel = np.dstack((red_kernel, green_kernel, blue_kernel))
+    if hasattr(stock, 'red_mtf') and hasattr(stock, 'green_mtf') and hasattr(stock, 'blue_mtf'):
+        red_kernel = mtf_kernel(stock.red_mtf, frequency, f_shift)
+        green_kernel = mtf_kernel(stock.green_mtf, frequency, f_shift)
+        blue_kernel = mtf_kernel(stock.blue_mtf, frequency, f_shift)
+        kernel = np.dstack((red_kernel, green_kernel, blue_kernel))
+    else:
+        kernel = mtf_kernel(stock.mtf, frequency, f_shift)
 
     rgb = cv.filter2D(rgb, -1, kernel)
 
@@ -186,7 +181,6 @@ def grain(rgb, stock, scale, grain_size=0.002):
 
     noise = np.multiply(noise, rms)
     if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
-        start = time.time()
-        noise = effects.gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
+        noise = gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
     rgb += noise
     return rgb

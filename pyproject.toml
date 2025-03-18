@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/JanLohse/spectral_film_lut"
-Issues = "https://github.com/JanLohse/spectral_film_lut/issues"
+Homepage = "https://github.com/JanLohse/raw2film"
+Issues = "https://github.com/JanLohse/raw2film/issues"
 
 [project.scripts]
 raw2film = "raw2film:main"
