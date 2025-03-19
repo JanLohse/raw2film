@@ -169,7 +169,7 @@ def exponential_blur(rgb, size):
     return cv.filter2D(rgb, -1, kernel)
 
 
-def grain(rgb, stock, scale, grain_size=0.002):
+def grain(rgb, stock, scale, grain_size=0.002, smoothing=0):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / 6
     noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
@@ -180,7 +180,7 @@ def grain(rgb, stock, scale, grain_size=0.002):
     rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
 
     noise = np.multiply(noise, rms)
-    if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
-        noise = gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
+    if scale * (grain_size + smoothing) * 2 * math.sqrt(math.pi) > 1:
+        noise = gaussian_blur(noise, scale * (grain_size + smoothing)) * (scale * grain_size * 2 * math.sqrt(math.pi))
     rgb += noise
     return rgb
