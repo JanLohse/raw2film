@@ -1,14 +1,12 @@
 import math
 
+import cv2
 import cv2 as cv
 import lensfunpy
 import numpy as np
-from lensfunpy import util as lensfunpy_util
-from scipy import ndimage
-from matplotlib import pyplot as plt
 import torch
-
-from raw2film import utils
+from lensfunpy import util as lensfunpy_util
+from raw2film import utils, data
 
 
 def lens_correction(rgb, metadata):
@@ -40,22 +38,17 @@ def lens_correction(rgb, metadata):
     return rgb
 
 
-def rotate(rotation, rgb):
-    degrees = rotation % 360
-
-    while degrees > 45:
-        rgb = np.rot90(rgb, k=1)
-        degrees -= 90
+def rotate(rgb, degrees):
     if degrees:
-        input_height = rgb.shape[0]
-        input_width = rgb.shape[1]
-        rgb = ndimage.rotate(rgb, angle=degrees, reshape=True)
+        input_height, input_width = rgb.shape[:2]
+        image_center = tuple(np.array(rgb.shape[1::-1]) / 2)
+        rot_mat = cv2.getRotationMatrix2D(image_center, -degrees, 1.0)
+        rgb = cv2.warpAffine(rgb, rot_mat, rgb.shape[1::-1], flags=cv2.INTER_LINEAR)
         aspect_ratio = input_height / input_width
-        rotated_ratio = rgb.shape[0] / rgb.shape[1]
         angle = math.fabs(degrees) * math.pi / 180
 
         if aspect_ratio < 1:
-            total_height = input_height / rotated_ratio
+            total_height = input_height
         else:
             total_height = input_width
 
@@ -67,7 +60,7 @@ def rotate(rotation, rgb):
     return rgb
 
 
-def crop_image(zoom, rgb, aspect=1.5):
+def crop_image(rgb, zoom=1, aspect=1.5):
     """Crops rgb data to aspect ratio."""
     x, y, c = rgb.shape
     if x > y:
@@ -125,7 +118,7 @@ def mtf_kernel(mtf_data, frequency, f_shift):
     return kernel
 
 
-def film_sharpness(stock, rgb, scale):
+def film_sharpness(rgb, stock, scale):
     size = int(scale // 2)
     if not size % 2:
         size += 1
@@ -183,4 +176,13 @@ def grain(rgb, stock, scale, grain_size=0.002, smoothing=0):
     if scale * (grain_size + smoothing) * 2 * math.sqrt(math.pi) > 1:
         noise = gaussian_blur(noise, scale * (grain_size + smoothing)) * (scale * grain_size * 2 * math.sqrt(math.pi))
     rgb += noise
+    return rgb
+
+
+def halation(rgb, scale):
+    # TODO: check efficiency
+    blured = exponential_blur(rgb, scale / 4)
+    color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_XYZ)
+    rgb += np.multiply(blured, color_factors)
+    rgb = np.divide(rgb, color_factors + 1)
     return rgb
