@@ -44,12 +44,12 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 
 def process_image(image, negative_film, frame_width=36, frame_height=24, rotation=0, zoom=1, fast_mode=False,
-                  print_film=None, **kwargs):
+                  print_film=None, halation=True, sharpness=True, grain=True, **kwargs):
     # TODO: auto exposure
 
-    # TODO: when lens correction and full mode dark image
     if fast_mode:
         if image.dtype != np.uint16:
+            image = image.astype(np.float32)
             image_max = image.max()
             if image_max > 65535:
                 factor = 65535. / image_max
@@ -69,14 +69,17 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, rotatio
 
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
-        image = effects.halation(image, scale)
+        if halation:
+            image = effects.halation(image, scale)
 
         transform = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None, **kwargs)
         image = transform(image)
 
-        image = effects.film_sharpness(image, negative_film, scale)
+        if sharpness:
+            image = effects.film_sharpness(image, negative_film, scale)
 
-        image = effects.grain(image, negative_film, scale)
+        if grain:
+            image = effects.grain(image, negative_film, scale)
 
         image = np.clip(image, 0, 1)
         image *= 2 ** 16 - 1

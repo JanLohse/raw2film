@@ -51,6 +51,13 @@ class MainWindow(QMainWindow):
         self.full_preview = QCheckBox()
         add_option(self.full_preview, "Full preview:", False, self.full_preview.setChecked)
 
+        self.halation = QCheckBox()
+        add_option(self.halation, "Halation:", True, self.halation.setChecked)
+        self.sharpness = QCheckBox()
+        add_option(self.sharpness, "Sharpness:", True, self.sharpness.setChecked)
+        self.grain = QCheckBox()
+        add_option(self.grain, "Grain:", True, self.grain.setChecked)
+
         self.exp_comp = Slider()
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
@@ -61,7 +68,7 @@ class MainWindow(QMainWindow):
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
 
         self.exp_wb = Slider()
-        self.exp_wb.setMinMaxTicks(2000, 15000, 100)
+        self.exp_wb.setMinMaxTicks(2000, 12000, 50)
         add_option(self.exp_wb, "Kelvin:", 6500, self.exp_wb.setValue)
 
         # TODO: add rotate and flip buttons
@@ -122,6 +129,9 @@ class MainWindow(QMainWindow):
         self.white_point.valueChanged.connect(self.parameter_changed)
         self.lens_correction.checkStateChanged.connect(self.load_image)
         self.full_preview.checkStateChanged.connect(self.parameter_changed)
+        self.halation.checkStateChanged.connect(self.parameter_changed)
+        self.sharpness.checkStateChanged.connect(self.parameter_changed)
+        self.grain.checkStateChanged.connect(self.parameter_changed)
         self.rotation.valueChanged.connect(self.crop_zoom_changed)
         self.zoom.valueChanged.connect(self.crop_zoom_changed)
 
@@ -180,7 +190,10 @@ class MainWindow(QMainWindow):
                       [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
                   "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
                   "rotation": self.rotation.getValue(),
-                  "exposure_kelvin": self.exp_wb.getValue(),}
+                  "exposure_kelvin": self.exp_wb.getValue(),
+                  "halation": self.halation.isChecked(),
+                  "sharpness": self.sharpness.isChecked(),
+                  "grain": self.grain.isChecked(),}
         return kwargs
 
     def lights_changed(self, value):
