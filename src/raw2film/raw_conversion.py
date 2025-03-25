@@ -18,8 +18,6 @@ def raw_to_linear(src, half_size=True, lens_correction=False, metadata=False):
                               use_camera_wb=False, use_auto_wb=False, half_size=half_size,
                               demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True, )
 
-    exp_comp = 0
-
     # TODO: lower resolution for fast mode
 
     if lens_correction or metadata:
@@ -46,6 +44,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 def process_image(image, negative_film, frame_width=36, frame_height=24, rotation=0, zoom=1, fast_mode=False,
                   print_film=None, halation=True, sharpness=True, grain=True, **kwargs):
     # TODO: auto exposure
+    # TODO: resolution change
 
     if fast_mode:
         if image.dtype != np.uint16:
@@ -79,7 +78,7 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, rotatio
             image = effects.film_sharpness(image, negative_film, scale)
 
         if grain:
-            image = effects.grain(image, negative_film, scale)
+            image = effects.grain(image, negative_film, scale, **kwargs)
 
         image = np.clip(image, 0, 1)
         image *= 2 ** 16 - 1
@@ -89,9 +88,10 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, rotatio
 
     height, width, _ = image.shape
     process = run_async(
-        ffmpeg.input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height)).filter('lut3d',
-                                                                                                          file=lut).output(
-            'pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1, loglevel='quiet'), pipe_stdin=True,
+        ffmpeg
+        .input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height))
+        .filter('lut3d', file=lut)
+        .output('pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1, loglevel='quiet'), pipe_stdin=True,
         pipe_stdout=True)
     process.stdin.write(image.tobytes())
     process.stdin.close()

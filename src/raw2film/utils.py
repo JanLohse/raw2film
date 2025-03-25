@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 from shutil import copy
 
+import exiftool
 from raw2film import data
 
 
@@ -74,8 +75,8 @@ def copy_from_subfolder(file):
     for path in Path().rglob('./*.*'):
         filename = str(path).split('\\')[-1]
         name = filename.split('.')[0]
-        if (name_start <= name <= name_end and filename.lower().endswith(data.EXTENSION_LIST)
-                and filename not in files):
+        if (name_start <= name <= name_end and filename.lower().endswith(
+                data.EXTENSION_LIST) and filename not in files):
             files.append(filename)
             if not os.path.isfile(filename):
                 copy(path, '../..', )
@@ -93,8 +94,8 @@ def cleanup_files(file):
     for path in Path().rglob('./*/*.*'):
         filename = str(path).split('\\')[-1]
         name = filename.split('.')[0].split('_')[0]
-        if name_start <= name <= name_end and (filename.lower().endswith(data.EXTENSION_LIST) or
-                                               (filename.lower().endswith('jpg') and '_' in filename)):
+        if name_start <= name <= name_end and (filename.lower().endswith(data.EXTENSION_LIST) or (
+                filename.lower().endswith('jpg') and '_' in filename)):
             if not any(Path().rglob(f'*{name}.jpg')) and not os.path.isfile(filename):
                 print("deleted", filename)
                 os.remove(path)
@@ -138,3 +139,11 @@ def hex_color(arg):
     if str(arg) == "black":
         return [0, 0, 0]
     return list(int(arg[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def add_metadata(src, metadata, exp_comp, artist="Jan Lohse"):
+    metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in data.METADATA_KEYS}
+    metadata['EXIF:Artist'] = artist
+    metadata['EXIF:ExposureCompensation'] = exp_comp
+    with exiftool.ExifToolHelper() as et:
+        et.set_tags([src], metadata, '-overwrite_original')

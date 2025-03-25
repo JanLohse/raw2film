@@ -3,18 +3,22 @@ import numpy as np
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
+from raw2film import data
 from raw2film.raw_conversion import raw_to_linear, process_image, crop_rotate_zoom
-from spectral_film_lut import FILMSTOCKS
+from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, filmstocks):
+    def __init__(self):
         super().__init__()
 
         self.setWindowTitle("Raw2Film")
 
-        self.filmstocks = filmstocks
+        negative_stocks = dict(NEGATIVE_FILM, **REVERSAL_FILM)
+        self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
+        self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
 
         pagelayout = QHBoxLayout()
         widget = QWidget()
@@ -33,11 +37,16 @@ class MainWindow(QMainWindow):
 
         self.side_counter = -1
 
-        def add_option(widget, name=None, default=None, setter=None):
+        self.hideable_widgets = []
+
+        def add_option(widget, name=None, default=None, setter=None, hideable=False):
             self.side_counter += 1
             sidelayout.addWidget(widget, self.side_counter, 1)
             label = QLabel(name, alignment=(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
             sidelayout.addWidget(label, self.side_counter, 0)
+            if hideable:
+                self.hideable_widgets.append(widget)
+                self.hideable_widgets.append(label)
             if default is not None and setter is not None:
                 label.mouseDoubleClickEvent = lambda *args: setter(default)
                 setter(default)
@@ -45,24 +54,28 @@ class MainWindow(QMainWindow):
         self.image_selector = FileSelector()
         add_option(self.image_selector, "Reference image:")
 
+        self.advanced_controls = QCheckBox()
+        add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
+
         self.lens_correction = QCheckBox()
         add_option(self.lens_correction, "Lens correction:", False, self.lens_correction.setChecked)
 
         self.full_preview = QCheckBox()
-        add_option(self.full_preview, "Full preview:", False, self.full_preview.setChecked)
+        add_option(self.full_preview, "Full preview:", False, self.full_preview.setChecked, hideable=True)
 
         self.halation = QCheckBox()
-        add_option(self.halation, "Halation:", True, self.halation.setChecked)
+        add_option(self.halation, "Halation:", True, self.halation.setChecked, hideable=True)
         self.sharpness = QCheckBox()
-        add_option(self.sharpness, "Sharpness:", True, self.sharpness.setChecked)
+        add_option(self.sharpness, "Sharpness:", True, self.sharpness.setChecked, hideable=True)
         self.grain = QCheckBox()
-        add_option(self.grain, "Grain:", True, self.grain.setChecked)
+        add_option(self.grain, "Grain:", True, self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
-        self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850, "Fluorescent": 3800, "Custom": None}
+        self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
+                         "Fluorescent": 3800, "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
@@ -80,43 +93,56 @@ class MainWindow(QMainWindow):
         self.zoom.setMinMaxTicks(1, 2, 1, 100)
         add_option(self.zoom, "Zoom:", 0, self.zoom.setValue)
 
+        self.format_selector = QComboBox()
+        self.format_selector.addItems(list(data.FORMATS.keys()))
+        add_option(self.format_selector, "Format:", "135", self.format_selector.setCurrentText)
+
+        self.grain_size = Slider()
+        self.grain_size.setMinMaxTicks(0.2, 2, 1, 20)
+        add_option(self.grain_size, "Grain size (microns):", 1, self.grain_size.setValue, hideable=True)
+
         self.negative_selector = QComboBox()
-        self.negative_selector.addItems(list(filmstocks.keys()))
-        add_option(self.negative_selector, "Negativ stock:", "Kodak5207", self.negative_selector.setCurrentText)
+        self.negative_selector.addItems(list(negative_stocks.keys()))
+        add_option(self.negative_selector, "Negativ stock:", "KodakPortra400", self.negative_selector.setCurrentText)
 
         self.red_light = Slider()
         self.red_light.setMinMaxTicks(-2, 2, 1, 6)
-        add_option(self.red_light, "Red printer light:", 0, self.red_light.setValue)
+        add_option(self.red_light, "Red printer light:", 0, self.red_light.setValue, hideable=True)
         self.green_light = Slider()
         self.green_light.setMinMaxTicks(-2, 2, 1, 6)
-        add_option(self.green_light, "Green printer light:", 0, self.green_light.setValue)
+        add_option(self.green_light, "Green printer light:", 0, self.green_light.setValue, hideable=True)
         self.blue_light = Slider()
         self.blue_light.setMinMaxTicks(-2, 2, 1, 6)
-        add_option(self.blue_light, "Blue printer light:", 0, self.blue_light.setValue)
+        add_option(self.blue_light, "Blue printer light:", 0, self.blue_light.setValue, hideable=True)
 
         self.link_lights = QCheckBox()
         self.link_lights.setChecked(True)
         self.link_lights.setText("link lights")
-        add_option(self.link_lights)
+        add_option(self.link_lights, hideable=True)
 
-        filmstocks["None"] = None
         self.print_selector = QComboBox()
-        self.print_selector.addItems(["None"] + list(filmstocks.keys()))
-        add_option(self.print_selector, "Print stock:", "Kodak2383", self.print_selector.setCurrentText)
+        self.print_selector.addItems(["None"] + list(self.print_stocks.keys()))
+        add_option(self.print_selector, "Print stock:", "KodakEnduraPremier", self.print_selector.setCurrentText)
 
         self.projector_kelvin = Slider()
         self.projector_kelvin.setMinMaxTicks(2700, 10000, 100)
-        add_option(self.projector_kelvin, "Projector wb:", 6500, self.projector_kelvin.setValue)
+        add_option(self.projector_kelvin, "Projector wb:", 6500, self.projector_kelvin.setValue, hideable=True)
 
         self.white_point = Slider()
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
-        add_option(self.white_point, "White point:", 1., self.white_point.setValue)
+        add_option(self.white_point, "White point:", 1., self.white_point.setValue, hideable=True)
+
+        colourspaces = ["CIE XYZ 1931"] + list(colour.models.RGB_COLOURSPACES.data.keys())
+        self.colourspace_selector = QComboBox()
+        self.colourspace_selector.addItems(colourspaces)
+        add_option(self.colourspace_selector, "Output colourspace:", "sRGB", self.colourspace_selector.setCurrentText,
+                   hideable=True)
 
         self.save_lut_button = QPushButton("Save image")
         self.save_lut_button.released.connect(self.save_image_dialog)
         add_option(self.save_lut_button)
 
-        self.negative_selector.currentTextChanged.connect(self.parameter_changed)
+        self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(self.print_light_changed)
         self.image_selector.textChanged.connect(self.load_image)
         self.projector_kelvin.valueChanged.connect(self.parameter_changed)
@@ -134,6 +160,10 @@ class MainWindow(QMainWindow):
         self.grain.checkStateChanged.connect(self.parameter_changed)
         self.rotation.valueChanged.connect(self.crop_zoom_changed)
         self.zoom.valueChanged.connect(self.crop_zoom_changed)
+        self.format_selector.currentTextChanged.connect(self.crop_zoom_changed)
+        self.advanced_controls.checkStateChanged.connect(self.hide_controls)
+        self.colourspace_selector.currentTextChanged.connect(self.parameter_changed)
+        self.grain_size.valueChanged.connect(self.parameter_changed)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -149,6 +179,16 @@ class MainWindow(QMainWindow):
         self.XYZ_image = None
         self.preview_image = None
         self.value_changed = False
+
+        self.hide_controls()
+
+    def hide_controls(self):
+        if self.advanced_controls.isChecked():
+            for widget in self.hideable_widgets:
+                widget.show()
+        else:
+            for widget in self.hideable_widgets:
+                widget.hide()
 
     def scale_pixmap(self):
         if not self.pixmap.isNull():
@@ -168,7 +208,7 @@ class MainWindow(QMainWindow):
     def changed_wb_mode(self):
         mode = self.wb_mode.currentText()
         if mode == "Native":
-            self.exp_wb.setValue(self.filmstocks[self.negative_selector.currentText()].exposure_kelvin)
+            self.exp_wb.setValue(self.negative_stocks[self.negative_selector.currentText()].exposure_kelvin)
         elif mode != "Custom":
             self.exp_wb.setValue(self.wb_modes[mode])
             self.parameter_changed()
@@ -178,22 +218,39 @@ class MainWindow(QMainWindow):
         curr_mode = self.wb_mode.currentText()
         if curr_mode == "Custom":
             self.parameter_changed()
+        elif curr_mode == "Native" and kelvin == self.negative_stocks[
+            self.negative_selector.currentText()].exposure_kelvin:
+            self.parameter_changed()
         elif self.wb_modes[curr_mode] != kelvin:
             self.wb_mode.setCurrentText("Custom")
             self.parameter_changed()
 
+    def changed_negative(self):
+        negative = self.negative_selector.currentText()
+        self.print_selector.setEnabled(negative not in REVERSAL_FILM)
+        curr_kelvin = self.exp_wb.getValue()
+        if self.wb_mode.currentText() == "Native":
+            self.changed_wb_mode()
+            if curr_kelvin == self.exp_wb.getValue():
+                self.parameter_changed()
+        else:
+            self.parameter_changed()
+
     def setup_params(self):
-        kwargs = {"negative_film": self.filmstocks[self.negative_selector.currentText()],
-                  "print_film": self.filmstocks[self.print_selector.currentText()],
-                  "projector_kelvin": self.projector_kelvin.getValue(), "exp_comp": self.exp_comp.getValue(),
-                  "printer_light_comp": np.array(
-                      [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
+        frame_width, frame_height = data.FORMATS[self.format_selector.currentText()]
+        colourspace = self.colourspace_selector.currentText()
+        if colourspace == "CIE XYZ 1931": colourspace = None
+        kwargs = {"negative_film": self.negative_stocks[self.negative_selector.currentText()],
+                  "print_film": self.print_stocks[
+                      self.print_selector.currentText()] if self.print_selector.isEnabled() else None,
+                  "smoothing": self.print_selector.isEnabled(), "projector_kelvin": self.projector_kelvin.getValue(),
+                  "exp_comp": self.exp_comp.getValue(), "printer_light_comp": np.array(
+                [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
                   "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
-                  "rotation": self.rotation.getValue(),
-                  "exposure_kelvin": self.exp_wb.getValue(),
-                  "halation": self.halation.isChecked(),
-                  "sharpness": self.sharpness.isChecked(),
-                  "grain": self.grain.isChecked(),}
+                  "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
+                  "halation": self.halation.isChecked(), "sharpness": self.sharpness.isChecked(),
+                  "grain": self.grain.isChecked(), "output_colourspace": colourspace, "frame_width": frame_width,
+                  "frame_height": frame_height, "grain_size": self.grain_size.getValue() / 1000}
         return kwargs
 
     def lights_changed(self, value):
@@ -273,12 +330,14 @@ class MainWindow(QMainWindow):
 
     def save_image(self, filename, **kwargs):
         kwargs = self.setup_params()
-        image = raw_to_linear(self.image_selector.currentText(), lens_correction=self.lens_correction.isChecked(),
-                              half_size=False)
+        image, metadata = raw_to_linear(self.image_selector.currentText(),
+                                        lens_correction=self.lens_correction.isChecked(), half_size=False,
+                                        metadata=True)
         image = process_image(image, fast_mode=False, **kwargs)
         if '.' not in filename:
             filename += '.jpg'
         imageio.imwrite(filename, image, quality=100, format='.jpg')
+        add_metadata(filename, metadata, exp_comp=kwargs['exp_comp'])
 
     def save_image_dialog(self):
         filename, ok = QFileDialog.getSaveFileName(self)
@@ -288,10 +347,8 @@ class MainWindow(QMainWindow):
 
 
 def gui_main():
-    filmstocks = {k: v() for k, v in FILMSTOCKS.items() if v is not None}
-
     app = QApplication(sys.argv)
-    w = MainWindow(filmstocks)
+    w = MainWindow()
     w.show()
     app.exec()
 

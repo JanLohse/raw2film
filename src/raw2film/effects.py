@@ -146,13 +146,14 @@ def film_sharpness(rgb, stock, scale):
 
 
 def exponential_blur(rgb, size):
-    size = math.ceil(size)
+    radius = size / 2
+    size = 2 * math.floor(math.ceil(size) / 2) + 1
+    center = math.ceil(size / 2)
     kernel = np.zeros((size, size))
-    radius = math.floor(size / 2)
 
     for i in range(size):
         for j in range(size):
-            dist = (i - size / 2) ** 2 + (j - size / 2) ** 2
+            dist = (i + 1 - center) ** 2 + (j + 1 - center) ** 2
             if not dist:
                 dist = 1
             kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
@@ -162,25 +163,25 @@ def exponential_blur(rgb, size):
     return cv.filter2D(rgb, -1, kernel)
 
 
-def grain(rgb, stock, scale, grain_size=0.002, smoothing=0):
+def grain(rgb, stock, scale, grain_size=0.002, smoothing=False, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / 6
     noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
-
+    # TODO: properly scale intensity with grain size
     red_rms = np.interp(rgb[..., 0], stock.red_rms_density, stock.red_rms * std_factor)
     green_rms = np.interp(rgb[..., 1], stock.green_rms_density, stock.green_rms * std_factor)
     blue_rms = np.interp(rgb[..., 2], stock.blue_rms_density, stock.blue_rms * std_factor)
     rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
-
     noise = np.multiply(noise, rms)
-    if scale * (grain_size + smoothing) * 2 * math.sqrt(math.pi) > 1:
-        noise = gaussian_blur(noise, scale * (grain_size + smoothing)) * (scale * grain_size * 2 * math.sqrt(math.pi))
+    if scale * grain_size * (1 + smoothing * 2) * 2 * math.sqrt(math.pi) > 1:
+        noise = gaussian_blur(noise, scale * grain_size * (1 + smoothing * 2)) * (
+                    scale * grain_size * 2 * math.sqrt(math.pi))
     rgb += noise
     return rgb
 
 
 def halation(rgb, scale):
-    # TODO: check efficiency
+    # TODO: check scale and factors
     blured = exponential_blur(rgb, scale / 4)
     color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_XYZ)
     rgb += np.multiply(blured, color_factors)

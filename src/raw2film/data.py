@@ -1,8 +1,5 @@
 import numpy as np
-from spectral_film_lut import FILMSTOCKS
 
-FILMSTOCKS[None] = None
-FILMSTOCKS["None"] = None
 METADATA_KEYS = ['GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'ShutterSpeedValue', 'FocalLength', 'Make',
                  'Saturation', 'SubSecTimeOriginal', 'SubSecTimeDigitized', 'GPSImgDirectionRef', 'ExposureProgram',
                  'GPSLatitudeRef', 'Software', 'GPSVersionID', 'ResolutionUnit', 'LightSource', 'FileSource',
@@ -24,6 +21,7 @@ FORMATS = {'110': (17, 13),
            '120-4.5': (56, 42), '120-6': (56, 56), '120': (70, 56), '120-9': (83, 56),
            '4x5': (127, 101.6), '5x7': (177.8, 127), '8x10': (254, 203.2), '11x14': (355.6, 279.4),
            'super16': (12.42, 7.44), 'scope': (24.89, 10.4275), 'flat': (24.89, 13.454), 'academy': (24.89, 18.7),
+           'super8': (5.79, 4.01), '8mm': (4.5, 3.3),
            '65mm': (48.56, 22.1), 'IMAX': (70.41, 52.63)}
 REC709_TO_XYZ = np.array([[0.4124564, 0.3575761, 0.1804375],
                           [0.2126729, 0.7151522, 0.0721750],
