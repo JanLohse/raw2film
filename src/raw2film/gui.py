@@ -55,6 +55,15 @@ class MainWindow(QMainWindow):
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
+        self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850, "Fluorescent": 3800, "Custom": None}
+        self.wb_mode = QComboBox()
+        self.wb_mode.addItems(list(self.wb_modes.keys()))
+        add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
+
+        self.exp_wb = Slider()
+        self.exp_wb.setMinMaxTicks(2000, 15000, 100)
+        add_option(self.exp_wb, "Kelvin:", 6500, self.exp_wb.setValue)
+
         # TODO: add rotate and flip buttons
         self.rotation = Slider()
         self.rotation.setMinMaxTicks(-90, 90, 1)
@@ -105,6 +114,8 @@ class MainWindow(QMainWindow):
         self.image_selector.textChanged.connect(self.load_image)
         self.projector_kelvin.valueChanged.connect(self.parameter_changed)
         self.exp_comp.valueChanged.connect(self.parameter_changed)
+        self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
+        self.exp_wb.valueChanged.connect(self.changed_exp_wb)
         self.red_light.valueChanged.connect(self.lights_changed)
         self.green_light.valueChanged.connect(self.lights_changed)
         self.blue_light.valueChanged.connect(self.lights_changed)
@@ -144,6 +155,23 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
         super().resizeEvent(event)
 
+    def changed_wb_mode(self):
+        mode = self.wb_mode.currentText()
+        if mode == "Native":
+            self.exp_wb.setValue(self.filmstocks[self.negative_selector.currentText()].exposure_kelvin)
+        elif mode != "Custom":
+            self.exp_wb.setValue(self.wb_modes[mode])
+            self.parameter_changed()
+
+    def changed_exp_wb(self):
+        kelvin = self.exp_wb.getValue()
+        curr_mode = self.wb_mode.currentText()
+        if curr_mode == "Custom":
+            self.parameter_changed()
+        elif self.wb_modes[curr_mode] != kelvin:
+            self.wb_mode.setCurrentText("Custom")
+            self.parameter_changed()
+
     def setup_params(self):
         kwargs = {"negative_film": self.filmstocks[self.negative_selector.currentText()],
                   "print_film": self.filmstocks[self.print_selector.currentText()],
@@ -151,7 +179,8 @@ class MainWindow(QMainWindow):
                   "printer_light_comp": np.array(
                       [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
                   "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
-                  "rotation": self.rotation.getValue(), }
+                  "rotation": self.rotation.getValue(),
+                  "exposure_kelvin": self.exp_wb.getValue(),}
         return kwargs
 
     def lights_changed(self, value):
