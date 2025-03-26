@@ -29,10 +29,3 @@ REC709_TO_XYZ = np.array([[0.4124564, 0.3575761, 0.1804375],
 XYZ_TO_REC709 = np.array([[3.2404542, -1.5371385, -0.4985314],
                           [-0.9692660, 1.8760108, 0.0415560],
                           [0.0556434, -0.2040259, 1.0572252]], dtype=np.float32)
-CAMERA_DB = {"X100S": "Fujifilm : X100S",
-             "DMC-GX80": "Panasonic : DMC-GX80",
-             "DC-FZ10002": "Panasonic : DC-FZ10002"}
-LENS_DB = {"X100S": "Fujifilm : X100 & compatibles (Standard)",
-           "LUMIX G 25/F1.7": "Panasonic : Lumix G 25mm f/1.7 Asph.",
-           "LUMIX G VARIO 12-32/F3.5-5.6": "Panasonic : Lumix G Vario 12-32mm f/3.5-5.6 Asph. Mega OIS",
-           "DC-FZ10002": "Leica : FZ1000 & compatibles"}

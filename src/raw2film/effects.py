@@ -9,20 +9,12 @@ from lensfunpy import util as lensfunpy_util
 from raw2film import utils, data
 
 
-def lens_correction(rgb, metadata):
+def lens_correction(rgb, metadata, cam, lens):
     """Apply lens correction using lensfunpy."""
     # noinspection PyUnresolvedReferences
-    db = lensfunpy.Database()
-    try:
-        cam = db.find_cameras(metadata['EXIF:Make'], metadata['EXIF:Model'], loose_search=True)[0]
-        lens = db.find_lenses(cam, metadata['EXIF:LensMake'], metadata['EXIF:LensModel'], loose_search=True)[0]
-    except (KeyError, IndexError):
-        cam, lens = utils.find_data(metadata)
-        if lens and cam:
-            cam = db.find_cameras(*cam, loose_search=True)[0]
-            lens = db.find_lenses(cam, *lens, loose_search=True)[0]
-        else:
-            return rgb
+    rgb = rgb.astype(np.float64)
+    if lens is None or cam is None:
+        return
     try:
         focal_length = metadata['EXIF:FocalLength']
         aperture = metadata['EXIF:FNumber']
@@ -122,6 +114,8 @@ def film_sharpness(rgb, stock, scale):
     size = int(scale // 2)
     if not size % 2:
         size += 1
+    if size < 13:
+        size = 13
 
     kernel = np.zeros((size, size))
     kernel[size // 2, size // 2] = 1
@@ -140,7 +134,7 @@ def film_sharpness(rgb, stock, scale):
     else:
         kernel = mtf_kernel(stock.mtf, frequency, f_shift)
 
-    rgb = cv.filter2D(rgb, -1, kernel)
+    rgb = cv.filter2D(rgb, ddepth=-1, kernel=kernel)
 
     return rgb
 

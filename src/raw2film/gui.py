@@ -1,9 +1,10 @@
 import imageio
+import lensfunpy
 import numpy as np
 from PyQt6.QtCore import QSize, QThreadPool
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
-from raw2film import data
+from raw2film import data, utils, effects
 from raw2film.raw_conversion import raw_to_linear, process_image, crop_rotate_zoom
 from raw2film.utils import add_metadata
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
@@ -52,13 +53,27 @@ class MainWindow(QMainWindow):
                 setter(default)
 
         self.image_selector = FileSelector()
-        add_option(self.image_selector, "Reference image:")
+        add_option(self.image_selector, "Image:")
 
         self.advanced_controls = QCheckBox()
         add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
 
+        self.lensfunpy_db = lensfunpy.Database()
+        self.cameras = {camera.maker + camera.model: camera for camera in self.lensfunpy_db.cameras}
+        self.lenses = {lens.maker + lens.model: lens for lens in self.lensfunpy_db.lenses}
+        self.cameras["None"] = None
+        self.lenses["None"] = None
+
         self.lens_correction = QCheckBox()
         add_option(self.lens_correction, "Lens correction:", False, self.lens_correction.setChecked)
+        self.camera_selector = QComboBox()
+        self.camera_selector.setMaximumWidth(180)
+        self.camera_selector.addItems(self.cameras.keys())
+        add_option(self.camera_selector, "Camera model:", "None", self.camera_selector.setCurrentText, hideable=True)
+        self.lens_selector = QComboBox()
+        self.lens_selector.setMaximumWidth(180)
+        self.lens_selector.addItems(self.lenses.keys())
+        add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
 
         self.full_preview = QCheckBox()
         add_option(self.full_preview, "Full preview:", False, self.full_preview.setChecked, hideable=True)
@@ -84,7 +99,16 @@ class MainWindow(QMainWindow):
         self.exp_wb.setMinMaxTicks(2000, 12000, 50)
         add_option(self.exp_wb, "Kelvin:", 6500, self.exp_wb.setValue)
 
-        # TODO: add rotate and flip buttons
+        self.rotate = QWidget()
+        rotate_layout = QHBoxLayout()
+        self.rotate_left = QPushButton("Left")
+        self.rotate_right = QPushButton("Right")
+        rotate_layout.addWidget(self.rotate_left)
+        rotate_layout.addWidget(self.rotate_right)
+        rotate_layout.setContentsMargins(0, 0, 0, 0)
+        self.rotate.setLayout(rotate_layout)
+        add_option(self.rotate, "Rotate:")
+
         self.rotation = Slider()
         self.rotation.setMinMaxTicks(-90, 90, 1)
         add_option(self.rotation, "Rotation angle:", 0, self.rotation.setValue)
@@ -98,7 +122,7 @@ class MainWindow(QMainWindow):
         add_option(self.format_selector, "Format:", "135", self.format_selector.setCurrentText)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(0.2, 2, 1, 20)
+        self.grain_size.setMinMaxTicks(0.2, 2, 1, 10)
         add_option(self.grain_size, "Grain size (microns):", 1, self.grain_size.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
@@ -106,13 +130,13 @@ class MainWindow(QMainWindow):
         add_option(self.negative_selector, "Negativ stock:", "KodakPortra400", self.negative_selector.setCurrentText)
 
         self.red_light = Slider()
-        self.red_light.setMinMaxTicks(-2, 2, 1, 6)
+        self.red_light.setMinMaxTicks(-1, 1, 1, 20)
         add_option(self.red_light, "Red printer light:", 0, self.red_light.setValue, hideable=True)
         self.green_light = Slider()
-        self.green_light.setMinMaxTicks(-2, 2, 1, 6)
+        self.green_light.setMinMaxTicks(-1, 1, 1, 20)
         add_option(self.green_light, "Green printer light:", 0, self.green_light.setValue, hideable=True)
         self.blue_light = Slider()
-        self.blue_light.setMinMaxTicks(-2, 2, 1, 6)
+        self.blue_light.setMinMaxTicks(-1, 1, 1, 20)
         add_option(self.blue_light, "Blue printer light:", 0, self.blue_light.setValue, hideable=True)
 
         self.link_lights = QCheckBox()
@@ -132,11 +156,9 @@ class MainWindow(QMainWindow):
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
         add_option(self.white_point, "White point:", 1., self.white_point.setValue, hideable=True)
 
-        colourspaces = ["CIE XYZ 1931"] + list(colour.models.RGB_COLOURSPACES.data.keys())
-        self.colourspace_selector = QComboBox()
-        self.colourspace_selector.addItems(colourspaces)
-        add_option(self.colourspace_selector, "Output colourspace:", "sRGB", self.colourspace_selector.setCurrentText,
-                   hideable=True)
+        self.output_resolution = QLineEdit()
+        self.output_resolution.setValidator(QIntValidator())
+        add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
         self.save_lut_button = QPushButton("Save image")
         self.save_lut_button.released.connect(self.save_image_dialog)
@@ -153,7 +175,7 @@ class MainWindow(QMainWindow):
         self.green_light.valueChanged.connect(self.lights_changed)
         self.blue_light.valueChanged.connect(self.lights_changed)
         self.white_point.valueChanged.connect(self.parameter_changed)
-        self.lens_correction.checkStateChanged.connect(self.load_image)
+        self.lens_correction.checkStateChanged.connect(self.apply_lens_correction)
         self.full_preview.checkStateChanged.connect(self.parameter_changed)
         self.halation.checkStateChanged.connect(self.parameter_changed)
         self.sharpness.checkStateChanged.connect(self.parameter_changed)
@@ -162,8 +184,11 @@ class MainWindow(QMainWindow):
         self.zoom.valueChanged.connect(self.crop_zoom_changed)
         self.format_selector.currentTextChanged.connect(self.crop_zoom_changed)
         self.advanced_controls.checkStateChanged.connect(self.hide_controls)
-        self.colourspace_selector.currentTextChanged.connect(self.parameter_changed)
         self.grain_size.valueChanged.connect(self.parameter_changed)
+        self.rotate_right.released.connect(self.rotate_right_pressed)
+        self.rotate_left.released.connect(self.rotate_left_pressed)
+        self.lens_selector.currentTextChanged.connect(self.apply_lens_correction)
+        self.camera_selector.currentTextChanged.connect(self.apply_lens_correction)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -177,10 +202,21 @@ class MainWindow(QMainWindow):
         self.threadpool = QThreadPool()
 
         self.XYZ_image = None
+        self.corrected_image = None
         self.preview_image = None
         self.value_changed = False
+        self.rotation_state = 0
+        self.metadata = None
 
         self.hide_controls()
+
+    def rotate_left_pressed(self):
+        self.rotation_state = (self.rotation_state + 1) % 4
+        self.update_preview(rotate_only=True)
+
+    def rotate_right_pressed(self):
+        self.rotation_state = (self.rotation_state - 1) % 4
+        self.update_preview(rotate_only=True)
 
     def hide_controls(self):
         if self.advanced_controls.isChecked():
@@ -197,8 +233,26 @@ class MainWindow(QMainWindow):
             self.image.setPixmap(scaled_pixmap)
 
     def load_image(self):
-        self.XYZ_image = raw_to_linear(self.image_selector.currentText(),
-                                       lens_correction=self.lens_correction.isChecked())
+        self.XYZ_image, self.metadata = raw_to_linear(self.image_selector.currentText())
+        cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
+        if cam is not None:
+            self.camera_selector.setCurrentText(cam.maker + cam.model)
+        if lens is not None:
+            self.lens_selector.setCurrentText(lens.maker + lens.model)
+        if self.lens_correction.isChecked():
+            self.apply_lens_correction()
+        else:
+            self.parameter_changed()
+
+    def apply_lens_correction(self):
+        if self.lens_correction.isChecked():
+            cam = self.cameras[self.camera_selector.currentText()]
+            lens = self.lenses[self.lens_selector.currentText()]
+            if cam is not None and lens is not None:
+                self.corrected_image = effects.lens_correction(self.XYZ_image.astype(np.float64), self.metadata, cam,
+                                                               lens)
+            else:
+                self.corrected_image = self.XYZ_image
         self.parameter_changed()
 
     def resizeEvent(self, event):
@@ -238,8 +292,6 @@ class MainWindow(QMainWindow):
 
     def setup_params(self):
         frame_width, frame_height = data.FORMATS[self.format_selector.currentText()]
-        colourspace = self.colourspace_selector.currentText()
-        if colourspace == "CIE XYZ 1931": colourspace = None
         kwargs = {"negative_film": self.negative_stocks[self.negative_selector.currentText()],
                   "print_film": self.print_stocks[
                       self.print_selector.currentText()] if self.print_selector.isEnabled() else None,
@@ -249,8 +301,18 @@ class MainWindow(QMainWindow):
                   "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
                   "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
                   "halation": self.halation.isChecked(), "sharpness": self.sharpness.isChecked(),
-                  "grain": self.grain.isChecked(), "output_colourspace": colourspace, "frame_width": frame_width,
-                  "frame_height": frame_height, "grain_size": self.grain_size.getValue() / 1000}
+                  "grain": self.grain.isChecked(), "frame_width": frame_width, "frame_height": frame_height,
+                  "grain_size": self.grain_size.getValue() / 1000, "rotate_times": self.rotation_state,
+                  "src": self.image_selector.currentText()}
+        resolution = self.output_resolution.text()
+        if resolution != "":
+            kwargs["resolution"] = int(resolution)
+        if self.lens_correction.isChecked():
+            cam = self.cameras[self.camera_selector.currentText()]
+            lens = self.lenses[self.lens_selector.currentText()]
+            if cam is not None and lens is not None:
+                kwargs["cam"] = cam
+                kwargs["lens"] = lens
         return kwargs
 
     def lights_changed(self, value):
@@ -313,12 +375,16 @@ class MainWindow(QMainWindow):
 
         self.threadpool.start(worker)
 
-    def update_preview(self, verbose=False, *args, **kwargs):
+    def update_preview(self, rotate_only=False, *args, **kwargs):
         if self.XYZ_image is None:
             return
         kwargs = self.setup_params()
-        if self.value_changed or self.full_preview.isChecked():
-            self.preview_image = process_image(self.XYZ_image, fast_mode=not self.full_preview.isChecked(), **kwargs)
+        if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
+            if self.lens_correction.isChecked():
+                image = self.corrected_image
+            else:
+                image = self.XYZ_image
+            self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(), **kwargs)
         image = self.preview_image
         if not self.full_preview.isChecked():
             image = crop_rotate_zoom(image, **kwargs)
@@ -330,9 +396,9 @@ class MainWindow(QMainWindow):
 
     def save_image(self, filename, **kwargs):
         kwargs = self.setup_params()
-        image, metadata = raw_to_linear(self.image_selector.currentText(),
-                                        lens_correction=self.lens_correction.isChecked(), half_size=False,
-                                        metadata=True)
+        image, metadata = raw_to_linear(kwargs["src"], half_size=False, )
+        if "cam" in kwargs and "lens" in kwargs:
+            image = effects.lens_correction(image, metadata, kwargs["cam"], kwargs["lens"])
         image = process_image(image, fast_mode=False, **kwargs)
         if '.' not in filename:
             filename += '.jpg'

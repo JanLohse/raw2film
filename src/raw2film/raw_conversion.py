@@ -5,12 +5,13 @@ import exiftool
 import ffmpeg
 import numpy as np
 import rawpy
+import cv2 as cv
 from raw2film import effects
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import create_lut, run_async
 
 
-def raw_to_linear(src, half_size=True, lens_correction=False, metadata=False):
+def raw_to_linear(src, half_size=True):
     # convert raw file to linear data
     with rawpy.imread(src) as raw:
         # noinspection PyUnresolvedReferences
@@ -18,31 +19,24 @@ def raw_to_linear(src, half_size=True, lens_correction=False, metadata=False):
                               use_camera_wb=False, use_auto_wb=False, half_size=half_size,
                               demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True, )
 
-    # TODO: lower resolution for fast mode
+    with exiftool.ExifToolHelper() as et:
+        meta = et.get_metadata(src)[0]
 
-    if lens_correction or metadata:
-        with exiftool.ExifToolHelper() as et:
-            meta = et.get_metadata(src)[0]
-
-    if lens_correction:
-        rgb = effects.lens_correction(rgb.astype(np.float64), meta)
-    if metadata:
-        return rgb, meta
-    else:
-        return rgb
+    return rgb, meta
 
 
-def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, **kwargs):
+def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, rotate_times=0, **kwargs):
     image = effects.crop_image(image, 1, aspect=frame_width / frame_height)
     if rotation:
         image = effects.rotate(image, rotation)
     image = effects.crop_image(image, zoom, aspect=frame_width / frame_height)
+    image = np.rot90(image, k=rotate_times)
 
     return image
 
 
-def process_image(image, negative_film, frame_width=36, frame_height=24, rotation=0, zoom=1, fast_mode=False,
-                  print_film=None, halation=True, sharpness=True, grain=True, **kwargs):
+def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mode=False,
+                  print_film=None, halation=True, sharpness=True, grain=True, resolution=None, **kwargs):
     # TODO: auto exposure
     # TODO: resolution change
 
@@ -63,8 +57,18 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, rotatio
         image = image.astype(np.float32) / 65535
         mode = 'print'
 
+    if resolution is not None:
+        h, w = image.shape[:2]
+        scaling_factor = resolution / max(w, h)
+        if scaling_factor < 1:
+            image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)), interpolation=cv.INTER_AREA)
+        elif scaling_factor > 1:
+            image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)), interpolation=cv.INTER_LANCZOS4)
+
+
+
     if not fast_mode:
-        image = crop_rotate_zoom(image, frame_width, frame_height, rotation, zoom)
+        image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
 
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
