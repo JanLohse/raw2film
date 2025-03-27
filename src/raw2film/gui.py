@@ -2,13 +2,14 @@ import imageio
 import lensfunpy
 import numpy as np
 from PyQt6.QtCore import QSize, QThreadPool
-from PyQt6.QtGui import QPixmap, QImage, QIntValidator
+from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
+
 from raw2film import data, utils, effects
 from raw2film.raw_conversion import raw_to_linear, process_image, crop_rotate_zoom
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
                 setter(default)
 
         self.image_selector = FileSelector()
+        self.image_selector.filetype=f"Raw (*{' *'.join(data.EXTENSION_LIST)})"
         add_option(self.image_selector, "Image:")
 
         self.advanced_controls = QCheckBox()
@@ -86,7 +88,7 @@ class MainWindow(QMainWindow):
         add_option(self.grain, "Grain:", True, self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
+        self.exp_comp.setMinMaxTicks(-5, 5, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
         self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
@@ -120,6 +122,12 @@ class MainWindow(QMainWindow):
         self.format_selector = QComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()))
         add_option(self.format_selector, "Format:", "135", self.format_selector.setCurrentText)
+        self.width = QLineEdit()
+        self.width.setValidator(QDoubleValidator())
+        add_option(self.width, "Width:", "36", self.width.setText, hideable=True)
+        self.height = QLineEdit()
+        self.height.setValidator(QDoubleValidator())
+        add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
         self.grain_size.setMinMaxTicks(0.2, 2, 1, 10)
@@ -182,13 +190,15 @@ class MainWindow(QMainWindow):
         self.grain.checkStateChanged.connect(self.parameter_changed)
         self.rotation.valueChanged.connect(self.crop_zoom_changed)
         self.zoom.valueChanged.connect(self.crop_zoom_changed)
-        self.format_selector.currentTextChanged.connect(self.crop_zoom_changed)
+        self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.checkStateChanged.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(self.parameter_changed)
         self.rotate_right.released.connect(self.rotate_right_pressed)
         self.rotate_left.released.connect(self.rotate_left_pressed)
         self.lens_selector.currentTextChanged.connect(self.apply_lens_correction)
         self.camera_selector.currentTextChanged.connect(self.apply_lens_correction)
+        self.width.textChanged.connect(self.crop_zoom_changed)
+        self.height.textChanged.connect(self.crop_zoom_changed)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -209,6 +219,12 @@ class MainWindow(QMainWindow):
         self.metadata = None
 
         self.hide_controls()
+        self.changed_wb_mode()
+
+    def format_changed(self):
+        width, height = data.FORMATS[self.format_selector.currentText()]
+        self.width.setText(str(width))
+        self.height.setText(str(height))
 
     def rotate_left_pressed(self):
         self.rotation_state = (self.rotation_state + 1) % 4
@@ -291,19 +307,18 @@ class MainWindow(QMainWindow):
             self.parameter_changed()
 
     def setup_params(self):
-        frame_width, frame_height = data.FORMATS[self.format_selector.currentText()]
         kwargs = {"negative_film": self.negative_stocks[self.negative_selector.currentText()],
                   "print_film": self.print_stocks[
                       self.print_selector.currentText()] if self.print_selector.isEnabled() else None,
-                  "smoothing": self.print_selector.isEnabled(), "projector_kelvin": self.projector_kelvin.getValue(),
-                  "exp_comp": self.exp_comp.getValue(), "printer_light_comp": np.array(
-                [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
+                  "projector_kelvin": self.projector_kelvin.getValue(), "exp_comp": self.exp_comp.getValue(),
+                  "printer_light_comp": np.array(
+                      [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
                   "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
                   "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
                   "halation": self.halation.isChecked(), "sharpness": self.sharpness.isChecked(),
-                  "grain": self.grain.isChecked(), "frame_width": frame_width, "frame_height": frame_height,
-                  "grain_size": self.grain_size.getValue() / 1000, "rotate_times": self.rotation_state,
-                  "src": self.image_selector.currentText()}
+                  "grain": self.grain.isChecked(), "frame_width": float(self.width.text()),
+                  "frame_height": float(self.height.text()), "grain_size": self.grain_size.getValue() / 1000,
+                  "rotate_times": self.rotation_state, "src": self.image_selector.currentText()}
         resolution = self.output_resolution.text()
         if resolution != "":
             kwargs["resolution"] = int(resolution)
@@ -384,7 +399,8 @@ class MainWindow(QMainWindow):
                 image = self.corrected_image
             else:
                 image = self.XYZ_image
-            self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(), **kwargs)
+            self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
+                                               metadata=self.metadata, **kwargs)
         image = self.preview_image
         if not self.full_preview.isChecked():
             image = crop_rotate_zoom(image, **kwargs)

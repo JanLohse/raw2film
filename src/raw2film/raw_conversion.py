@@ -1,12 +1,13 @@
 import os
 import time
 
+import cv2 as cv
 import exiftool
 import ffmpeg
 import numpy as np
 import rawpy
-import cv2 as cv
 from raw2film import effects
+from raw2film.color_processing import calc_exposure
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import create_lut, run_async
 
@@ -20,9 +21,9 @@ def raw_to_linear(src, half_size=True):
                               demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True, )
 
     with exiftool.ExifToolHelper() as et:
-        meta = et.get_metadata(src)[0]
+        metadata = et.get_metadata(src)[0]
 
-    return rgb, meta
+    return rgb, metadata
 
 
 def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, rotate_times=0, **kwargs):
@@ -35,10 +36,13 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
     return image
 
 
-def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mode=False,
-                  print_film=None, halation=True, sharpness=True, grain=True, resolution=None, **kwargs):
-    # TODO: auto exposure
-    # TODO: resolution change
+def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
+                  halation=True, sharpness=True, grain=True, resolution=None, metadata=None, **kwargs):
+    exp_comp = calc_exposure(image, metadata=metadata, **kwargs)
+    if "exp_comp" in kwargs:
+        kwargs["exp_comp"] += exp_comp
+    else:
+        kwargs["exp_comp"] = exp_comp
 
     if fast_mode:
         if image.dtype != np.uint16:
@@ -63,9 +67,8 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         if scaling_factor < 1:
             image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)), interpolation=cv.INTER_AREA)
         elif scaling_factor > 1:
-            image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)), interpolation=cv.INTER_LANCZOS4)
-
-
+            image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)),
+                              interpolation=cv.INTER_LANCZOS4)
 
     if not fast_mode:
         image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
@@ -75,14 +78,15 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         if halation:
             image = effects.halation(image, scale)
 
-        transform = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None, **kwargs)
+        transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None,
+                                                               **kwargs)
         image = transform(image)
 
         if sharpness:
             image = effects.film_sharpness(image, negative_film, scale)
 
         if grain:
-            image = effects.grain(image, negative_film, scale, **kwargs)
+            image = effects.grain(image, negative_film, scale, d_factor=d_factor, **kwargs)
 
         image = np.clip(image, 0, 1)
         image *= 2 ** 16 - 1
@@ -92,10 +96,9 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
 
     height, width, _ = image.shape
     process = run_async(
-        ffmpeg
-        .input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height))
-        .filter('lut3d', file=lut)
-        .output('pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1, loglevel='quiet'), pipe_stdin=True,
+        ffmpeg.input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height)).filter('lut3d',
+                                                                                                          file=lut).output(
+            'pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1, loglevel='quiet'), pipe_stdin=True,
         pipe_stdout=True)
     process.stdin.write(image.tobytes())
     process.stdin.close()

@@ -6,7 +6,7 @@ import lensfunpy
 import numpy as np
 import torch
 from lensfunpy import util as lensfunpy_util
-from raw2film import utils, data
+from raw2film import data
 
 
 def lens_correction(rgb, metadata, cam, lens):
@@ -149,27 +149,25 @@ def exponential_blur(rgb, size):
         for j in range(size):
             dist = (i + 1 - center) ** 2 + (j + 1 - center) ** 2
             if not dist:
-                dist = 1
-            kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
-
+                kernel[i, j] = 1
+            else:
+                kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
     kernel /= np.sum(kernel)
 
     return cv.filter2D(rgb, -1, kernel)
 
 
-def grain(rgb, stock, scale, grain_size=0.002, smoothing=False, **kwargs):
+def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
-    std_factor = math.sqrt(math.pi) * 0.024 * scale / 6
+    std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
-    # TODO: properly scale intensity with grain size
-    red_rms = np.interp(rgb[..., 0], stock.red_rms_density, stock.red_rms * std_factor)
-    green_rms = np.interp(rgb[..., 1], stock.green_rms_density, stock.green_rms * std_factor)
-    blue_rms = np.interp(rgb[..., 2], stock.blue_rms_density, stock.blue_rms * std_factor)
+    red_rms = np.interp(rgb[..., 0], (stock.red_rms_density + 0.25) / d_factor, stock.red_rms * std_factor)
+    green_rms = np.interp(rgb[..., 1], (stock.green_rms_density + 0.25) / d_factor, stock.green_rms * std_factor)
+    blue_rms = np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
     rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
     noise = np.multiply(noise, rms)
-    if scale * grain_size * (1 + smoothing * 2) * 2 * math.sqrt(math.pi) > 1:
-        noise = gaussian_blur(noise, scale * grain_size * (1 + smoothing * 2)) * (
-                    scale * grain_size * 2 * math.sqrt(math.pi))
+    if scale * grain_size * 2 * math.sqrt(math.pi) > 1:
+        noise = gaussian_blur(noise, scale * grain_size) * (scale * grain_size * 2 * math.sqrt(math.pi))
     rgb += noise
     return rgb
 
