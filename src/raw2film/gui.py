@@ -130,8 +130,8 @@ class MainWindow(QMainWindow):
         add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(1, 10, 1, 2)
-        add_option(self.grain_size, "Grain size (microns):", 5, self.grain_size.setValue, hideable=True)
+        self.grain_size.setMinMaxTicks(1, 6, 1, 2)
+        add_option(self.grain_size, "Grain size (microns):", 4, self.grain_size.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
