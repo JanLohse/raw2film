@@ -61,8 +61,8 @@ class MainWindow(QMainWindow):
         add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
 
         self.lensfunpy_db = lensfunpy.Database()
-        self.cameras = {camera.maker + camera.model: camera for camera in self.lensfunpy_db.cameras}
-        self.lenses = {lens.maker + lens.model: lens for lens in self.lensfunpy_db.lenses}
+        self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
+        self.lenses = {lens.model: lens for lens in self.lensfunpy_db.lenses}
         self.cameras["None"] = None
         self.lenses["None"] = None
 
@@ -88,7 +88,7 @@ class MainWindow(QMainWindow):
         add_option(self.grain, "Grain:", True, self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-5, 5, 1, 6)
+        self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
         self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
@@ -252,9 +252,9 @@ class MainWindow(QMainWindow):
         self.XYZ_image, self.metadata = raw_to_linear(self.image_selector.currentText())
         cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
         if cam is not None:
-            self.camera_selector.setCurrentText(cam.maker + cam.model)
+            self.camera_selector.setCurrentText(cam.maker + " " + cam.model)
         if lens is not None:
-            self.lens_selector.setCurrentText(lens.maker + lens.model)
+            self.lens_selector.setCurrentText(lens.model)
         if self.lens_correction.isChecked():
             self.apply_lens_correction()
         else:

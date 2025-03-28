@@ -6,10 +6,11 @@ import exiftool
 import ffmpeg
 import numpy as np
 import rawpy
-from raw2film import effects
-from raw2film.color_processing import calc_exposure
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import create_lut, run_async
+
+from raw2film import effects
+from raw2film.color_processing import calc_exposure
 
 
 def raw_to_linear(src, half_size=True):
@@ -61,6 +62,9 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         image = image.astype(np.float32) / 65535
         mode = 'print'
 
+    if not fast_mode:
+        image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
+
     if resolution is not None:
         h, w = image.shape[:2]
         scaling_factor = resolution / max(w, h)
@@ -69,10 +73,15 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         elif scaling_factor > 1:
             image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)),
                               interpolation=cv.INTER_LANCZOS4)
-
-    if not fast_mode:
-        image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
-
+    if fast_mode:
+        h, w = image.shape[:2]
+        h //= 2
+        w //= 2
+        image = cv.resize(image, (w, h), interpolation=cv.INTER_AREA)
+        image = (np.sqrt(image / 65535) * 65535).astype(np.uint16)
+        kwargs["gamma"] = 2
+        kwargs["lut_size"] = 17
+    else:
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
         if halation:
