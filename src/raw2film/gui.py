@@ -130,8 +130,8 @@ class MainWindow(QMainWindow):
         add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(0.2, 2, 1, 10)
-        add_option(self.grain_size, "Grain size (microns):", 1, self.grain_size.setValue, hideable=True)
+        self.grain_size.setMinMaxTicks(1, 10, 1, 2)
+        add_option(self.grain_size, "Grain size (microns):", 5, self.grain_size.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
@@ -394,6 +394,8 @@ class MainWindow(QMainWindow):
         if self.XYZ_image is None:
             return
         kwargs = self.setup_params()
+        if "resolution" in kwargs:
+            kwargs.pop("resolution")
         if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
             if self.lens_correction.isChecked():
                 image = self.corrected_image
