@@ -1,14 +1,15 @@
+from functools import cache
+
 import imageio
 import lensfunpy
-import numpy as np
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 from spectral_film_lut.utils import *
 
-from raw2film import data, utils, effects
-from raw2film.raw_conversion import raw_to_linear, process_image, crop_rotate_zoom
+from raw2film import data, utils
+from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
 
 
@@ -18,7 +19,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Raw2Film")
 
-        negative_stocks = dict(NEGATIVE_FILM, **REVERSAL_FILM)
+        negative_stocks = {**NEGATIVE_FILM, **REVERSAL_FILM}
         self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
         self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
 
@@ -61,6 +62,10 @@ class MainWindow(QMainWindow):
         self.image_list = QComboBox()
         add_option(self.image_list, "Image:")
 
+        self.profiles = QComboBox()
+        self.profiles.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
+        add_option(self.profiles, "Profile:", "Profile 1", self.profiles.setCurrentText)
+
         self.advanced_controls = QCheckBox()
         add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
 
@@ -71,7 +76,7 @@ class MainWindow(QMainWindow):
         self.lenses["None"] = None
 
         self.lens_correction = QCheckBox()
-        add_option(self.lens_correction, "Lens correction:", False, self.lens_correction.setChecked)
+        add_option(self.lens_correction, "Lens correction:", True, self.lens_correction.setChecked)
         self.camera_selector = QComboBox()
         self.camera_selector.setMaximumWidth(180)
         self.camera_selector.addItems(self.cameras.keys())
@@ -172,9 +177,13 @@ class MainWindow(QMainWindow):
         self.output_resolution.setValidator(QIntValidator())
         add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
-        self.save_lut_button = QPushButton("Save image")
-        self.save_lut_button.released.connect(self.save_image_dialog)
-        add_option(self.save_lut_button)
+        self.save_image_button = QPushButton("Save image")
+        self.save_image_button.released.connect(self.save_image_dialog)
+        add_option(self.save_image_button)
+
+        self.save_all_button = QPushButton("Save all images")
+        self.save_all_button.released.connect(self.save_all_images)
+        add_option(self.save_all_button)
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(self.print_light_changed)
@@ -188,7 +197,7 @@ class MainWindow(QMainWindow):
         self.green_light.valueChanged.connect(self.lights_changed)
         self.blue_light.valueChanged.connect(self.lights_changed)
         self.white_point.valueChanged.connect(self.parameter_changed)
-        self.lens_correction.checkStateChanged.connect(self.apply_lens_correction)
+        self.lens_correction.checkStateChanged.connect(self.parameter_changed)
         self.full_preview.checkStateChanged.connect(self.parameter_changed)
         self.halation.checkStateChanged.connect(self.parameter_changed)
         self.sharpness.checkStateChanged.connect(self.parameter_changed)
@@ -200,11 +209,12 @@ class MainWindow(QMainWindow):
         self.grain_size.valueChanged.connect(self.parameter_changed)
         self.rotate_right.released.connect(self.rotate_right_pressed)
         self.rotate_left.released.connect(self.rotate_left_pressed)
-        self.lens_selector.currentTextChanged.connect(self.apply_lens_correction)
-        self.camera_selector.currentTextChanged.connect(self.apply_lens_correction)
+        self.lens_selector.currentTextChanged.connect(self.parameter_changed)
+        self.camera_selector.currentTextChanged.connect(self.parameter_changed)
         self.width.textChanged.connect(self.crop_zoom_changed)
         self.height.textChanged.connect(self.crop_zoom_changed)
         self.image_list.currentTextChanged.connect(self.load_image)
+        self.profiles.currentTextChanged.connect(self.load_profile_params)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -217,17 +227,20 @@ class MainWindow(QMainWindow):
 
         self.threadpool = QThreadPool()
 
-        self.XYZ_image = None
         self.corrected_image = None
         self.preview_image = None
         self.value_changed = False
         self.rotation_state = 0
         self.metadata = None
+        self.active = True
 
         self.hide_controls()
         self.changed_wb_mode()
 
         self.filenames = None
+
+        self.image_params = {}
+        self.profiles_params = {}
 
     def format_changed(self):
         width, height = data.FORMATS[self.format_selector.currentText()]
@@ -276,27 +289,47 @@ class MainWindow(QMainWindow):
     def load_image(self):
         if not self.image_list.currentText():
             return
-        self.XYZ_image, self.metadata = raw_to_linear(self.filenames[self.image_list.currentText()])
-        cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
-        if cam is not None:
-            self.camera_selector.setCurrentText(cam.maker + " " + cam.model)
-        if lens is not None:
-            self.lens_selector.setCurrentText(lens.model)
-        if self.lens_correction.isChecked():
-            self.apply_lens_correction()
+        self.active = False
+        src = self.filenames[self.image_list.currentText()]
+        self.metadata = self.load_metadata(src)
+        if src in self.image_params:
+            kwargs = self.image_params[src]
+            self.load_image_params()
         else:
-            self.parameter_changed()
-
-    def apply_lens_correction(self):
-        if self.lens_correction.isChecked():
-            cam = self.cameras[self.camera_selector.currentText()]
-            lens = self.lenses[self.lens_selector.currentText()]
-            if cam is not None and lens is not None:
-                self.corrected_image = effects.lens_correction(self.XYZ_image.astype(np.float64), self.metadata, cam,
-                                                               lens)
-            else:
-                self.corrected_image = self.XYZ_image
+            self.reset_image_params()
+        if src not in self.image_params or "cam" not in kwargs or "lens" not in kwargs:
+            cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
+            if cam is not None:
+                self.camera_selector.setCurrentText(cam.maker + " " + cam.model)
+            if lens is not None:
+                self.lens_selector.setCurrentText(lens.model)
+        self.active = True
         self.parameter_changed()
+
+    @cache
+    def load_metadata(self, src):
+        with exiftool.ExifToolHelper() as et:
+            metadata = et.get_metadata(src)[0]
+        return metadata
+
+    @lru_cache
+    def load_raw_image(self, src, cam=None, lens=None):
+        if cam is not None and lens is not None:
+            cam = self.cameras[cam]
+            lens = self.lenses[lens]
+
+            return effects.lens_correction(raw_to_linear(src), self.metadata, cam, lens)
+        else:
+            return raw_to_linear(src)
+
+    def xyz_image(self):
+        src = self.filenames[self.image_list.currentText()]
+        if self.lens_correction.isChecked():
+            cam = self.camera_selector.currentText()
+            lens = self.lens_selector.currentText()
+            return self.load_raw_image(src, cam, lens)
+        else:
+            return self.load_raw_image(src)
 
     def resizeEvent(self, event):
         self.scale_pixmap()
@@ -333,29 +366,76 @@ class MainWindow(QMainWindow):
         else:
             self.parameter_changed()
 
-    def setup_params(self):
+    def setup_image_params(self):
+        kwargs = {"exp_comp": self.exp_comp.getValue(), "zoom": self.zoom.getValue(),
+                  "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
+                  "rotate_times": self.rotation_state, "src": self.filenames[self.image_list.currentText()],
+                  "format": self.format_selector.currentText(), "lens_correction": self.lens_correction.isChecked(),
+                  "profile": self.profiles.currentText(), "wb_mode": self.wb_mode.currentText(),
+                  "cam": self.camera_selector.currentText(), "lens": self.lens_selector.currentText()}
+        return kwargs
+
+    def setup_profile_params(self):
         kwargs = {"negative_film": self.negative_stocks[self.negative_selector.currentText()],
                   "print_film": self.print_stocks[
                       self.print_selector.currentText()] if self.print_selector.isEnabled() else None,
-                  "projector_kelvin": self.projector_kelvin.getValue(), "exp_comp": self.exp_comp.getValue(),
-                  "printer_light_comp": np.array(
-                      [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
-                  "white_point": self.white_point.getValue(), "zoom": self.zoom.getValue(),
-                  "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
-                  "halation": self.halation.isChecked(), "sharpness": self.sharpness.isChecked(),
-                  "grain": self.grain.isChecked(), "frame_width": float(self.width.text()),
-                  "frame_height": float(self.height.text()), "grain_size": self.grain_size.getValue() / 1000,
-                  "rotate_times": self.rotation_state, "src": self.filenames[self.image_list.currentText()]}
+                  "projector_kelvin": self.projector_kelvin.getValue(), "printer_light_comp": np.array(
+                [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
+                  "white_point": self.white_point.getValue(), "halation": self.halation.isChecked(),
+                  "sharpness": self.sharpness.isChecked(), "grain": self.grain.isChecked(),
+                  "frame_width": float(self.width.text()), "frame_height": float(self.height.text()),
+                  "grain_size": self.grain_size.getValue() / 1000, "link_lights": self.link_lights.isChecked(),
+                  "format": self.format_selector.currentText(), }
         resolution = self.output_resolution.text()
         if resolution != "":
             kwargs["resolution"] = int(resolution)
-        if self.lens_correction.isChecked():
-            cam = self.cameras[self.camera_selector.currentText()]
-            lens = self.lenses[self.lens_selector.currentText()]
-            if cam is not None and lens is not None:
-                kwargs["cam"] = cam
-                kwargs["lens"] = lens
         return kwargs
+
+    def load_image_params(self):
+        src = self.filenames[self.image_list.currentText()]
+        kwargs = self.image_params[src]
+        self.exp_comp.setValue(kwargs["exp_comp"])
+        self.zoom.setValue(kwargs["zoom"])
+        self.rotation_state = kwargs["rotate_times"]
+        self.rotation.setValue(kwargs["rotation"])
+        self.exp_wb.setValue(kwargs["exposure_kelvin"])
+        self.wb_mode.setCurrentText(kwargs["wb_mode"])
+        self.lens_correction.setChecked(kwargs["lens_correction"])
+        self.profiles.setCurrentText(kwargs["profile"])
+        self.camera_selector.setCurrentText(kwargs["cam"])
+        self.lens_selector.setCurrentText(kwargs["lens"])
+        self.load_profile_params()
+
+    def reset_image_params(self):
+        self.exp_comp.setValue(0)
+        self.zoom.setValue(0)
+        self.rotation_state = 0
+        self.rotation.setValue(0)
+        self.wb_mode.setCurrentText("Native")
+
+    def load_profile_params(self):
+        profile = self.profiles.currentText()
+        if profile == "Custom":
+            profile = self.filenames[self.image_list.currentText()]
+        if profile in self.profiles_params:
+            kwargs = self.profiles_params[profile]
+            self.projector_kelvin.setValue(kwargs["projector_kelvin"])
+            self.red_light.setValue(kwargs["printer_light_comp"][0])
+            self.green_light.setValue(kwargs["printer_light_comp"][1])
+            self.blue_light.setValue(kwargs["printer_light_comp"][2])
+            self.white_point.setValue(kwargs["white_point"])
+            self.halation.setChecked(kwargs["halation"])
+            self.sharpness.setChecked(kwargs["sharpness"])
+            self.grain.setChecked(kwargs["grain"])
+            self.format_selector.setCurrentText(kwargs["format"])
+            self.width.setText(str(kwargs["frame_width"]))
+            self.height.setText(str(kwargs["frame_height"]))
+            self.grain_size.setValue(kwargs["grain_size"] * 1000)
+            self.negative_selector.setCurrentText(kwargs["negative_film"].__class__.__name__)
+            self.print_selector.setCurrentText(kwargs["print_film"].__class__.__name__)
+            self.link_lights.setChecked(kwargs["link_lights"])
+        else:
+            self.profiles_params[profile] = self.setup_profile_params()
 
     def lights_changed(self, value):
         if self.link_lights.isChecked():
@@ -394,14 +474,16 @@ class MainWindow(QMainWindow):
         return
 
     def parameter_changed(self):
-        self.value_changed = True
+        if self.active:
+            self.value_changed = True
 
-        self.start_worker(self.update_preview)
+            self.start_worker(self.update_preview)
 
     def crop_zoom_changed(self):
-        self.value_changed = False
+        if self.active:
+            self.value_changed = False
 
-        self.start_worker(self.update_preview)
+            self.start_worker(self.update_preview)
 
     def start_worker(self, function, semaphore=True, *args, **kwargs):
         if semaphore:
@@ -418,43 +500,74 @@ class MainWindow(QMainWindow):
         self.threadpool.start(worker)
 
     def update_preview(self, rotate_only=False, *args, **kwargs):
-        if self.XYZ_image is None:
+        if not self.image_list.currentText():
             return
-        kwargs = self.setup_params()
-        if "resolution" in kwargs:
-            kwargs.pop("resolution")
+        image_args = self.setup_image_params()
+        profile_args = self.setup_profile_params()
+        if "resolution" in profile_args:
+            profile_args.pop("resolution")
+        self.image_params[image_args["src"]] = image_args
+        if image_args["profile"] != "Custom":
+            self.profiles_params[image_args["profile"]] = profile_args
+        else:
+            self.profiles_params[image_args["src"]] = profile_args
+        processing_args = {**image_args, **profile_args}
         if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
-            if self.lens_correction.isChecked():
-                image = self.corrected_image
-            else:
-                image = self.XYZ_image
+            image = self.xyz_image()
             self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
-                                               metadata=self.metadata, **kwargs)
+                                               metadata=self.metadata, **processing_args)
         image = self.preview_image
         if not self.full_preview.isChecked():
-            image = crop_rotate_zoom(image, **kwargs)
+            image = crop_rotate_zoom(image, **processing_args)
         height, width, _ = image.shape
         image = QImage(np.require(image, np.uint8, 'C'), width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
         self.image.setPixmap(self.pixmap)
         self.scale_pixmap()
 
-    def save_image(self, filename, **kwargs):
-        kwargs = self.setup_params()
-        image, metadata = raw_to_linear(kwargs["src"], half_size=False, )
-        if "cam" in kwargs and "lens" in kwargs:
-            image = effects.lens_correction(image, metadata, kwargs["cam"], kwargs["lens"])
-        image = process_image(image, fast_mode=False, **kwargs)
+    def save_image(self, src, filename, **kwargs):
+        if src not in self.image_params:
+            image_args = self.setup_image_params()
+            image_args["src"] = src
+            image_args["exp_comp"] = 0
+            image_args["zoom"] = 0
+            image_args["rotation"] = 0
+            image_args["rotation_state"] = 0
+            image_args["wb_mode"] = "Native"
+            self.image_params[src] = image_args
+        else:
+            image_args = self.image_params[src]
+        if image_args["profile"] != "Custom":
+            profile_args = self.profiles_params[image_args["profile"]]
+        else:
+            profile_args = self.profiles_params[image_args["src"]]
+        processing_args = {**image_args, **profile_args}
+        image = raw_to_linear(src, half_size=False)
+        metadata = self.load_metadata(src)
+
+        if processing_args["lens_correction"]:
+            image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
+                                            self.lenses[processing_args["lens"]])
+        image = process_image(image, fast_mode=False, **processing_args)
         if '.' not in filename:
             filename += '.jpg'
         imageio.imwrite(filename, image, quality=100, format='.jpg')
-        add_metadata(filename, metadata, exp_comp=kwargs['exp_comp'])
+        add_metadata(filename, metadata, exp_comp=processing_args['exp_comp'])
+        print(f"exported {filename}")
 
     def save_image_dialog(self):
         filename, ok = QFileDialog.getSaveFileName(self)
-
+        src = self.filenames[self.image_list.currentText()]
         if ok:
-            self.start_worker(self.save_image, filename=filename, semaphore=False)
+            self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
+
+    def save_all_process(self, folder, filenames, **kwargs):
+        for filename in filenames:
+            self.save_image(src=filename, filename=folder + "/" + filename.split("/")[-1].split(".")[0])
+
+    def save_all_images(self):
+        folder = QFileDialog.getExistingDirectory(self)
+        self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
 
 
 def gui_main():

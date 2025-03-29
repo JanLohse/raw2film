@@ -1,5 +1,6 @@
 import os
 import time
+from functools import lru_cache
 
 import cv2 as cv
 import exiftool
@@ -21,10 +22,7 @@ def raw_to_linear(src, half_size=True):
                               use_camera_wb=False, use_auto_wb=False, half_size=half_size,
                               demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True, )
 
-    with exiftool.ExifToolHelper() as et:
-        metadata = et.get_metadata(src)[0]
-
-    return rgb, metadata
+    return rgb
 
 
 def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, rotate_times=0, **kwargs):
