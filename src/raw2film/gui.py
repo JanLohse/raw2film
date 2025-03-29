@@ -53,9 +53,13 @@ class MainWindow(QMainWindow):
                 label.mouseDoubleClickEvent = lambda *args: setter(default)
                 setter(default)
 
-        self.image_selector = FileSelector()
-        self.image_selector.filetype=f"Raw (*{' *'.join(data.EXTENSION_LIST)})"
-        add_option(self.image_selector, "Image:")
+        self.image_selector = QPushButton("Open images")
+        add_option(self.image_selector)
+        self.folder_selector = QPushButton("Open folder")
+        add_option(self.folder_selector)
+
+        self.image_list = QComboBox()
+        add_option(self.image_list, "Image:")
 
         self.advanced_controls = QCheckBox()
         add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
@@ -174,7 +178,8 @@ class MainWindow(QMainWindow):
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(self.print_light_changed)
-        self.image_selector.textChanged.connect(self.load_image)
+        self.image_selector.released.connect(self.load_images)
+        self.folder_selector.released.connect(self.load_folder)
         self.projector_kelvin.valueChanged.connect(self.parameter_changed)
         self.exp_comp.valueChanged.connect(self.parameter_changed)
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
@@ -199,6 +204,7 @@ class MainWindow(QMainWindow):
         self.camera_selector.currentTextChanged.connect(self.apply_lens_correction)
         self.width.textChanged.connect(self.crop_zoom_changed)
         self.height.textChanged.connect(self.crop_zoom_changed)
+        self.image_list.currentTextChanged.connect(self.load_image)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -220,6 +226,8 @@ class MainWindow(QMainWindow):
 
         self.hide_controls()
         self.changed_wb_mode()
+
+        self.filenames = None
 
     def format_changed(self):
         width, height = data.FORMATS[self.format_selector.currentText()]
@@ -248,8 +256,27 @@ class MainWindow(QMainWindow):
                                                Qt.TransformationMode.SmoothTransformation)
             self.image.setPixmap(scaled_pixmap)
 
+    def load_images(self):
+        filenames, ok = QFileDialog.getOpenFileNames(self, 'Open raw images', '',
+                                                     filter=f"Raw (*{' *'.join(data.EXTENSION_LIST)})")
+
+        if ok:
+            self.filenames = {filename.split("/")[-1]: filename for filename in filenames}
+            self.image_list.clear()
+            self.image_list.addItems(list(self.filenames.keys()))
+
+    def load_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
+
+        self.filenames = {filename.split("/")[-1]: filename for filename in os.listdir(folder) if
+                          filename.lower().endswith(data.EXTENSION_LIST)}
+        self.image_list.clear()
+        self.image_list.addItems(list(self.filenames.keys()))
+
     def load_image(self):
-        self.XYZ_image, self.metadata = raw_to_linear(self.image_selector.currentText())
+        if not self.image_list.currentText():
+            return
+        self.XYZ_image, self.metadata = raw_to_linear(self.filenames[self.image_list.currentText()])
         cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
         if cam is not None:
             self.camera_selector.setCurrentText(cam.maker + " " + cam.model)
@@ -318,7 +345,7 @@ class MainWindow(QMainWindow):
                   "halation": self.halation.isChecked(), "sharpness": self.sharpness.isChecked(),
                   "grain": self.grain.isChecked(), "frame_width": float(self.width.text()),
                   "frame_height": float(self.height.text()), "grain_size": self.grain_size.getValue() / 1000,
-                  "rotate_times": self.rotation_state, "src": self.image_selector.currentText()}
+                  "rotate_times": self.rotation_state, "src": self.filenames[self.image_list.currentText()]}
         resolution = self.output_resolution.text()
         if resolution != "":
             kwargs["resolution"] = int(resolution)
