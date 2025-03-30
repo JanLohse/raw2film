@@ -1,9 +1,10 @@
+import os
 from functools import cache
 
 import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
-from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator
+from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 from spectral_film_lut.utils import *
@@ -22,6 +23,7 @@ class MainWindow(QMainWindow):
         negative_stocks = {**NEGATIVE_FILM, **REVERSAL_FILM}
         self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
         self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
+        self.print_stocks["None"] = None
 
         pagelayout = QHBoxLayout()
         widget = QWidget()
@@ -42,6 +44,10 @@ class MainWindow(QMainWindow):
 
         self.hideable_widgets = []
 
+        menu = self.menuBar()
+        file_menu = menu.addMenu("File")
+        view_menu = menu.addMenu("View")
+
         def add_option(widget, name=None, default=None, setter=None, hideable=False):
             self.side_counter += 1
             sidelayout.addWidget(widget, self.side_counter, 1)
@@ -54,10 +60,26 @@ class MainWindow(QMainWindow):
                 label.mouseDoubleClickEvent = lambda *args: setter(default)
                 setter(default)
 
-        self.image_selector = QPushButton("Open images")
-        add_option(self.image_selector)
-        self.folder_selector = QPushButton("Open folder")
-        add_option(self.folder_selector)
+        self.image_selector = QAction("Open images", self)
+        file_menu.addAction(self.image_selector)
+        self.folder_selector = QAction("Open folder", self)
+        file_menu.addAction(self.folder_selector)
+        self.save_image_button = QAction("Save current image")
+        self.save_image_button.triggered.connect(self.save_image_dialog)
+        file_menu.addAction(self.save_image_button)
+        self.save_all_button = QAction("Save all images")
+        self.save_all_button.triggered.connect(self.save_all_images)
+        file_menu.addAction(self.save_all_button)
+
+        self.advanced_controls = QAction("Advanced Controls", self)
+        self.advanced_controls.setCheckable(True)
+        view_menu.addAction(self.advanced_controls)
+        self.p3_preview = QAction("Display P3 preview", self)
+        self.p3_preview.setCheckable(True)
+        view_menu.addAction(self.p3_preview)
+        self.full_preview = QAction("Full preview")
+        self.full_preview.setCheckable(True)
+        view_menu.addAction(self.full_preview)
 
         self.image_list = QComboBox()
         add_option(self.image_list, "Image:")
@@ -65,9 +87,6 @@ class MainWindow(QMainWindow):
         self.profiles = QComboBox()
         self.profiles.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
         add_option(self.profiles, "Profile:", "Profile 1", self.profiles.setCurrentText)
-
-        self.advanced_controls = QCheckBox()
-        add_option(self.advanced_controls, "Advanced controls:", False, self.advanced_controls.setChecked)
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -86,8 +105,6 @@ class MainWindow(QMainWindow):
         self.lens_selector.addItems(self.lenses.keys())
         add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
 
-        self.full_preview = QCheckBox()
-        add_option(self.full_preview, "Full preview:", False, self.full_preview.setChecked, hideable=True)
 
         self.halation = QCheckBox()
         add_option(self.halation, "Halation:", True, self.halation.setChecked, hideable=True)
@@ -177,18 +194,12 @@ class MainWindow(QMainWindow):
         self.output_resolution.setValidator(QIntValidator())
         add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
-        self.save_image_button = QPushButton("Save image")
-        self.save_image_button.released.connect(self.save_image_dialog)
-        add_option(self.save_image_button)
 
-        self.save_all_button = QPushButton("Save all images")
-        self.save_all_button.released.connect(self.save_all_images)
-        add_option(self.save_all_button)
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(self.print_light_changed)
-        self.image_selector.released.connect(self.load_images)
-        self.folder_selector.released.connect(self.load_folder)
+        self.image_selector.triggered.connect(self.load_images)
+        self.folder_selector.triggered.connect(self.load_folder)
         self.projector_kelvin.valueChanged.connect(self.parameter_changed)
         self.exp_comp.valueChanged.connect(self.parameter_changed)
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
@@ -198,14 +209,14 @@ class MainWindow(QMainWindow):
         self.blue_light.valueChanged.connect(self.lights_changed)
         self.white_point.valueChanged.connect(self.parameter_changed)
         self.lens_correction.checkStateChanged.connect(self.parameter_changed)
-        self.full_preview.checkStateChanged.connect(self.parameter_changed)
+        self.full_preview.triggered.connect(self.parameter_changed)
         self.halation.checkStateChanged.connect(self.parameter_changed)
         self.sharpness.checkStateChanged.connect(self.parameter_changed)
         self.grain.checkStateChanged.connect(self.parameter_changed)
         self.rotation.valueChanged.connect(self.crop_zoom_changed)
         self.zoom.valueChanged.connect(self.crop_zoom_changed)
         self.format_selector.currentTextChanged.connect(self.format_changed)
-        self.advanced_controls.checkStateChanged.connect(self.hide_controls)
+        self.advanced_controls.triggered.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(self.parameter_changed)
         self.rotate_right.released.connect(self.rotate_right_pressed)
         self.rotate_left.released.connect(self.rotate_left_pressed)
@@ -215,6 +226,7 @@ class MainWindow(QMainWindow):
         self.height.textChanged.connect(self.crop_zoom_changed)
         self.image_list.currentTextChanged.connect(self.load_image)
         self.profiles.currentTextChanged.connect(self.load_profile_params)
+        self.p3_preview.triggered.connect(self.parameter_changed)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -280,13 +292,13 @@ class MainWindow(QMainWindow):
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
-
-        self.filenames = {filename.split("/")[-1]: filename for filename in os.listdir(folder) if
+        self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
                           filename.lower().endswith(data.EXTENSION_LIST)}
+
         self.image_list.clear()
         self.image_list.addItems(list(self.filenames.keys()))
 
-    def load_image(self):
+    def load_image_process(self, **kwargs):
         if not self.image_list.currentText():
             return
         self.active = False
@@ -294,7 +306,7 @@ class MainWindow(QMainWindow):
         self.metadata = self.load_metadata(src)
         if src in self.image_params:
             kwargs = self.image_params[src]
-            self.load_image_params()
+            self.load_image_params(src)
         else:
             self.reset_image_params()
         if src not in self.image_params or "cam" not in kwargs or "lens" not in kwargs:
@@ -305,6 +317,9 @@ class MainWindow(QMainWindow):
                 self.lens_selector.setCurrentText(lens.model)
         self.active = True
         self.parameter_changed()
+
+    def load_image(self):
+        self.start_worker(self.load_image_process, semaphore=False)
 
     @cache
     def load_metadata(self, src):
@@ -391,8 +406,7 @@ class MainWindow(QMainWindow):
             kwargs["resolution"] = int(resolution)
         return kwargs
 
-    def load_image_params(self):
-        src = self.filenames[self.image_list.currentText()]
+    def load_image_params(self, src):
         kwargs = self.image_params[src]
         self.exp_comp.setValue(kwargs["exp_comp"])
         self.zoom.setValue(kwargs["zoom"])
@@ -512,6 +526,8 @@ class MainWindow(QMainWindow):
         else:
             self.profiles_params[image_args["src"]] = profile_args
         processing_args = {**image_args, **profile_args}
+        if self.p3_preview.isChecked():
+            processing_args["output_colourspace"] = "Display P3"
         if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
             image = self.xyz_image()
             self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
