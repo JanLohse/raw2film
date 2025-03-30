@@ -7,13 +7,14 @@ import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
-from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 from spectral_film_lut.utils import *
 
 from raw2film import data, utils
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from raw2film.image_bar import ImageBar
 
 
 class MainWindow(QMainWindow):
@@ -27,20 +28,30 @@ class MainWindow(QMainWindow):
         self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
         self.print_stocks["None"] = None
 
-        pagelayout = QHBoxLayout()
-        widget = QWidget()
-        widget.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
-        sidelayout = QGridLayout()
-        widget.setLayout(sidelayout)
-        sidelayout.setAlignment(Qt.AlignmentFlag.AlignBottom)
+
+        page_layout = QVBoxLayout()
+        top_layout = QHBoxLayout()
+        top_widget = QWidget()
+        top_widget.setLayout(top_layout)
+        sidebar = QWidget()
+        sidebar.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
+        side_layout = QGridLayout()
+        sidebar.setLayout(side_layout)
+        side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.image = QLabel("Select a reference image for the preview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding))
         self.image.setMinimumSize(QSize(256, 256))
         self.pixmap = QPixmap()
 
-        pagelayout.addWidget(self.image)
-        pagelayout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignBottom)
+        self.image_bar = ImageBar()
+        page_layout.addWidget(top_widget)
+        page_layout.addWidget(self.image_bar)
+
+        top_layout.addWidget(self.image)
+        top_layout.addWidget(sidebar, alignment=Qt.AlignmentFlag.AlignBottom)
 
         self.side_counter = -1
 
@@ -52,9 +63,9 @@ class MainWindow(QMainWindow):
 
         def add_option(widget, name=None, default=None, setter=None, hideable=False):
             self.side_counter += 1
-            sidelayout.addWidget(widget, self.side_counter, 1)
+            side_layout.addWidget(widget, self.side_counter, 1)
             label = QLabel(name, alignment=(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
-            sidelayout.addWidget(label, self.side_counter, 0)
+            side_layout.addWidget(label, self.side_counter, 0)
             if hideable:
                 self.hideable_widgets.append(widget)
                 self.hideable_widgets.append(label)
@@ -86,9 +97,6 @@ class MainWindow(QMainWindow):
         self.full_preview = QAction("Full preview")
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
-
-        self.image_list = QComboBox()
-        add_option(self.image_list, "Image:")
 
         self.profiles = QComboBox()
         self.profiles.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
@@ -227,14 +235,14 @@ class MainWindow(QMainWindow):
         self.camera_selector.currentTextChanged.connect(self.parameter_changed)
         self.width.textChanged.connect(self.crop_zoom_changed)
         self.height.textChanged.connect(self.crop_zoom_changed)
-        self.image_list.currentTextChanged.connect(self.load_image)
         self.profiles.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(self.parameter_changed)
         self.save_settings_button.triggered.connect(self.save_settings)
         self.load_settings_button.triggered.connect(self.load_settings)
+        self.image_bar.image_changed.connect(self.load_image)
 
         widget = QWidget()
-        widget.setLayout(pagelayout)
+        widget.setLayout(page_layout)
         self.setCentralWidget(widget)
 
         self.resize(QSize(1024, 512))
@@ -292,22 +300,17 @@ class MainWindow(QMainWindow):
 
         if ok:
             self.filenames = {filename.split("/")[-1]: filename for filename in filenames}
-            self.image_list.clear()
-            self.image_list.addItems(list(self.filenames.keys()))
+            self.image_bar.clear_images()
+            self.image_bar.load_images(filenames)
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
         self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
                           filename.lower().endswith(data.EXTENSION_LIST)}
+        self.image_bar.clear_images()
+        self.image_bar.load_images(self.filenames.values())
 
-        self.image_list.clear()
-        self.image_list.addItems(list(self.filenames.keys()))
-
-    def load_image_process(self, **kwargs):
-        if not self.image_list.currentText():
-            return
-        self.active = False
-        src = self.filenames[self.image_list.currentText()]
+    def load_image_process(self, src, **kwargs):
         self.metadata = self.load_metadata(src)
         if src in self.image_params:
             kwargs = self.image_params[src]
@@ -323,8 +326,8 @@ class MainWindow(QMainWindow):
         self.active = True
         self.parameter_changed()
 
-    def load_image(self):
-        self.start_worker(self.load_image_process, semaphore=False)
+    def load_image(self, src):
+        self.start_worker(self.load_image_process, src=src, semaphore=False)
 
     @cache
     def load_metadata(self, src):
@@ -343,7 +346,7 @@ class MainWindow(QMainWindow):
             return raw_to_linear(src)
 
     def xyz_image(self):
-        src = self.filenames[self.image_list.currentText()]
+        src = self.image_bar.current_image()
         if self.lens_correction.isChecked():
             cam = self.camera_selector.currentText()
             lens = self.lens_selector.currentText()
@@ -389,7 +392,7 @@ class MainWindow(QMainWindow):
     def setup_image_params(self):
         kwargs = {"exp_comp": self.exp_comp.getValue(), "zoom": self.zoom.getValue(),
                   "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
-                  "rotate_times": self.rotation_state, "src": self.image_list.currentText(),
+                  "rotate_times": self.rotation_state, "src": self.image_bar.current_image().split("/")[-1],
                   "format": self.format_selector.currentText(), "lens_correction": self.lens_correction.isChecked(),
                   "profile": self.profiles.currentText(), "wb_mode": self.wb_mode.currentText(),
                   "cam": self.camera_selector.currentText(), "lens": self.lens_selector.currentText()}
@@ -434,7 +437,7 @@ class MainWindow(QMainWindow):
     def load_profile_params(self):
         profile = self.profiles.currentText()
         if profile == "Custom":
-            profile = self.filenames[self.image_list.currentText()]
+            profile = self.image_bar.current_image().split("/")[-1]
         if profile in self.profiles_params:
             kwargs = self.profiles_params[profile]
             self.projector_kelvin.setValue(kwargs["projector_kelvin"])
@@ -518,7 +521,7 @@ class MainWindow(QMainWindow):
         self.threadpool.start(worker)
 
     def update_preview(self, rotate_only=False, *args, **kwargs):
-        if not self.image_list.currentText():
+        if self.image_bar.current_image() is None:
             return
         image_args = self.setup_image_params()
         profile_args = self.setup_profile_params()
@@ -532,7 +535,7 @@ class MainWindow(QMainWindow):
             self.profiles_params[image_args["src"]] = profile_args
         processing_args = {**image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
-        if "print_film" in processing_args:
+        if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
@@ -550,25 +553,26 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
 
     def save_image(self, src, filename, **kwargs):
-        if src not in self.image_params:
+        short = src.split("/")[-1]
+        if short not in self.image_params:
             image_args = self.setup_image_params()
-            image_args["src"] = src
+            image_args["src"] = short
             image_args["exp_comp"] = 0
             image_args["zoom"] = 0
             image_args["rotation"] = 0
             image_args["rotation_state"] = 0
             image_args["wb_mode"] = "Native"
-            self.image_params[src] = image_args
+            self.image_params[short] = image_args
         else:
-            image_args = self.image_params[src]
+            image_args = self.image_params[short]
         if image_args["profile"] != "Custom":
             profile_args = self.profiles_params[image_args["profile"]]
         else:
             profile_args = self.profiles_params[image_args["src"]]
-        image_args["src"] = self.filenames[image_args["src"]]
+        image_args["src"] = self.filenames[short]
         processing_args = {**image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
-        if "print_film" in processing_args:
+        if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
         metadata = self.load_metadata(src)
@@ -585,7 +589,7 @@ class MainWindow(QMainWindow):
 
     def save_image_dialog(self):
         filename, ok = QFileDialog.getSaveFileName(self)
-        src = self.filenames[self.image_list.currentText()]
+        src = self.image_bar.current_image()
         if ok:
             self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
