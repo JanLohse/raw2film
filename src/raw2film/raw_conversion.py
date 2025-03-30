@@ -1,9 +1,7 @@
 import os
 import time
-from functools import lru_cache
 
 import cv2 as cv
-import exiftool
 import ffmpeg
 import numpy as np
 import rawpy

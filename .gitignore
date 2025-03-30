@@ -188,3 +188,4 @@ cython_debug/
 __pycache__
 20*
 .idea
+*.json

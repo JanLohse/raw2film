@@ -1,6 +1,8 @@
-import os
+import json
 from functools import cache
+from functools import lru_cache
 
+import exiftool
 import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
@@ -70,6 +72,10 @@ class MainWindow(QMainWindow):
         self.save_all_button = QAction("Save all images")
         self.save_all_button.triggered.connect(self.save_all_images)
         file_menu.addAction(self.save_all_button)
+        self.save_settings_button = QAction("Save settings")
+        file_menu.addAction(self.save_settings_button)
+        self.load_settings_button = QAction("Load settings")
+        file_menu.addAction(self.load_settings_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
         self.advanced_controls.setCheckable(True)
@@ -104,7 +110,6 @@ class MainWindow(QMainWindow):
         self.lens_selector.setMaximumWidth(180)
         self.lens_selector.addItems(self.lenses.keys())
         add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
-
 
         self.halation = QCheckBox()
         add_option(self.halation, "Halation:", True, self.halation.setChecked, hideable=True)
@@ -194,8 +199,6 @@ class MainWindow(QMainWindow):
         self.output_resolution.setValidator(QIntValidator())
         add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
-
-
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(self.print_light_changed)
         self.image_selector.triggered.connect(self.load_images)
@@ -227,6 +230,8 @@ class MainWindow(QMainWindow):
         self.image_list.currentTextChanged.connect(self.load_image)
         self.profiles.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(self.parameter_changed)
+        self.save_settings_button.triggered.connect(self.save_settings)
+        self.load_settings_button.triggered.connect(self.load_settings)
 
         widget = QWidget()
         widget.setLayout(pagelayout)
@@ -384,18 +389,17 @@ class MainWindow(QMainWindow):
     def setup_image_params(self):
         kwargs = {"exp_comp": self.exp_comp.getValue(), "zoom": self.zoom.getValue(),
                   "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
-                  "rotate_times": self.rotation_state, "src": self.filenames[self.image_list.currentText()],
+                  "rotate_times": self.rotation_state, "src": self.image_list.currentText(),
                   "format": self.format_selector.currentText(), "lens_correction": self.lens_correction.isChecked(),
                   "profile": self.profiles.currentText(), "wb_mode": self.wb_mode.currentText(),
                   "cam": self.camera_selector.currentText(), "lens": self.lens_selector.currentText()}
         return kwargs
 
     def setup_profile_params(self):
-        kwargs = {"negative_film": self.negative_stocks[self.negative_selector.currentText()],
-                  "print_film": self.print_stocks[
-                      self.print_selector.currentText()] if self.print_selector.isEnabled() else None,
-                  "projector_kelvin": self.projector_kelvin.getValue(), "printer_light_comp": np.array(
-                [self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()]),
+        kwargs = {"negative_film": self.negative_selector.currentText(),
+                  "print_film": self.print_selector.currentText() if self.print_selector.isEnabled() else None,
+                  "projector_kelvin": self.projector_kelvin.getValue(), "printer_light_comp": (
+                self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()),
                   "white_point": self.white_point.getValue(), "halation": self.halation.isChecked(),
                   "sharpness": self.sharpness.isChecked(), "grain": self.grain.isChecked(),
                   "frame_width": float(self.width.text()), "frame_height": float(self.height.text()),
@@ -445,8 +449,8 @@ class MainWindow(QMainWindow):
             self.width.setText(str(kwargs["frame_width"]))
             self.height.setText(str(kwargs["frame_height"]))
             self.grain_size.setValue(kwargs["grain_size"] * 1000)
-            self.negative_selector.setCurrentText(kwargs["negative_film"].__class__.__name__)
-            self.print_selector.setCurrentText(kwargs["print_film"].__class__.__name__)
+            self.negative_selector.setCurrentText(kwargs["negative_film"])
+            self.print_selector.setCurrentText(kwargs["print_film"])
             self.link_lights.setChecked(kwargs["link_lights"])
         else:
             self.profiles_params[profile] = self.setup_profile_params()
@@ -521,11 +525,15 @@ class MainWindow(QMainWindow):
         if "resolution" in profile_args:
             profile_args.pop("resolution")
         self.image_params[image_args["src"]] = image_args
+        image_args["src"] = self.filenames[image_args["src"]]
         if image_args["profile"] != "Custom":
             self.profiles_params[image_args["profile"]] = profile_args
         else:
             self.profiles_params[image_args["src"]] = profile_args
         processing_args = {**image_args, **profile_args}
+        processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        if "print_film" in processing_args:
+            processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
         if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
@@ -557,7 +565,11 @@ class MainWindow(QMainWindow):
             profile_args = self.profiles_params[image_args["profile"]]
         else:
             profile_args = self.profiles_params[image_args["src"]]
+        image_args["src"] = self.filenames[image_args["src"]]
         processing_args = {**image_args, **profile_args}
+        processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        if "print_film" in processing_args:
+            processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
         metadata = self.load_metadata(src)
 
@@ -584,6 +596,21 @@ class MainWindow(QMainWindow):
     def save_all_images(self):
         folder = QFileDialog.getExistingDirectory(self)
         self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
+
+    def save_settings(self):
+        filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
+        if ok:
+            complete_dict = {"image_params": self.image_params, "profile_params": self.profiles_params}
+            with open(filename, "w") as f:
+                json.dump(complete_dict, f)
+
+    def load_settings(self):
+        filename, ok = QFileDialog.getOpenFileName(self)
+        if ok:
+            with open(filename, "r") as f:
+                complete_dict = json.load(f)
+            self.image_params = complete_dict["image_params"]
+            self.profiles_params = complete_dict["profile_params"]
 
 
 def gui_main():
