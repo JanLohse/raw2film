@@ -382,6 +382,10 @@ class MainWindow(QMainWindow):
         negative = self.negative_selector.currentText()
         self.print_selector.setEnabled(negative not in REVERSAL_FILM)
         curr_kelvin = self.exp_wb.getValue()
+        if negative in REVERSAL_FILM and self.negative_stocks[negative].projection_kelvin is not None:
+            self.active = False
+            self.projector_kelvin.setValue(self.negative_stocks[negative].projection_kelvin)
+            self.active = True
         if self.wb_mode.currentText() == "Native":
             self.changed_wb_mode()
             if curr_kelvin == self.exp_wb.getValue():
@@ -476,6 +480,15 @@ class MainWindow(QMainWindow):
             self.blue_light.setDisabled(True)
             self.link_lights.setDisabled(True)
         else:
+            print(4)
+            if self.print_stocks[self.print_selector.currentText()].projection_kelvin is not None:
+                print(5)
+                self.active = False
+                print(6)
+                self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
+                print(7)
+                self.active = True
+                print(8)
             self.red_light.setDisabled(False)
             self.green_light.setDisabled(False)
             self.blue_light.setDisabled(False)
