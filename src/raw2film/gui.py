@@ -554,31 +554,18 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
 
     def save_image(self, src, filename, **kwargs):
-        # TODO: fix
-        short = src.split("/")[-1]
-        if short not in self.image_params:
-            image_args = self.setup_image_params()
-            image_args["src"] = short
-            image_args["exp_comp"] = 0
-            image_args["zoom"] = 0
-            image_args["rotation"] = 0
-            image_args["rotate_times"] = 0
-            image_args["wb_mode"] = "Native"
-            self.image_params[short] = image_args
+        src_short = src.split("/")[-1]
+        if src_short in self.image_params:
+            image_args = {**self.default_image_params, **self.image_params[src_short]}
         else:
-            image_args = self.image_params[short]
-        if image_args["profile"] != "Custom":
-            profile_args = self.profile_params[image_args["profile"]]
-        else:
-            profile_args = self.profile_params[image_args["src"]]
-        image_args["src"] = self.filenames[short]
-        processing_args = {**image_args, **profile_args}
+            image_args = self.default_image_params
+        profile_args = self.setup_profile_params(image_args["profile"])
+        processing_args = {**self.default_profile_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
         metadata = self.load_metadata(src)
-
         if processing_args["lens_correction"]:
             image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                             self.lenses[processing_args["lens"]])
@@ -611,13 +598,12 @@ class MainWindow(QMainWindow):
                 json.dump(complete_dict, f)
 
     def load_settings(self):
-        # TODO: fix
         filename, ok = QFileDialog.getOpenFileName(self)
         if ok:
             with open(filename, "r") as f:
                 complete_dict = json.load(f)
-            self.image_params = complete_dict["image_params"]
-            self.profile_params = complete_dict["profile_params"]
+            self.image_params = {**complete_dict["image_params"], **self.image_params}
+            self.profile_params = {**complete_dict["profile_params"], **self.profile_params}
 
     def light_changed(self, value, light_name):
         if self.loading:
