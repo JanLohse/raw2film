@@ -6,7 +6,6 @@ import lensfunpy
 import numpy as np
 import torch
 from lensfunpy import util as lensfunpy_util
-
 from raw2film import data
 
 
@@ -15,7 +14,7 @@ def lens_correction(rgb, metadata, cam, lens):
     # noinspection PyUnresolvedReferences
     rgb = rgb.astype(np.float64)
     if lens is None or cam is None:
-        return
+        return rgb
     try:
         focal_length = metadata['EXIF:FocalLength']
         aperture = metadata['EXIF:FNumber']

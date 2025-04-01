@@ -96,9 +96,16 @@ class MainWindow(QMainWindow):
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
 
-        self.profiles = QComboBox()
-        self.profiles.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
-        add_option(self.profiles, "Profile:", "Profile 1", self.profiles.setCurrentText)
+        self.default_profile_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier",
+                                       "red_light": 0, "green_light": 0, "blue_light": 0, "white_point": 1,
+                                       "halation": True, "sharpness": True, "grain": True, "format": "135",
+                                       "grain_size": 0.004, "link_lights": True}
+        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Native",
+                                     "profile": "Profile 1"}
+
+        self.profile = QComboBox()
+        self.profile.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
+        add_option(self.profile, "Profile:", "Profile 1", self.profile.setCurrentText)
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -206,35 +213,35 @@ class MainWindow(QMainWindow):
         add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
-        self.print_selector.currentTextChanged.connect(self.print_light_changed)
+        self.print_selector.currentTextChanged.connect(lambda x: self.profile_changed(x, "print_film"))
         self.image_selector.triggered.connect(self.load_images)
         self.folder_selector.triggered.connect(self.load_folder)
-        self.projector_kelvin.valueChanged.connect(self.parameter_changed)
-        self.exp_comp.valueChanged.connect(self.parameter_changed)
+        self.projector_kelvin.valueChanged.connect(lambda x: self.profile_changed(x, "projector_kelvin"))
+        self.exp_comp.valueChanged.connect(lambda x: self.setting_changed(x, "exp_comp"))
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
-        self.exp_wb.valueChanged.connect(self.changed_exp_wb)
-        self.red_light.valueChanged.connect(self.lights_changed)
-        self.green_light.valueChanged.connect(self.lights_changed)
-        self.blue_light.valueChanged.connect(self.lights_changed)
-        self.white_point.valueChanged.connect(self.parameter_changed)
-        self.lens_correction.checkStateChanged.connect(self.parameter_changed)
-        self.full_preview.triggered.connect(self.parameter_changed)
-        self.halation.checkStateChanged.connect(self.parameter_changed)
-        self.sharpness.checkStateChanged.connect(self.parameter_changed)
-        self.grain.checkStateChanged.connect(self.parameter_changed)
-        self.rotation.valueChanged.connect(self.crop_zoom_changed)
-        self.zoom.valueChanged.connect(self.crop_zoom_changed)
+        self.exp_wb.valueChanged.connect(lambda x: self.setting_changed(x, "exposure_kelvin"))
+        self.red_light.valueChanged.connect(lambda x: self.light_changed(x, "red_light"))
+        self.green_light.valueChanged.connect(lambda x: self.light_changed(x, "green_light"))
+        self.blue_light.valueChanged.connect(lambda x: self.light_changed(x, "blue_light"))
+        self.white_point.valueChanged.connect(lambda x: self.profile_changed(x, "white_point"))
+        self.lens_correction.stateChanged.connect(lambda x: self.setting_changed(x, "lens_correction"))
+        self.full_preview.triggered.connect(lambda: self.parameter_changed())
+        self.halation.stateChanged.connect(lambda x: self.profile_changed(x, "halation"))
+        self.sharpness.stateChanged.connect(lambda x: self.profile_changed(x, "sharpness"))
+        self.grain.stateChanged.connect(lambda x: self.profile_changed(x, "grain"))
+        self.rotation.valueChanged.connect(lambda x: self.setting_changed(x, "rotation", crop_zoom=True))
+        self.zoom.valueChanged.connect(lambda x: self.setting_changed(x, "zoom", crop_zoom=True))
         self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.triggered.connect(self.hide_controls)
-        self.grain_size.valueChanged.connect(self.parameter_changed)
-        self.rotate_right.released.connect(self.rotate_right_pressed)
-        self.rotate_left.released.connect(self.rotate_left_pressed)
-        self.lens_selector.currentTextChanged.connect(self.parameter_changed)
-        self.camera_selector.currentTextChanged.connect(self.parameter_changed)
-        self.width.textChanged.connect(self.crop_zoom_changed)
-        self.height.textChanged.connect(self.crop_zoom_changed)
-        self.profiles.currentTextChanged.connect(self.load_profile_params)
-        self.p3_preview.triggered.connect(self.parameter_changed)
+        self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 1000, "grain_size"))
+        self.rotate_right.released.connect(self.rotate_image)
+        self.rotate_left.released.connect(lambda: self.rotate_image(-1))
+        self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
+        self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
+        self.width.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_width", crop_zoom=True))
+        self.height.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_height", crop_zoom=True))
+        self.profile.currentTextChanged.connect(self.load_profile_params)
+        self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings)
         self.load_settings_button.triggered.connect(self.load_settings)
         self.image_bar.image_changed.connect(self.load_image)
@@ -252,31 +259,21 @@ class MainWindow(QMainWindow):
 
         self.corrected_image = None
         self.preview_image = None
-        self.value_changed = False
-        self.rotation_state = 0
-        self.metadata = None
-        self.active = True
+        self.rotate_times = 0
+        self.active = True  # prevent from running update_preview by setting inactive
+        self.loading = False  # prevent from storing settings while setting widget values
 
         self.hide_controls()
-        self.changed_wb_mode()
 
         self.filenames = None
 
         self.image_params = {}
-        self.profiles_params = {}
+        self.profile_params = {}
 
-    def format_changed(self):
-        width, height = data.FORMATS[self.format_selector.currentText()]
+    def format_changed(self, format):
+        width, height = data.FORMATS[format]
         self.width.setText(str(width))
         self.height.setText(str(height))
-
-    def rotate_left_pressed(self):
-        self.rotation_state = (self.rotation_state + 1) % 4
-        self.update_preview(rotate_only=True)
-
-    def rotate_right_pressed(self):
-        self.rotation_state = (self.rotation_state - 1) % 4
-        self.update_preview(rotate_only=True)
 
     def hide_controls(self):
         if self.advanced_controls.isChecked():
@@ -308,24 +305,23 @@ class MainWindow(QMainWindow):
         self.image_bar.clear_images()
         self.image_bar.load_images(self.filenames.values())
 
-    def load_image_process(self, src, **kwargs):
-        self.metadata = self.load_metadata(src)
-        if src in self.image_params:
-            kwargs = self.image_params[src]
-            self.load_image_params(src)
-        else:
-            self.reset_image_params()
-        if src not in self.image_params or "cam" not in kwargs or "lens" not in kwargs:
-            cam, lens = utils.find_data(self.metadata, self.lensfunpy_db)
-            if cam is not None:
-                self.camera_selector.setCurrentText(cam.maker + " " + cam.model)
-            if lens is not None:
-                self.lens_selector.setCurrentText(lens.model)
-        self.active = True
-        self.parameter_changed()
+    def load_image(self, src, **kwargs):
+        self.start_worker(self.load_image_process, src=src)
 
-    def load_image(self, src):
-        self.start_worker(self.load_image_process, src=src, semaphore=False)
+    def load_image_process(self, src, **kwargs):
+        src_short = src.split("/")[-1]
+        if src_short not in self.image_params:
+            self.image_params[src_short] = {}
+            metadata = self.load_metadata(src)
+            cam, lens = utils.find_data(metadata, self.lensfunpy_db)
+            if cam is not None:
+                self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
+            if lens is not None:
+                self.image_params[src_short]["lens"] = lens.model
+        if "profile" not in self.image_params[src_short]:
+            self.image_params[src_short]["profile"] = self.profile.currentText()
+        self.load_image_params(src_short)
+        self.update_preview(src)
 
     @cache
     def load_metadata(self, src):
@@ -339,12 +335,13 @@ class MainWindow(QMainWindow):
             cam = self.cameras[cam]
             lens = self.lenses[lens]
 
-            return effects.lens_correction(raw_to_linear(src), self.metadata, cam, lens)
+            return effects.lens_correction(raw_to_linear(src), self.load_metadata(src), cam, lens)
         else:
             return raw_to_linear(src)
 
-    def xyz_image(self):
-        src = self.image_bar.current_image()
+    def xyz_image(self, src=None):
+        if src is None:
+            src = self.image_bar.current_image()
         if self.lens_correction.isChecked():
             cam = self.camera_selector.currentText()
             lens = self.lens_selector.currentText()
@@ -356,8 +353,7 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
         super().resizeEvent(event)
 
-    def changed_wb_mode(self):
-        mode = self.wb_mode.currentText()
+    def changed_wb_mode(self, mode):
         if mode == "Native":
             self.exp_wb.setValue(self.negative_stocks[self.negative_selector.currentText()].exposure_kelvin)
         elif mode != "Custom":
@@ -376,94 +372,110 @@ class MainWindow(QMainWindow):
             self.wb_mode.setCurrentText("Custom")
             self.parameter_changed()
 
-    def changed_negative(self):
-        negative = self.negative_selector.currentText()
+    def changed_negative(self, negative):
+        self.active = False
         self.print_selector.setEnabled(negative not in REVERSAL_FILM)
-        curr_kelvin = self.exp_wb.getValue()
+        if self.print_selector.isEnabled():
+            self.profile_changed(self.print_selector.currentText(), "print_film")
+        else:
+            self.profile_changed(None, "print_film")
         if negative in REVERSAL_FILM and self.negative_stocks[negative].projection_kelvin is not None:
-            self.active = False
             self.projector_kelvin.setValue(self.negative_stocks[negative].projection_kelvin)
-            self.active = True
         elif self.print_selector.currentText() != "None" and self.print_stocks[
             self.print_selector.currentText()].projection_kelvin is not None:
-            self.active = False
             self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
-            self.active = True
         if self.wb_mode.currentText() == "Native":
-            self.changed_wb_mode()
-            if curr_kelvin == self.exp_wb.getValue():
-                self.parameter_changed()
+            self.changed_wb_mode("Native")
+        self.active = True
+        self.profile_changed(negative, "negative_film")
+
+    def profile_changed(self, value, key, crop_zoom=False):
+        if self.loading:
+            return
+        profile = self.profile.currentText()
+        if profile == "Custom":
+            profile = self.image_bar.current_image().split("/")[-1]
+        if profile not in self.profile_params:
+            self.profile_params[profile] = {}
+        self.profile_params[profile][key] = value
+        if crop_zoom:
+            self.crop_zoom_changed()
         else:
             self.parameter_changed()
 
-    def setup_image_params(self):
-        kwargs = {"exp_comp": self.exp_comp.getValue(), "zoom": self.zoom.getValue(),
-                  "rotation": self.rotation.getValue(), "exposure_kelvin": self.exp_wb.getValue(),
-                  "rotate_times": self.rotation_state, "src": self.image_bar.current_image().split("/")[-1],
-                  "format": self.format_selector.currentText(), "lens_correction": self.lens_correction.isChecked(),
-                  "profile": self.profiles.currentText(), "wb_mode": self.wb_mode.currentText(),
-                  "cam": self.camera_selector.currentText(), "lens": self.lens_selector.currentText()}
-        return kwargs
+    def setting_changed(self, value, key, crop_zoom=False):
+        if self.loading:
+            return
+        src = self.image_bar.current_image()
+        src_short = src.split("/")[-1]
+        if src_short not in self.image_params:
+            self.image_params[src_short] = {}
+        self.image_params[src_short][key] = value
+        if crop_zoom:
+            self.crop_zoom_changed()
+        else:
+            self.parameter_changed()
 
-    def setup_profile_params(self):
-        kwargs = {"negative_film": self.negative_selector.currentText(),
-                  "print_film": self.print_selector.currentText() if self.print_selector.isEnabled() else None,
-                  "projector_kelvin": self.projector_kelvin.getValue(), "printer_light_comp": (
-                self.red_light.getValue(), self.green_light.getValue(), self.blue_light.getValue()),
-                  "white_point": self.white_point.getValue(), "halation": self.halation.isChecked(),
-                  "sharpness": self.sharpness.isChecked(), "grain": self.grain.isChecked(),
-                  "frame_width": float(self.width.text()), "frame_height": float(self.height.text()),
-                  "grain_size": self.grain_size.getValue() / 1000, "link_lights": self.link_lights.isChecked(),
-                  "format": self.format_selector.currentText(), }
-        resolution = self.output_resolution.text()
-        if resolution != "":
-            kwargs["resolution"] = int(resolution)
-        return kwargs
-
-    def load_image_params(self, src):
-        kwargs = self.image_params[src]
-        self.exp_comp.setValue(kwargs["exp_comp"])
-        self.zoom.setValue(kwargs["zoom"])
-        self.rotation_state = kwargs["rotate_times"]
-        self.rotation.setValue(kwargs["rotation"])
-        self.exp_wb.setValue(kwargs["exposure_kelvin"])
-        self.wb_mode.setCurrentText(kwargs["wb_mode"])
-        self.lens_correction.setChecked(kwargs["lens_correction"])
-        self.profiles.setCurrentText(kwargs["profile"])
-        self.camera_selector.setCurrentText(kwargs["cam"])
-        self.lens_selector.setCurrentText(kwargs["lens"])
-        self.load_profile_params()
-
-    def reset_image_params(self):
-        self.exp_comp.setValue(0)
-        self.zoom.setValue(0)
-        self.rotation_state = 0
-        self.rotation.setValue(0)
-        self.wb_mode.setCurrentText("Native")
-
-    def load_profile_params(self):
-        profile = self.profiles.currentText()
+    def setup_profile_params(self, profile):
         if profile == "Custom":
             profile = self.image_bar.current_image().split("/")[-1]
-        if profile in self.profiles_params:
-            kwargs = self.profiles_params[profile]
-            self.projector_kelvin.setValue(kwargs["projector_kelvin"])
-            self.red_light.setValue(kwargs["printer_light_comp"][0])
-            self.green_light.setValue(kwargs["printer_light_comp"][1])
-            self.blue_light.setValue(kwargs["printer_light_comp"][2])
-            self.white_point.setValue(kwargs["white_point"])
-            self.halation.setChecked(kwargs["halation"])
-            self.sharpness.setChecked(kwargs["sharpness"])
-            self.grain.setChecked(kwargs["grain"])
-            self.format_selector.setCurrentText(kwargs["format"])
-            self.width.setText(str(kwargs["frame_width"]))
-            self.height.setText(str(kwargs["frame_height"]))
-            self.grain_size.setValue(kwargs["grain_size"] * 1000)
-            self.negative_selector.setCurrentText(kwargs["negative_film"])
-            self.print_selector.setCurrentText(kwargs["print_film"])
-            self.link_lights.setChecked(kwargs["link_lights"])
+        if profile in self.profile_params:
+            return {**self.default_profile_params, **self.profile_params[profile]}
         else:
-            self.profiles_params[profile] = self.setup_profile_params()
+            return self.default_profile_params
+
+    def load_image_params(self, src):
+        image_params = {**self.default_image_params, **self.image_params[src]}
+        self.loading = True
+        self.exp_comp.setValue(image_params["exp_comp"])
+        self.zoom.setValue(image_params["zoom"])
+        if "rotate_times" in image_params:
+            self.rotate_times = image_params["rotate_times"]
+        if "rotation" in image_params:
+            self.rotation.setValue(image_params["rotation"])
+        if "exposure_kelvin" in image_params:
+            self.exp_wb.setValue(image_params["exposure_kelvin"])
+        self.wb_mode.setCurrentText(image_params["wb_mode"])
+        if "lens_correction" in image_params:
+            self.lens_correction.setChecked(image_params["lens_correction"])
+        if "profile" in image_params:
+            self.profile.setCurrentText(image_params["profile"])
+        if "cam" in image_params:
+            self.camera_selector.setCurrentText(image_params["cam"])
+        if "lens" in image_params:
+            self.lens_selector.setCurrentText(image_params["lens"])
+        self.loading = False
+
+    def load_profile_params(self, profile=None):
+        if profile is None:
+            profile = self.profile.currentText()
+        self.active = False
+        self.setting_changed(profile, "profile")
+        self.loading = True
+        if profile == "Custom":
+            profile = self.image_bar.current_image().split("/")[-1]
+        profile_params = self.setup_profile_params(profile)
+        if "projector_kelvin" in profile_params:
+            self.projector_kelvin.setValue(profile_params["projector_kelvin"])
+        self.red_light.setValue(profile_params["red_light"])
+        self.green_light.setValue(profile_params["green_light"])
+        self.blue_light.setValue(profile_params["blue_light"])
+        self.white_point.setValue(profile_params["white_point"])
+        self.halation.setChecked(profile_params["halation"])
+        self.sharpness.setChecked(profile_params["sharpness"])
+        self.grain.setChecked(profile_params["grain"])
+        if "frame_width" in profile_params:
+            self.width.setText(str(profile_params["frame_width"]))
+        if "frame_height" in profile_params:
+            self.height.setText(str(profile_params["frame_height"]))
+        self.grain_size.setValue(profile_params["grain_size"] * 1000)
+        self.negative_selector.setCurrentText(profile_params["negative_film"])
+        self.print_selector.setCurrentText(profile_params["print_film"])
+        self.link_lights.setChecked(profile_params["link_lights"])
+        self.loading = False
+        self.format_selector.setCurrentText(profile_params["format"])
+        self.active = True
+        self.parameter_changed()
 
     def lights_changed(self, value):
         if self.link_lights.isChecked():
@@ -475,23 +487,6 @@ class MainWindow(QMainWindow):
                 self.blue_light.setPosition(value)
         else:
             self.parameter_changed()
-
-    def print_light_changed(self):
-        if self.print_selector.currentText() == "None":
-            self.red_light.setDisabled(True)
-            self.green_light.setDisabled(True)
-            self.blue_light.setDisabled(True)
-            self.link_lights.setDisabled(True)
-        else:
-            if self.print_stocks[self.print_selector.currentText()].projection_kelvin is not None:
-                self.active = False
-                self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
-                self.active = True
-            self.red_light.setDisabled(False)
-            self.green_light.setDisabled(False)
-            self.blue_light.setDisabled(False)
-            self.link_lights.setDisabled(False)
-        self.parameter_changed()
 
     def print_output(self, s):
         return
@@ -505,17 +500,13 @@ class MainWindow(QMainWindow):
     def progress_fn(self, n):
         return
 
-    def parameter_changed(self):
+    def parameter_changed(self, src=None):
         if self.active:
-            self.value_changed = True
-
-            self.start_worker(self.update_preview)
+            self.start_worker(self.update_preview, src=src)
 
     def crop_zoom_changed(self):
         if self.active:
-            self.value_changed = False
-
-            self.start_worker(self.update_preview)
+            self.start_worker(self.update_preview, value_changed=False)
 
     def start_worker(self, function, semaphore=True, *args, **kwargs):
         if semaphore:
@@ -527,33 +518,32 @@ class MainWindow(QMainWindow):
         worker = Worker(function, *args, **kwargs)
         if semaphore:
             worker.signals.finished.connect(self.update_finished)
-        worker.signals.progress.connect(self.progress_fn)
-
         self.threadpool.start(worker)
 
-    def update_preview(self, rotate_only=False, *args, **kwargs):
-        if self.image_bar.current_image() is None:
+    def update_preview(self, src=None, value_changed=True, *args, **kwargs):
+        if src is None:
+            if self.image_bar.current_image() is None:
+                return
+            else:
+                src = self.image_bar.current_image()
+        src_short = src.split("/")[-1]
+        if src_short not in self.image_params:
+            self.load_image_process(src)
             return
-        image_args = self.setup_image_params()
-        profile_args = self.setup_profile_params()
-        if "resolution" in profile_args:
-            profile_args.pop("resolution")
-        self.image_params[image_args["src"]] = image_args
-        image_args["src"] = self.filenames[image_args["src"]]
-        if image_args["profile"] != "Custom":
-            self.profiles_params[image_args["profile"]] = profile_args
-        else:
-            self.profiles_params[image_args["src"]] = profile_args
-        processing_args = {**image_args, **profile_args}
+        image_args = {**self.default_image_params, **self.image_params[src_short]}
+        profile_args = self.setup_profile_params(image_args["profile"])
+        processing_args = {**self.default_profile_params, **image_args, **profile_args}
+        if "resolution" in processing_args:
+            processing_args.pop("resolution")
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
-        if (self.value_changed or self.full_preview.isChecked()) and not rotate_only:
-            image = self.xyz_image()
+        if value_changed or self.full_preview.isChecked():
+            image = self.xyz_image(src)
             self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
-                                               metadata=self.metadata, **processing_args)
+                                               metadata=self.load_metadata(src), **processing_args)
         image = self.preview_image
         if not self.full_preview.isChecked():
             image = crop_rotate_zoom(image, **processing_args)
@@ -564,6 +554,7 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
 
     def save_image(self, src, filename, **kwargs):
+        # TODO: fix
         short = src.split("/")[-1]
         if short not in self.image_params:
             image_args = self.setup_image_params()
@@ -571,15 +562,15 @@ class MainWindow(QMainWindow):
             image_args["exp_comp"] = 0
             image_args["zoom"] = 0
             image_args["rotation"] = 0
-            image_args["rotation_state"] = 0
+            image_args["rotate_times"] = 0
             image_args["wb_mode"] = "Native"
             self.image_params[short] = image_args
         else:
             image_args = self.image_params[short]
         if image_args["profile"] != "Custom":
-            profile_args = self.profiles_params[image_args["profile"]]
+            profile_args = self.profile_params[image_args["profile"]]
         else:
-            profile_args = self.profiles_params[image_args["src"]]
+            profile_args = self.profile_params[image_args["src"]]
         image_args["src"] = self.filenames[short]
         processing_args = {**image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
@@ -615,17 +606,40 @@ class MainWindow(QMainWindow):
     def save_settings(self):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
         if ok:
-            complete_dict = {"image_params": self.image_params, "profile_params": self.profiles_params}
+            complete_dict = {"image_params": self.image_params, "profile_params": self.profile_params}
             with open(filename, "w") as f:
                 json.dump(complete_dict, f)
 
     def load_settings(self):
+        # TODO: fix
         filename, ok = QFileDialog.getOpenFileName(self)
         if ok:
             with open(filename, "r") as f:
                 complete_dict = json.load(f)
             self.image_params = complete_dict["image_params"]
-            self.profiles_params = complete_dict["profile_params"]
+            self.profile_params = complete_dict["profile_params"]
+
+    def light_changed(self, value, light_name):
+        if self.loading:
+            return
+        if self.link_lights.isChecked():
+            self.loading = True
+            self.red_light.setValue(value)
+            self.green_light.setValue(value)
+            self.blue_light.setValue(value)
+            self.loading = False
+            self.active = False
+            self.profile_changed(value, "red_light")
+            self.profile_changed(value, "green_light")
+            self.profile_changed(value, "blue_light")
+            self.active = True
+            self.parameter_changed()
+        else:
+            self.profile_changed(value, light_name)
+
+    def rotate_image(self, direction=1):
+        self.rotate_times = (self.rotate_times - direction) % 4
+        self.setting_changed(self.rotate_times, "rotate_times", crop_zoom=True)
 
 
 def gui_main():
