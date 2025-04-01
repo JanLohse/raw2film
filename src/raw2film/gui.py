@@ -8,13 +8,12 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
-
 from raw2film import data, utils
+from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from raw2film.image_bar import ImageBar
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -27,7 +26,6 @@ class MainWindow(QMainWindow):
         self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
         self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
         self.print_stocks["None"] = None
-
 
         page_layout = QVBoxLayout()
         top_layout = QHBoxLayout()
@@ -386,6 +384,11 @@ class MainWindow(QMainWindow):
             self.active = False
             self.projector_kelvin.setValue(self.negative_stocks[negative].projection_kelvin)
             self.active = True
+        elif self.print_selector.currentText() != "None" and self.print_stocks[
+            self.print_selector.currentText()].projection_kelvin is not None:
+            self.active = False
+            self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
+            self.active = True
         if self.wb_mode.currentText() == "Native":
             self.changed_wb_mode()
             if curr_kelvin == self.exp_wb.getValue():
@@ -480,15 +483,10 @@ class MainWindow(QMainWindow):
             self.blue_light.setDisabled(True)
             self.link_lights.setDisabled(True)
         else:
-            print(4)
             if self.print_stocks[self.print_selector.currentText()].projection_kelvin is not None:
-                print(5)
                 self.active = False
-                print(6)
                 self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
-                print(7)
                 self.active = True
-                print(8)
             self.red_light.setDisabled(False)
             self.green_light.setDisabled(False)
             self.blue_light.setDisabled(False)

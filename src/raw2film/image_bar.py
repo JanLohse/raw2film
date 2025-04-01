@@ -1,7 +1,7 @@
 import rawpy
 from PyQt6.QtCore import QThreadPool
 from PyQt6.QtGui import QPixmap, QWheelEvent
-from PyQt6.QtWidgets import QScrollArea, QSpacerItem, QSizePolicy
+from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
 
@@ -58,7 +58,6 @@ class ImageBar(QScrollArea):
 
         self.setWidget(self.container)
 
-
     def load_images(self, image_paths):
         for img_path in image_paths:
             label = Thumbnail(img_path, self.thumbnail_size, self)
@@ -90,6 +89,7 @@ class ImageBar(QScrollArea):
         self.selected_label = label
         self.selected_label.set_selected(True)
         self.image_changed.emit(label.image_path)
+        self.ensure_visible(label)
 
     def wheelEvent(self, event: QWheelEvent):
         delta = event.angleDelta().y()
@@ -100,3 +100,34 @@ class ImageBar(QScrollArea):
             return None
         else:
             return self.selected_label.image_path
+
+    def keyPressEvent(self, event):
+        if not self.image_labels:
+            return
+
+        if self.selected_label in self.image_labels:
+            current_index = self.image_labels.index(self.selected_label)
+        else:
+            current_index = -1
+
+        if event.key() == Qt.Key.Key_Right:
+            if current_index < len(self.image_labels) - 1:
+                self.select_image(self.image_labels[current_index + 1])
+            else:
+                self.select_image(self.image_labels[0])
+        elif event.key() == Qt.Key.Key_Left:
+            if current_index > 0:
+                self.select_image(self.image_labels[current_index - 1])
+            else:
+                self.select_image(self.image_labels[-1])
+
+    def ensure_visible(self, label):
+        """ Scrolls the view to make sure the selected image is visible """
+        x = label.pos().x()
+        label_width = label.width()
+        area_width = self.width()
+        scrollbar_x = self.horizontalScrollBar().value()
+        if x < scrollbar_x:
+            self.horizontalScrollBar().setValue(x - label_width)
+        elif x + label_width > scrollbar_x + area_width:
+            self.horizontalScrollBar().setValue(x - area_width + 2 * label_width)
