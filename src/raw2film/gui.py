@@ -8,7 +8,7 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog
+    QInputDialog, QMessageBox
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 from spectral_film_lut.utils import *
 
@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
         view_menu = menu.addMenu("View")
+        profile_menu = menu.addMenu("Profile")
 
         def add_option(widget, name=None, default=None, setter=None, hideable=False):
             self.side_counter += 1
@@ -90,6 +91,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_settings_button)
         self.load_settings_button = QAction("Load settings")
         file_menu.addAction(self.load_settings_button)
+        self.delete_profile_button = QAction("Delete profile")
+        profile_menu.addAction(self.delete_profile_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
         self.advanced_controls.setCheckable(True)
@@ -259,6 +262,7 @@ class MainWindow(QMainWindow):
         self.load_settings_button.triggered.connect(self.load_settings)
         self.image_bar.image_changed.connect(self.load_image)
         self.add_profile.released.connect(self.add_profile_prompt)
+        self.delete_profile_button.triggered.connect(self.delete_profile)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -283,6 +287,26 @@ class MainWindow(QMainWindow):
 
         self.image_params = {}
         self.profile_params = {}
+
+    def delete_profile(self):
+        current_profile = self.profile_selector.currentText()
+        reply = QMessageBox()
+        reply.setText(f"Delete profile {current_profile}?")
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes |
+                                 QMessageBox.StandardButton.No)
+        x = reply.exec()
+        if x == QMessageBox.StandardButton.Yes:
+            if current_profile == "Default":
+                self.profile_params[current_profile] = {}
+            else:
+                self.profile_selector.setCurrentText("Default")
+                self.profile_selector.removeItem(self.profile_selector.findText(current_profile))
+                if current_profile in self.profile_params:
+                    self.profile_params.pop(current_profile)
+                for image in self.image_params:
+                    if 'profile' in self.image_params[image]:
+                        self.image_params[image]['profile'] = "Default"
+            self.load_profile_params()
 
     def add_profile_prompt(self):
         text, ok = QInputDialog.getText(self, "Add profile", "Profile name:")
