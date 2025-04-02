@@ -7,7 +7,8 @@ import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
-from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
+    QPushButton, QInputDialog, QLineEdit, QWidget, QHBoxLayout
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
@@ -100,12 +101,20 @@ class MainWindow(QMainWindow):
                                        "red_light": 0, "green_light": 0, "blue_light": 0, "white_point": 1,
                                        "halation": True, "sharpness": True, "grain": True, "format": "135",
                                        "grain_size": 0.004, "link_lights": True}
-        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Native",
-                                     "profile": "Profile 1", "lens_correction": True}
+        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Daylight",
+                                     "profile": "Default", "lens_correction": True}
 
         self.profile = QComboBox()
-        self.profile.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
-        add_option(self.profile, "Profile:", "Profile 1", self.profile.setCurrentText)
+        self.profile.addItem("Default")
+        self.add_profile = QPushButton("+")
+        self.add_profile.setFixedWidth(25)
+        profile_widget = QWidget()
+        profile_widget_layout = QHBoxLayout()
+        profile_widget.setLayout(profile_widget_layout)
+        profile_widget_layout.addWidget(self.profile)
+        profile_widget_layout.addWidget(self.add_profile)
+        profile_widget_layout.setContentsMargins(0, 0, 0, 0)
+        add_option(profile_widget, "Profile:", "Default", self.profile.setCurrentText)
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -135,7 +144,7 @@ class MainWindow(QMainWindow):
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
-        self.wb_modes = {"Native": None, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
+        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
                          "Fluorescent": 3800, "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
@@ -245,6 +254,7 @@ class MainWindow(QMainWindow):
         self.save_settings_button.triggered.connect(self.save_settings)
         self.load_settings_button.triggered.connect(self.load_settings)
         self.image_bar.image_changed.connect(self.load_image)
+        self.add_profile.released.connect(self.add_profile_prompt)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -269,6 +279,13 @@ class MainWindow(QMainWindow):
 
         self.image_params = {}
         self.profile_params = {}
+
+    def add_profile_prompt(self):
+        print("uwu")
+        text, ok = QInputDialog.getText(self, "Add profile", "Profile name:")
+        print("oof")
+        if ok:
+            self.profile.addItem(text)
 
     def format_changed(self, format):
         width, height = data.FORMATS[format]
@@ -354,22 +371,8 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
 
     def changed_wb_mode(self, mode):
-        if mode == "Native":
-            self.exp_wb.setValue(self.negative_stocks[self.negative_selector.currentText()].exposure_kelvin)
-        elif mode != "Custom":
+        if mode != "Custom":
             self.exp_wb.setValue(self.wb_modes[mode])
-            self.parameter_changed()
-
-    def changed_exp_wb(self):
-        kelvin = self.exp_wb.getValue()
-        curr_mode = self.wb_mode.currentText()
-        if curr_mode == "Custom":
-            self.parameter_changed()
-        elif curr_mode == "Native" and kelvin == self.negative_stocks[
-            self.negative_selector.currentText()].exposure_kelvin:
-            self.parameter_changed()
-        elif self.wb_modes[curr_mode] != kelvin:
-            self.wb_mode.setCurrentText("Custom")
             self.parameter_changed()
 
     def changed_negative(self, negative):
@@ -384,8 +387,6 @@ class MainWindow(QMainWindow):
         elif self.print_selector.currentText() != "None" and self.print_stocks[
             self.print_selector.currentText()].projection_kelvin is not None:
             self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
-        if self.wb_mode.currentText() == "Native":
-            self.changed_wb_mode("Native")
         self.active = True
         self.profile_changed(negative, "negative_film")
 
@@ -393,8 +394,6 @@ class MainWindow(QMainWindow):
         if self.loading:
             return
         profile = self.profile.currentText()
-        if profile == "Custom":
-            profile = self.image_bar.current_image().split("/")[-1]
         if profile not in self.profile_params:
             self.profile_params[profile] = {}
         self.profile_params[profile][key] = value
@@ -414,10 +413,7 @@ class MainWindow(QMainWindow):
             if key == "exposure_kelvin":
                 image_params = self.setup_image_params(src_short)
                 wb_mode = image_params["wb_mode"]
-                if wb_mode not in ["Native", "Custom"] and value != self.wb_modes[wb_mode]:
-                    self.image_params[src_short]["wb_mode"] = "Custom"
-                    self.wb_mode.setCurrentText("Custom")
-                elif wb_mode == "Native" and self.negative_stocks[self.setup_profile_params(image_params["profile"], src)["negative_film"]].exposure_kelvin != value:
+                if wb_mode != "Custom" and value != self.wb_modes[wb_mode]:
                     self.image_params[src_short]["wb_mode"] = "Custom"
                     self.wb_mode.setCurrentText("Custom")
         if crop_zoom:
@@ -426,11 +422,6 @@ class MainWindow(QMainWindow):
             self.parameter_changed()
 
     def setup_profile_params(self, profile, src=None):
-        if profile == "Custom":
-            if src is None:
-                profile = self.image_bar.current_image().split("/")[-1]
-            else:
-                profile = src.split("/")[-1]
         if profile in self.profile_params:
             return {**self.default_profile_params, **self.profile_params[profile]}
         else:
@@ -464,9 +455,7 @@ class MainWindow(QMainWindow):
         self.active = False
         self.setting_changed(profile, "profile")
         self.loading = True
-        if profile == "Custom":
-            profile = self.image_bar.current_image().split("/")[-1]
-        profile_params = self.setup_profile_params(profile, src)
+        profile_params = self.setup_profile_params(profile)
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
         self.red_light.setValue(profile_params["red_light"])
@@ -542,6 +531,8 @@ class MainWindow(QMainWindow):
         if src_short not in self.image_params:
             self.load_image_process(src)
             return
+        else:
+            self.load_image_params(src_short)
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.default_profile_params, **image_args, **profile_args}
@@ -569,10 +560,7 @@ class MainWindow(QMainWindow):
         image_params = {**self.default_image_params, **self.image_params[src]}
 
         if image_params["wb_mode"] != "Custom":
-            if image_params["wb_mode"] == "Native":
-                image_params["exposure_kelvin"] = self.negative_stocks[self.setup_profile_params(image_params["profile"], src)["negative_film"]].exposure_kelvin
-            else:
-                image_params["exposure_kelvin"] = self.wb_modes[image_params["wb_mode"]]
+            image_params["exposure_kelvin"] = self.wb_modes[image_params["wb_mode"]]
 
         return image_params
 
