@@ -76,11 +76,14 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.image_selector)
         self.folder_selector = QAction("Open folder", self)
         file_menu.addAction(self.folder_selector)
-        self.save_image_button = QAction("Save current image")
+        self.save_image_button = QAction("Export current image")
         self.save_image_button.triggered.connect(self.save_image_dialog)
         file_menu.addAction(self.save_image_button)
-        self.save_all_button = QAction("Save all images")
+        self.save_all_button = QAction("Export all images")
         self.save_all_button.triggered.connect(self.save_all_images)
+        self.save_selected_button = QAction("Export selected images")
+        self.save_selected_button.triggered.connect(self.save_selected_images)
+        file_menu.addAction(self.save_selected_button)
         file_menu.addAction(self.save_all_button)
         self.save_settings_button = QAction("Save settings")
         file_menu.addAction(self.save_settings_button)
@@ -104,17 +107,17 @@ class MainWindow(QMainWindow):
         self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Daylight",
                                      "profile": "Default", "lens_correction": True}
 
-        self.profile = QComboBox()
-        self.profile.addItem("Default")
+        self.profile_selector = QComboBox()
+        self.profile_selector.addItem("Default")
         self.add_profile = QPushButton("+")
         self.add_profile.setFixedWidth(25)
         profile_widget = QWidget()
         profile_widget_layout = QHBoxLayout()
         profile_widget.setLayout(profile_widget_layout)
-        profile_widget_layout.addWidget(self.profile)
+        profile_widget_layout.addWidget(self.profile_selector)
         profile_widget_layout.addWidget(self.add_profile)
         profile_widget_layout.setContentsMargins(0, 0, 0, 0)
-        add_option(profile_widget, "Profile:", "Default", self.profile.setCurrentText)
+        add_option(profile_widget, "Profile:", "Default", self.profile_selector.setCurrentText)
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -249,7 +252,7 @@ class MainWindow(QMainWindow):
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
         self.width.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_width", crop_zoom=True))
         self.height.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_height", crop_zoom=True))
-        self.profile.currentTextChanged.connect(self.load_profile_params)
+        self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings)
         self.load_settings_button.triggered.connect(self.load_settings)
@@ -281,11 +284,9 @@ class MainWindow(QMainWindow):
         self.profile_params = {}
 
     def add_profile_prompt(self):
-        print("uwu")
         text, ok = QInputDialog.getText(self, "Add profile", "Profile name:")
-        print("oof")
         if ok:
-            self.profile.addItem(text)
+            self.profile_selector.addItem(text)
 
     def format_changed(self, format):
         width, height = data.FORMATS[format]
@@ -336,7 +337,7 @@ class MainWindow(QMainWindow):
             if lens is not None:
                 self.image_params[src_short]["lens"] = lens.model
         if "profile" not in self.image_params[src_short]:
-            self.image_params[src_short]["profile"] = self.profile.currentText()
+            self.image_params[src_short]["profile"] = self.profile_selector.currentText()
         self.load_image_params(src_short)
         self.update_preview(src)
 
@@ -393,7 +394,7 @@ class MainWindow(QMainWindow):
     def profile_changed(self, value, key, crop_zoom=False):
         if self.loading:
             return
-        profile = self.profile.currentText()
+        profile = self.profile_selector.currentText()
         if profile not in self.profile_params:
             self.profile_params[profile] = {}
         self.profile_params[profile][key] = value
@@ -442,7 +443,7 @@ class MainWindow(QMainWindow):
         if "lens_correction" in image_params:
             self.lens_correction.setChecked(image_params["lens_correction"])
         if "profile" in image_params:
-            self.profile.setCurrentText(image_params["profile"])
+            self.profile_selector.setCurrentText(image_params["profile"])
         if "cam" in image_params:
             self.camera_selector.setCurrentText(image_params["cam"])
         if "lens" in image_params:
@@ -451,7 +452,7 @@ class MainWindow(QMainWindow):
 
     def load_profile_params(self, profile=None):
         if profile is None:
-            profile = self.profile.currentText()
+            profile = self.profile_selector.currentText()
         self.active = False
         self.setting_changed(profile, "profile")
         self.loading = True
@@ -573,11 +574,23 @@ class MainWindow(QMainWindow):
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.default_profile_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        if self.output_resolution.text() != "":
+            processing_args["resolution"] = int(self.output_resolution.text())
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
         metadata = self.load_metadata(src)
         if processing_args["lens_correction"]:
+            if "cam" not in processing_args or "lens" not in processing_args:
+                cam, lens = utils.find_data(metadata, self.lensfunpy_db)
+                if cam is not None:
+                    processing_args["cam"] = cam.maker + " " + cam.model
+                else:
+                    processing_args["cam"] = None
+                if lens is not None:
+                    processing_args["lens"] = lens.model
+                else:
+                    processing_args["lens"] = None
             image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                             self.lenses[processing_args["lens"]])
         image = process_image(image, fast_mode=False, **processing_args)
@@ -601,6 +614,11 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self)
         self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
 
+    def save_selected_images(self):
+        folder = QFileDialog.getExistingDirectory(self)
+        self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(), semaphore=False)
+
+
     def save_settings(self):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
         if ok:
@@ -615,6 +633,9 @@ class MainWindow(QMainWindow):
                 complete_dict = json.load(f)
             self.image_params = {**complete_dict["image_params"], **self.image_params}
             self.profile_params = {**complete_dict["profile_params"], **self.profile_params}
+            for profile in self.profile_params:
+                if self.profile_selector.findText(profile) == -1:
+                    self.profile_selector.addItem(profile)
 
     def light_changed(self, value, light_name):
         if self.loading:
