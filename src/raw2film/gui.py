@@ -8,13 +8,14 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QPushButton, QInputDialog, QLineEdit, QWidget, QHBoxLayout
+    QInputDialog
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -147,8 +148,8 @@ class MainWindow(QMainWindow):
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
-        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850,
-                         "Fluorescent": 3800, "Custom": None}
+        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850, "Fluorescent": 3800,
+                         "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
@@ -616,8 +617,8 @@ class MainWindow(QMainWindow):
 
     def save_selected_images(self):
         folder = QFileDialog.getExistingDirectory(self)
-        self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(), semaphore=False)
-
+        self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
+                          semaphore=False)
 
     def save_settings(self):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")

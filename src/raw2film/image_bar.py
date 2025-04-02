@@ -1,6 +1,6 @@
 import rawpy
 from PyQt6.QtCore import QThreadPool, Qt
-from PyQt6.QtGui import QPixmap, QWheelEvent, QKeyEvent
+from PyQt6.QtGui import QPixmap, QWheelEvent, QKeyEvent, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
@@ -62,6 +62,9 @@ class ImageBar(QScrollArea):
 
         self.setWidget(self.container)
 
+        self.shortcut_select_all = QShortcut(QKeySequence('Ctrl+A'), self)
+        self.shortcut_select_all.activated.connect(self.highlight_all)
+
     def load_images(self, image_paths):
         for img_path in image_paths:
             label = Thumbnail(img_path, self.thumbnail_size, self)
@@ -91,7 +94,7 @@ class ImageBar(QScrollArea):
         if event.button() == Qt.MouseButton.LeftButton:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.highlight_image(label)
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            elif event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 self.highlight_shift(label)
             else:
                 self.select_image(label)
@@ -117,6 +120,21 @@ class ImageBar(QScrollArea):
             else:
                 self.highlighted_labels.add(label)
                 label.set_state("highlighted")
+
+    def highlight_all(self):
+        if len(self.highlighted_labels) == len(self.image_labels):
+            for label in self.image_labels:
+                label.set_state("default")
+            self.highlighted_labels = set()
+            if self.selected_label is not None:
+                self.highlighted_labels.add(self.selected_label)
+                self.selected_label.set_state("selected")
+        else:
+            for label in self.image_labels:
+                label.set_state("highlighted")
+            self.highlighted_labels = set(self.image_labels)
+            if self.selected_label is not None:
+                self.selected_label.set_state("selected")
 
     def select_image(self, label):
         if label == self.selected_label:
