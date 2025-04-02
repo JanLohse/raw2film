@@ -1,6 +1,6 @@
 import rawpy
 from PyQt6.QtCore import QThreadPool, Qt
-from PyQt6.QtGui import QPixmap, QWheelEvent, QMouseEvent, QKeyEvent
+from PyQt6.QtGui import QPixmap, QWheelEvent, QKeyEvent
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
@@ -91,8 +91,23 @@ class ImageBar(QScrollArea):
         if event.button() == Qt.MouseButton.LeftButton:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.highlight_image(label)
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.highlight_shift(label)
             else:
                 self.select_image(label)
+
+    def highlight_shift(self, label):
+        if self.selected_label is None or self.selected_label == label:
+            return
+        selected_index = self.image_labels.index(self.selected_label)
+        clicked_index = self.image_labels.index(label)
+        for highlighted_label in self.highlighted_labels:
+            highlighted_label.set_state("default")
+        self.highlighted_labels = {self.image_labels[index] for index in
+                                   range(min(selected_index, clicked_index), max(selected_index, clicked_index) + 1)}
+        for highlighted_label in self.highlighted_labels:
+            highlighted_label.set_state("highlighted")
+        self.selected_label.set_state("selected")
 
     def highlight_image(self, label, friendly=False):
         if not self.selected_label == label:
