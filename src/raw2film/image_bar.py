@@ -1,6 +1,6 @@
 import rawpy
-from PyQt6.QtCore import QThreadPool
-from PyQt6.QtGui import QPixmap, QWheelEvent
+from PyQt6.QtCore import QThreadPool, Qt
+from PyQt6.QtGui import QPixmap, QWheelEvent, QMouseEvent, QKeyEvent
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
@@ -26,11 +26,14 @@ class Thumbnail(QLabel):
         self.setPixmap(pixmap)
         self.loaded = True
 
-    def set_selected(self, selected):
-        if selected:
-            self.setStyleSheet("border: 3px solid darkgray; background-color: gray; border-radius: 10px;")
-        else:
-            self.setStyleSheet("border: 1px solid gray; background-color: transparent; border-radius: 10px;")
+    def set_state(self, state):
+        match state:
+            case "selected":
+                self.setStyleSheet("border: 3px solid darkgray; background-color: gray; border-radius: 10px;")
+            case "highlighted":
+                self.setStyleSheet("border: 1px solid darkgray; background-color: lightgray; border-radius: 10px;")
+            case "default":
+                self.setStyleSheet("border: 1px solid gray; background-color: transparent; border-radius: 10px;")
 
 
 class ImageBar(QScrollArea):
@@ -41,6 +44,7 @@ class ImageBar(QScrollArea):
         self.thumbnail_size = thumbnail_size
         self.bar_height = self.thumbnail_size + padding * 2
         self.selected_label = None
+        self.highlighted_labels = set()
         self.image_labels = []
 
         self.setWidgetResizable(True)
@@ -61,7 +65,7 @@ class ImageBar(QScrollArea):
     def load_images(self, image_paths):
         for img_path in image_paths:
             label = Thumbnail(img_path, self.thumbnail_size, self)
-            label.mousePressEvent = lambda event, lbl=label: self.select_image(lbl)
+            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
 
@@ -83,11 +87,40 @@ class ImageBar(QScrollArea):
         for label in self.image_labels:
             label.load()
 
+    def label_mouse_event(self, event, label):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                self.highlight_image(label)
+            else:
+                self.select_image(label)
+
+    def highlight_image(self, label, friendly=False):
+        if not self.selected_label == label:
+            if label in self.highlighted_labels and not friendly:
+                self.highlighted_labels.remove(label)
+                label.set_state("default")
+            else:
+                self.highlighted_labels.add(label)
+                label.set_state("highlighted")
+
     def select_image(self, label):
+        if label == self.selected_label:
+            return
         if self.selected_label:
-            self.selected_label.set_selected(False)
+            if label in self.highlighted_labels:
+                self.selected_label.set_state("highlighted")
+                self.highlighted_labels.add(label)
+            else:
+                self.selected_label.set_state("default")
+                for highlighted_label in self.highlighted_labels:
+                    highlighted_label.set_state("default")
+                self.highlighted_labels = {label}
+        elif not label in self.highlighted_labels:
+            for highlighted_label in self.highlighted_labels:
+                highlighted_label.set_state("default")
+            self.highlighted_labels = {label}
         self.selected_label = label
-        self.selected_label.set_selected(True)
+        label.set_state("selected")
         self.image_changed.emit(label.image_path)
         self.ensure_visible(label)
 
@@ -101,7 +134,7 @@ class ImageBar(QScrollArea):
         else:
             return self.selected_label.image_path
 
-    def keyPressEvent(self, event):
+    def keyPressEvent(self, event: QKeyEvent):
         if not self.image_labels:
             return
 
@@ -112,14 +145,19 @@ class ImageBar(QScrollArea):
 
         if event.key() == Qt.Key.Key_Right:
             if current_index < len(self.image_labels) - 1:
-                self.select_image(self.image_labels[current_index + 1])
+                target_index = current_index + 1
             else:
-                self.select_image(self.image_labels[0])
+                target_index = 0
         elif event.key() == Qt.Key.Key_Left:
             if current_index > 0:
-                self.select_image(self.image_labels[current_index - 1])
+                target_index = current_index - 1
             else:
-                self.select_image(self.image_labels[-1])
+                target_index = -1
+        else:
+            return
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.highlight_image(self.image_labels[target_index], friendly=True)
+        self.select_image(self.image_labels[target_index])
 
     def ensure_visible(self, label):
         """ Scrolls the view to make sure the selected image is visible """
@@ -131,3 +169,6 @@ class ImageBar(QScrollArea):
             self.horizontalScrollBar().setValue(x - label_width)
         elif x + label_width > scrollbar_x + area_width:
             self.horizontalScrollBar().setValue(x - area_width + 2 * label_width)
+
+    def get_highlighted(self):
+        return {label.image_path for label in self.highlighted_labels}

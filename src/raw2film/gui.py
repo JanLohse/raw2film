@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
                                        "halation": True, "sharpness": True, "grain": True, "format": "135",
                                        "grain_size": 0.004, "link_lights": True}
         self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Native",
-                                     "profile": "Profile 1"}
+                                     "profile": "Profile 1", "lens_correction": True}
 
         self.profile = QComboBox()
         self.profile.addItems(["Custom", "Profile 1", "Profile 2", "Profile 3"])
@@ -406,26 +406,38 @@ class MainWindow(QMainWindow):
     def setting_changed(self, value, key, crop_zoom=False):
         if self.loading:
             return
-        src = self.image_bar.current_image()
-        src_short = src.split("/")[-1]
-        if src_short not in self.image_params:
-            self.image_params[src_short] = {}
-        self.image_params[src_short][key] = value
+        for src in self.image_bar.get_highlighted():
+            src_short = src.split("/")[-1]
+            if src_short not in self.image_params:
+                self.image_params[src_short] = {}
+            self.image_params[src_short][key] = value
+            if key == "exposure_kelvin":
+                image_params = self.setup_image_params(src_short)
+                wb_mode = image_params["wb_mode"]
+                if wb_mode not in ["Native", "Custom"] and value != self.wb_modes[wb_mode]:
+                    self.image_params[src_short]["wb_mode"] = "Custom"
+                    self.wb_mode.setCurrentText("Custom")
+                elif wb_mode == "Native" and self.negative_stocks[self.setup_profile_params(image_params["profile"], src)["negative_film"]].exposure_kelvin != value:
+                    self.image_params[src_short]["wb_mode"] = "Custom"
+                    self.wb_mode.setCurrentText("Custom")
         if crop_zoom:
             self.crop_zoom_changed()
         else:
             self.parameter_changed()
 
-    def setup_profile_params(self, profile):
+    def setup_profile_params(self, profile, src=None):
         if profile == "Custom":
-            profile = self.image_bar.current_image().split("/")[-1]
+            if src is None:
+                profile = self.image_bar.current_image().split("/")[-1]
+            else:
+                profile = src.split("/")[-1]
         if profile in self.profile_params:
             return {**self.default_profile_params, **self.profile_params[profile]}
         else:
             return self.default_profile_params
 
     def load_image_params(self, src):
-        image_params = {**self.default_image_params, **self.image_params[src]}
+        image_params = self.setup_image_params(src)
         self.loading = True
         self.exp_comp.setValue(image_params["exp_comp"])
         self.zoom.setValue(image_params["zoom"])
@@ -454,7 +466,7 @@ class MainWindow(QMainWindow):
         self.loading = True
         if profile == "Custom":
             profile = self.image_bar.current_image().split("/")[-1]
-        profile_params = self.setup_profile_params(profile)
+        profile_params = self.setup_profile_params(profile, src)
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
         self.red_light.setValue(profile_params["red_light"])
@@ -530,8 +542,8 @@ class MainWindow(QMainWindow):
         if src_short not in self.image_params:
             self.load_image_process(src)
             return
-        image_args = {**self.default_image_params, **self.image_params[src_short]}
-        profile_args = self.setup_profile_params(image_args["profile"])
+        image_args = self.setup_image_params(src_short)
+        profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.default_profile_params, **image_args, **profile_args}
         if "resolution" in processing_args:
             processing_args.pop("resolution")
@@ -553,13 +565,24 @@ class MainWindow(QMainWindow):
         self.image.setPixmap(self.pixmap)
         self.scale_pixmap()
 
+    def setup_image_params(self, src):
+        image_params = {**self.default_image_params, **self.image_params[src]}
+
+        if image_params["wb_mode"] != "Custom":
+            if image_params["wb_mode"] == "Native":
+                image_params["exposure_kelvin"] = self.negative_stocks[self.setup_profile_params(image_params["profile"], src)["negative_film"]].exposure_kelvin
+            else:
+                image_params["exposure_kelvin"] = self.wb_modes[image_params["wb_mode"]]
+
+        return image_params
+
     def save_image(self, src, filename, **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
-            image_args = {**self.default_image_params, **self.image_params[src_short]}
+            image_args = self.setup_image_params(src_short)
         else:
             image_args = self.default_image_params
-        profile_args = self.setup_profile_params(image_args["profile"])
+        profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.default_profile_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
