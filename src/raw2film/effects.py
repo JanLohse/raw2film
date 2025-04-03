@@ -41,11 +41,16 @@ def rotate(rgb, degrees):
 
         if aspect_ratio < 1:
             total_height = input_height
+            aspect_ratio = 1 / aspect_ratio
+            switch = True
         else:
+            switch = False
             total_height = input_width
 
         w = total_height / (aspect_ratio * math.sin(angle) + math.cos(angle))
         h = w * aspect_ratio
+        if switch:
+            w, h = h, w
         crop_height = int((rgb.shape[0] - h) // 2)
         crop_width = int((rgb.shape[1] - w) // 2)
         rgb = rgb[crop_height: rgb.shape[0] - crop_height, crop_width: rgb.shape[1] - crop_width]

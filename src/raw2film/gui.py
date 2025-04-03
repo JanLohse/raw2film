@@ -6,16 +6,15 @@ import exiftool
 import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
-from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction
+from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
-
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -75,8 +74,10 @@ class MainWindow(QMainWindow):
                 setter(default)
 
         self.image_selector = QAction("Open images", self)
+        self.image_selector.setShortcut(QKeySequence("Ctrl+O"))
         file_menu.addAction(self.image_selector)
         self.folder_selector = QAction("Open folder", self)
+        self.folder_selector.setShortcut(QKeySequence("Ctrl+Shift+O"))
         file_menu.addAction(self.folder_selector)
         self.save_image_button = QAction("Export current image")
         self.save_image_button.triggered.connect(self.save_image_dialog)
@@ -95,12 +96,15 @@ class MainWindow(QMainWindow):
         profile_menu.addAction(self.delete_profile_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
+        self.advanced_controls.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self.advanced_controls.setCheckable(True)
         view_menu.addAction(self.advanced_controls)
         self.p3_preview = QAction("Display P3 preview", self)
+        self.p3_preview.setShortcut(QKeySequence("Ctrl+Shift+P"))
         self.p3_preview.setCheckable(True)
         view_menu.addAction(self.p3_preview)
         self.full_preview = QAction("Full preview")
+        self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
 
@@ -172,7 +176,7 @@ class MainWindow(QMainWindow):
         add_option(self.rotate, "Rotate:")
 
         self.rotation = Slider()
-        self.rotation.setMinMaxTicks(-90, 90, 1)
+        self.rotation.setMinMaxTicks(-90, 90, 1, 2)
         add_option(self.rotation, "Rotation angle:", 0, self.rotation.setValue)
 
         self.zoom = Slider()
@@ -199,7 +203,6 @@ class MainWindow(QMainWindow):
         self.halation_green = Slider()
         self.halation_green.setMinMaxTicks(0, 1, 1, 10)
         add_option(self.halation_green, "Halation color:", .4, self.halation_green.setValue, hideable=True)
-
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
@@ -235,6 +238,39 @@ class MainWindow(QMainWindow):
         self.output_resolution = QLineEdit()
         self.output_resolution.setValidator(QIntValidator())
         add_option(self.output_resolution, "Output resolution:", "", hideable=True)
+
+        QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
+        QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
+        QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(self.rotation.increase)
+        QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(self.rotation.decrease)
+        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
+        QShortcut(QKeySequence("Ctrl++"), self).activated.connect(lambda: self.zoom.increase(5))
+        QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(lambda: self.zoom.decrease(5))
+        QShortcut(QKeySequence("Shift+Ctrl++"), self).activated.connect(self.zoom.increase)
+        QShortcut(QKeySequence("Shift+Ctrl+-"), self).activated.connect(self.zoom.decrease)
+        QShortcut(QKeySequence("1"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(0, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("2"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(1, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("3"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(2, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("4"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(3, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("5"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(4, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("6"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(5, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("7"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(6, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("8"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(7, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("9"), self).activated.connect(
+            lambda: self.profile_selector.setCurrentIndex(min(8, self.profile_selector.count() - 1)))
+        QShortcut(QKeySequence("Shift+D"), self).activated.connect(lambda: self.wb_mode.setCurrentText("Daylight"))
+        QShortcut(QKeySequence("Shift+C"), self).activated.connect(lambda: self.wb_mode.setCurrentText("Cloudy"))
+        QShortcut(QKeySequence("Shift+S"), self).activated.connect(lambda: self.wb_mode.setCurrentText("Shade"))
+        QShortcut(QKeySequence("Shift+T"), self).activated.connect(lambda: self.wb_mode.setCurrentText("Tungsten"))
+        QShortcut(QKeySequence("Shift+F"), self).activated.connect(lambda: self.wb_mode.setCurrentText("Fluorescent"))
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
         self.print_selector.currentTextChanged.connect(lambda x: self.profile_changed(x, "print_film"))
@@ -353,10 +389,11 @@ class MainWindow(QMainWindow):
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
-        self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
-                          filename.lower().endswith(data.EXTENSION_LIST)}
-        self.image_bar.clear_images()
-        self.image_bar.load_images(self.filenames.values())
+        if folder:
+            self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
+                              filename.lower().endswith(data.EXTENSION_LIST)}
+            self.image_bar.clear_images()
+            self.image_bar.load_images(self.filenames.values())
 
     def load_image(self, src, **kwargs):
         self.start_worker(self.load_image_process, src=src)
@@ -647,12 +684,14 @@ class MainWindow(QMainWindow):
 
     def save_all_images(self):
         folder = QFileDialog.getExistingDirectory(self)
-        self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
+        if folder:
+            self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
 
     def save_selected_images(self):
         folder = QFileDialog.getExistingDirectory(self)
-        self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
-                          semaphore=False)
+        if folder:
+            self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
+                              semaphore=False)
 
     def save_settings(self):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")

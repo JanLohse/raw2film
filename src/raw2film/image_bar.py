@@ -1,6 +1,6 @@
 import rawpy
 from PyQt6.QtCore import QThreadPool, Qt
-from PyQt6.QtGui import QPixmap, QWheelEvent, QKeyEvent, QShortcut, QKeySequence
+from PyQt6.QtGui import QPixmap, QWheelEvent, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
@@ -62,8 +62,11 @@ class ImageBar(QScrollArea):
 
         self.setWidget(self.container)
 
-        self.shortcut_select_all = QShortcut(QKeySequence('Ctrl+A'), self)
-        self.shortcut_select_all.activated.connect(self.highlight_all)
+        QShortcut(QKeySequence('Ctrl+A'), self).activated.connect(self.highlight_all)
+        QShortcut(QKeySequence('Right'), self).activated.connect(lambda: self.arrow_pressed('right'))
+        QShortcut(QKeySequence('Shift+Right'), self).activated.connect(lambda: self.arrow_pressed('right', shift=True))
+        QShortcut(QKeySequence('Left'), self).activated.connect(lambda: self.arrow_pressed('left'))
+        QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
 
     def load_images(self, image_paths):
         for img_path in image_paths:
@@ -167,7 +170,7 @@ class ImageBar(QScrollArea):
         else:
             return self.selected_label.image_path
 
-    def keyPressEvent(self, event: QKeyEvent):
+    def arrow_pressed(self, key, shift=False):
         if not self.image_labels:
             return
 
@@ -176,19 +179,19 @@ class ImageBar(QScrollArea):
         else:
             current_index = -1
 
-        if event.key() == Qt.Key.Key_Right:
+        if key == "right":
             if current_index < len(self.image_labels) - 1:
                 target_index = current_index + 1
             else:
                 target_index = 0
-        elif event.key() == Qt.Key.Key_Left:
+        elif key == "left":
             if current_index > 0:
                 target_index = current_index - 1
             else:
                 target_index = -1
         else:
             return
-        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+        if shift:
             self.highlight_image(self.image_labels[target_index], friendly=True)
         self.select_image(self.image_labels[target_index])
 
