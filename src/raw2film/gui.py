@@ -193,6 +193,14 @@ class MainWindow(QMainWindow):
         self.grain_size.setMinMaxTicks(0.1, 6, 1, 10)
         add_option(self.grain_size, "Grain size (microns):", 2, self.grain_size.setValue, hideable=True)
 
+        self.halation_size = Slider()
+        self.halation_size.setMinMaxTicks(0.5, 2, 1, 2)
+        add_option(self.halation_size, "Halation size:", 1, self.halation_size.setValue, hideable=True)
+        self.halation_green = Slider()
+        self.halation_green.setMinMaxTicks(0, 1, 1, 10)
+        add_option(self.halation_green, "Halation color:", .4, self.halation_green.setValue, hideable=True)
+
+
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
         add_option(self.negative_selector, "Negativ stock:", "KodakPortra400", self.negative_selector.setCurrentText)
@@ -250,6 +258,8 @@ class MainWindow(QMainWindow):
         self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.triggered.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 1000, "grain_size"))
+        self.halation_size.valueChanged.connect(lambda x: self.profile_changed(x, "halation_size"))
+        self.halation_green.valueChanged.connect(lambda x: self.profile_changed(x, "halation_green_factor"))
         self.rotate_right.released.connect(self.rotate_image)
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))

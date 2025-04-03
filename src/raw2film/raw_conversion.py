@@ -81,10 +81,12 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
         if halation:
-            image = effects.halation(image, scale)
+            halation_func = lambda x: effects.halation(x, scale, **kwargs)
+        else:
+            halation_func = None
 
         transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None,
-                                                               **kwargs)
+                                                               halation_func=halation_func, **kwargs)
         image = transform(image)
 
         if sharpness:

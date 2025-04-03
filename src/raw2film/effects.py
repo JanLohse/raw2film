@@ -173,10 +173,9 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     return rgb
 
 
-def halation(rgb, scale):
-    # TODO: check scale and factors
-    blured = exponential_blur(rgb, scale / 4)
-    color_factors = np.dot(np.array([1.2, 0.5, 0], dtype=np.float32), data.REC709_TO_XYZ)
+def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0., **kwargs):
+    blured = exponential_blur(rgb, scale / 4 * halation_size)
+    color_factors = np.array([halation_red_factor, halation_green_factor, halation_blue_factor], dtype=np.float32)
     rgb += np.multiply(blured, color_factors)
     rgb = np.divide(rgb, color_factors + 1)
     return rgb
