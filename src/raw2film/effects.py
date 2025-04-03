@@ -166,9 +166,9 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     blue_rms = np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
     rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
     noise = np.multiply(noise, rms)
-    factor = math.sqrt(scale * grain_size * 2 * math.sqrt(math.pi))
+    factor = scale * grain_size * 2 * math.sqrt(math.pi)
     if factor > 1:
-        noise = gaussian_blur(noise, scale * grain_size) * factor
+        noise = gaussian_blur(noise, scale * grain_size)
     rgb += noise
     return rgb
 

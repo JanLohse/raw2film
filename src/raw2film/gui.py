@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         self.default_profile_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier",
                                        "red_light": 0, "green_light": 0, "blue_light": 0, "white_point": 1,
                                        "halation": True, "sharpness": True, "grain": True, "format": "135",
-                                       "grain_size": 0.004, "link_lights": True}
+                                       "grain_size": 0.002, "link_lights": True}
         self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Daylight",
                                      "profile": "Default", "lens_correction": True}
 
@@ -190,8 +190,8 @@ class MainWindow(QMainWindow):
         add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(1, 6, 1, 2)
-        add_option(self.grain_size, "Grain size (microns):", 4, self.grain_size.setValue, hideable=True)
+        self.grain_size.setMinMaxTicks(0.1, 6, 1, 10)
+        add_option(self.grain_size, "Grain size (microns):", 2, self.grain_size.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
