@@ -9,12 +9,13 @@ from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -304,8 +305,8 @@ class MainWindow(QMainWindow):
         self.height.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_height", crop_zoom=True))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
-        self.save_settings_button.triggered.connect(self.save_settings)
-        self.load_settings_button.triggered.connect(self.load_settings)
+        self.save_settings_button.triggered.connect(self.save_settings_dialogue)
+        self.load_settings_button.triggered.connect(self.load_settings_dialogue)
         self.image_bar.image_changed.connect(self.load_image)
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
@@ -333,6 +334,10 @@ class MainWindow(QMainWindow):
 
         self.image_params = {}
         self.profile_params = {}
+
+        self.load_settings_directory()
+
+        self.save_timer = time.time()
 
     def delete_profile(self):
         current_profile = self.profile_selector.currentText()
@@ -390,6 +395,7 @@ class MainWindow(QMainWindow):
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
         if folder:
+            self.load_settings_directory(folder)
             self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
                               filename.lower().endswith(data.EXTENSION_LIST)}
             self.image_bar.clear_images()
@@ -478,6 +484,9 @@ class MainWindow(QMainWindow):
     def setting_changed(self, value, key, crop_zoom=False):
         if self.loading:
             return
+        if time.time() - self.save_timer > 10:
+            self.start_worker(self.save_settings_directory, semaphore=False)
+            self.save_timer = time.time()
         for src in self.image_bar.get_highlighted():
             src_short = src.split("/")[-1]
             if src_short not in self.image_params:
@@ -637,7 +646,7 @@ class MainWindow(QMainWindow):
 
         return image_params
 
-    def save_image(self, src, filename, **kwargs):
+    def save_image(self, src, filename, add_year=True, add_date=True, move_raw=True, quality=100, format='.jpg', **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -666,10 +675,25 @@ class MainWindow(QMainWindow):
             image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                             self.lenses[processing_args["lens"]])
         image = process_image(image, fast_mode=False, **processing_args)
+        path = "/".join(filename.split("/")[:-1])
+        if path:
+            path += "/"
+        if add_year:
+            path += metadata['EXIF:DateTimeOriginal'][:4] + "/"
+        if add_date:
+            path += metadata['EXIF:DateTimeOriginal'][:10].replace(':', '-') + "/"
+        filename = filename.split("/")[-1]
         if '.' not in filename:
             filename += '.jpg'
-        imageio.imwrite(filename, image, quality=100, format='.jpg')
-        add_metadata(filename, metadata, exp_comp=processing_args['exp_comp'])
+        if not os.path.exists(path):
+            os.makedirs(path)
+        if move_raw:
+            if not os.path.exists(path + 'RAW'):
+                os.makedirs(path + 'RAW')
+            self.save_settings_directory(path + 'RAW', src=src_short)
+            os.replace(src, path + 'RAW/' + src.split('/')[-1])
+            imageio.imwrite(path + filename, image, quality=quality, format=format)
+        add_metadata(path + filename, metadata, exp_comp=processing_args['exp_comp'])
         print(f"exported {filename}")
 
     def save_image_dialog(self):
@@ -693,23 +717,55 @@ class MainWindow(QMainWindow):
             self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
                               semaphore=False)
 
-    def save_settings(self):
+    def save_settings_dialogue(self, src=None):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
         if ok:
-            complete_dict = {"image_params": self.image_params, "profile_params": self.profile_params}
-            with open(filename, "w") as f:
-                json.dump(complete_dict, f)
+            self.save_settings(filename, src)
 
-    def load_settings(self):
+    def save_settings_directory(self, root='', src=None, **kwargs):
+        if root:
+            filename = root + "/raw2film_settings.json"
+        else:
+            filename = "raw2film_settings.json"
+        self.save_settings(filename, src)
+
+    def save_settings(self, filename, src=None):
+        if src is None:
+            complete_dict = {"image_params": self.image_params, "profile_params": self.profile_params}
+        else:
+            if "profile" in self.image_params[src] and self.image_params[src]["profile"] in self.profile_params:
+                profile = self.image_params[src]["profile"]
+                complete_dict = {"image_params": {src: self.image_params[src]}, "profile_params": {profile: self.profile_params[profile]}}
+            else:
+                complete_dict = {"image_params": {src: self.image_params[src]}, "profile_params": {}}
+        if Path(filename).is_file():
+            with open(filename, "r") as f:
+                old_dict = json.load(f)
+            complete_dict["image_params"] = {**old_dict, **complete_dict["image_params"]}
+        with open(filename, "w") as f:
+            json.dump(complete_dict, f)
+
+    def load_settings_dialogue(self):
         filename, ok = QFileDialog.getOpenFileName(self)
         if ok:
-            with open(filename, "r") as f:
-                complete_dict = json.load(f)
-            self.image_params = {**complete_dict["image_params"], **self.image_params}
-            self.profile_params = {**complete_dict["profile_params"], **self.profile_params}
-            for profile in self.profile_params:
-                if self.profile_selector.findText(profile) == -1:
-                    self.profile_selector.addItem(profile)
+            self.load_settings(filename)
+
+    def load_settings_directory(self, root=''):
+        if root:
+            filename = root + "/raw2film_settings.json"
+        else:
+            filename = "raw2film_settings.json"
+        if Path(filename).is_file():
+            self.load_settings(filename)
+
+    def load_settings(self, filename):
+        with open(filename, "r") as f:
+            complete_dict = json.load(f)
+        self.image_params = {**complete_dict["image_params"], **self.image_params}
+        self.profile_params = {**complete_dict["profile_params"], **self.profile_params}
+        for profile in self.profile_params:
+            if self.profile_selector.findText(profile) == -1:
+                self.profile_selector.addItem(profile)
 
     def light_changed(self, value, light_name):
         if self.loading:
