@@ -6,7 +6,6 @@ import lensfunpy
 import numpy as np
 import torch
 from lensfunpy import util as lensfunpy_util
-from raw2film import data
 
 
 def lens_correction(rgb, metadata, cam, lens):
@@ -95,14 +94,20 @@ def mtf_curve(mtf_data, lowest=1, highest=200):
     if lowest not in mtf_data:
         mtf_data[lowest] = 1
     mtf_data = {k: v for k, v in sorted(mtf_data.items(), key=lambda item: item[0])}
-    if max(mtf_data.keys()) < highest:
-        ax, ay = list(mtf_data.items())[-1]
-        bx, by = list(mtf_data.items())[-2]
-        m = (np.log10(ay) - np.log10(by)) / (np.log10(ax) - np.log10(bx))
-        mtf_data[highest] = highest ** m * (ay / ax ** m)
     frequencies = np.array(list(mtf_data.keys()), dtype=np.float32)
     values = np.array(list(mtf_data.values()), dtype=np.float32)
-    return lambda x: np.interp(x, frequencies, values)
+    if max(frequencies) < highest:
+        ax, bx = frequencies[-2:]
+        ay, by = values[-2:]
+        extrapolation = lambda x: ay * np.e ** (np.log(by / ay) / (bx - ax) * (x - ax))
+        number = math.ceil((highest - max(frequencies)) / 30)
+        extrapol_freq = (np.array(list(range(number))) + 1) / number * (highest - max(frequencies)) + max(frequencies)
+        extrapol_val = np.vectorize(extrapolation)(extrapol_freq)
+        frequencies = np.hstack((frequencies, extrapol_freq))
+        values = np.hstack((values, extrapol_val))
+    frequencies = np.log10(frequencies)
+    values = np.log10(values)
+    return lambda x: 10 ** np.interp(np.log10(x + 0.00001), frequencies, values, right=-1000000000000000)
 
 
 def mtf_kernel(mtf_data, frequency, f_shift):

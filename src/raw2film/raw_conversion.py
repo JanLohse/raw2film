@@ -74,8 +74,8 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         h //= 2
         w //= 2
         image = cv.resize(image, (w, h), interpolation=cv.INTER_AREA)
-        image = (np.sqrt(image / 65535) * 65535).astype(np.uint16)
-        kwargs["gamma"] = 2
+        image = ((image / 65535) ** 0.25 * 65535).astype(np.uint16)
+        kwargs["gamma"] = 4
         kwargs["lut_size"] = 17
     else:
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm

@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         self.folder_selector = QAction("Open folder", self)
         self.folder_selector.setShortcut(QKeySequence("Ctrl+Shift+O"))
         file_menu.addAction(self.folder_selector)
-        self.save_image_button = QAction("Export current image")
+        self.save_image_button = QAction("Quick export jpg")
         self.save_image_button.triggered.connect(self.save_image_dialog)
         file_menu.addAction(self.save_image_button)
         self.save_all_button = QAction("Export all images")
@@ -112,9 +112,9 @@ class MainWindow(QMainWindow):
         self.default_profile_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier",
                                        "red_light": 0, "green_light": 0, "blue_light": 0, "white_point": 1,
                                        "halation": True, "sharpness": True, "grain": True, "format": "135",
-                                       "grain_size": 0.002, "link_lights": True}
-        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "wb_mode": "Daylight",
-                                     "profile": "Default", "lens_correction": True}
+                                       "grain_size": 0.002}
+        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
+                                     "profile": "Default", "lens_correction": True, "pre_flash": -4}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -156,15 +156,19 @@ class MainWindow(QMainWindow):
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
 
-        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2850, "Fluorescent": 3800,
+        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800, "Fluorescent": 3800,
                          "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
 
         self.exp_wb = Slider()
-        self.exp_wb.setMinMaxTicks(2000, 12000, 50)
-        add_option(self.exp_wb, "Kelvin:", 6500, self.exp_wb.setValue)
+        self.exp_wb.setMinMaxTicks(2000, 12000, 100)
+        add_option(self.exp_wb, "Kelvin:", 5500, self.exp_wb.setValue)
+
+        self.pre_flash = Slider()
+        self.pre_flash.setMinMaxTicks(-4, -2, 1, 20)
+        add_option(self.pre_flash, "Pre-flash:", -5, self.pre_flash.setValue, hideable=True)
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
@@ -210,13 +214,13 @@ class MainWindow(QMainWindow):
         add_option(self.negative_selector, "Negativ stock:", "KodakPortra400", self.negative_selector.setCurrentText)
 
         self.red_light = Slider()
-        self.red_light.setMinMaxTicks(-1, 1, 1, 20)
+        self.red_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
         add_option(self.red_light, "Red printer light:", 0, self.red_light.setValue, hideable=True)
         self.green_light = Slider()
-        self.green_light.setMinMaxTicks(-1, 1, 1, 20)
+        self.green_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
         add_option(self.green_light, "Green printer light:", 0, self.green_light.setValue, hideable=True)
         self.blue_light = Slider()
-        self.blue_light.setMinMaxTicks(-1, 1, 1, 20)
+        self.blue_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
         add_option(self.blue_light, "Blue printer light:", 0, self.blue_light.setValue, hideable=True)
 
         self.link_lights = QCheckBox()
@@ -301,8 +305,8 @@ class MainWindow(QMainWindow):
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
-        self.width.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_width", crop_zoom=True))
-        self.height.textChanged.connect(lambda x: self.profile_changed(float(x), "frame_height", crop_zoom=True))
+        self.width.textChanged.connect(lambda x: self.profile_changed(float("0" + x), "frame_width", crop_zoom=True))
+        self.height.textChanged.connect(lambda x: self.profile_changed(float("0" + x), "frame_height", crop_zoom=True))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
@@ -310,6 +314,7 @@ class MainWindow(QMainWindow):
         self.image_bar.image_changed.connect(self.load_image)
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
+        self.pre_flash.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash"))
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -385,10 +390,12 @@ class MainWindow(QMainWindow):
 
     def load_images(self):
         filenames, ok = QFileDialog.getOpenFileNames(self, 'Open raw images', '',
-                                                     filter=f"Raw (*{' *'.join(data.EXTENSION_LIST)})")
+                                                     filter=f"RAW (*{' *'.join(data.EXTENSION_LIST)})")
 
         if ok:
             self.filenames = {filename.split("/")[-1]: filename for filename in filenames}
+            for folder in set(["/".join(filename.split("/")[:-1]) for filename in filenames]):
+                self.load_settings_directory(folder)
             self.image_bar.clear_images()
             self.image_bar.load_images(filenames)
 
@@ -472,6 +479,8 @@ class MainWindow(QMainWindow):
     def profile_changed(self, value, key, crop_zoom=False):
         if self.loading:
             return
+        if key in ["frame_width", "frame_height"] and not value:
+            return
         profile = self.profile_selector.currentText()
         if profile not in self.profile_params:
             self.profile_params[profile] = {}
@@ -492,12 +501,11 @@ class MainWindow(QMainWindow):
             if src_short not in self.image_params:
                 self.image_params[src_short] = {}
             self.image_params[src_short][key] = value
-            if key == "exposure_kelvin":
-                image_params = self.setup_image_params(src_short)
-                wb_mode = image_params["wb_mode"]
-                if wb_mode != "Custom" and value != self.wb_modes[wb_mode]:
-                    self.image_params[src_short]["wb_mode"] = "Custom"
-                    self.wb_mode.setCurrentText("Custom")
+        if key == "exposure_kelvin":
+            if value in self.wb_modes.values():
+                self.wb_mode.setCurrentText(list(self.wb_modes.keys())[list(self.wb_modes.values()).index(value)])
+            else:
+                self.wb_mode.setCurrentText("Custom")
         if crop_zoom:
             self.crop_zoom_changed()
         else:
@@ -520,7 +528,6 @@ class MainWindow(QMainWindow):
             self.rotation.setValue(image_params["rotation"])
         if "exposure_kelvin" in image_params:
             self.exp_wb.setValue(image_params["exposure_kelvin"])
-        self.wb_mode.setCurrentText(image_params["wb_mode"])
         if "lens_correction" in image_params:
             self.lens_correction.setChecked(image_params["lens_correction"])
         if "profile" in image_params:
@@ -529,6 +536,8 @@ class MainWindow(QMainWindow):
             self.camera_selector.setCurrentText(image_params["cam"])
         if "lens" in image_params:
             self.lens_selector.setCurrentText(image_params["lens"])
+        if "pre_flash" in image_params:
+            self.pre_flash.setValue(image_params["pre_flash"])
         self.loading = False
 
     def load_profile_params(self, profile=None):
@@ -554,7 +563,6 @@ class MainWindow(QMainWindow):
         self.grain_size.setValue(profile_params["grain_size"] * 1000)
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
-        self.link_lights.setChecked(profile_params["link_lights"])
         self.loading = False
         self.format_selector.setCurrentText(profile_params["format"])
         self.active = True
@@ -641,12 +649,9 @@ class MainWindow(QMainWindow):
     def setup_image_params(self, src):
         image_params = {**self.default_image_params, **self.image_params[src]}
 
-        if image_params["wb_mode"] != "Custom":
-            image_params["exposure_kelvin"] = self.wb_modes[image_params["wb_mode"]]
-
         return image_params
 
-    def save_image(self, src, filename, add_year=True, add_date=True, move_raw=True, quality=100, format='.jpg', **kwargs):
+    def save_image(self, src, filename, add_year=False, add_date=False, move_raw=False, quality=100, **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -692,13 +697,14 @@ class MainWindow(QMainWindow):
                 os.makedirs(path + 'RAW')
             self.save_settings_directory(path + 'RAW', src=src_short)
             os.replace(src, path + 'RAW/' + src.split('/')[-1])
-            imageio.imwrite(path + filename, image, quality=quality, format=format)
+        imageio.imwrite(path + filename, image, quality=quality, format='.jpg')
         add_metadata(path + filename, metadata, exp_comp=processing_args['exp_comp'])
         print(f"exported {filename}")
 
     def save_image_dialog(self):
-        filename, ok = QFileDialog.getSaveFileName(self)
         src = self.image_bar.current_image()
+        filename = src.split("/")[-1].split(".")[0]
+        filename, ok = QFileDialog.getSaveFileName(self, "Choose output file", filename, "*.jpg")
         if ok:
             self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
