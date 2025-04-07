@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
         view_menu = menu.addMenu("View")
-        profile_menu = menu.addMenu("Profile")
+        edit_menu = menu.addMenu("Edit")
 
         def add_option(widget, name=None, default=None, setter=None, hideable=False):
             self.side_counter += 1
@@ -96,14 +96,21 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_settings_button)
         self.load_settings_button = QAction("Load settings")
         file_menu.addAction(self.load_settings_button)
-        self.delete_profile_button = QAction("Delete profile")
-        profile_menu.addAction(self.delete_profile_button)
         self.close_highlighted_button = QAction("Close selected images")
         self.close_highlighted_button.setShortcut("Del")
         file_menu.addAction(self.close_highlighted_button)
         self.delete_highlighted_button = QAction("Delete selected images")
         self.delete_highlighted_button.setShortcut("Shift+Del")
         file_menu.addAction(self.delete_highlighted_button)
+        self.deselect_all_button = QAction("Deselect all")
+        self.deselect_all_button.setShortcut("Ctrl+D")
+        edit_menu.addAction(self.deselect_all_button)
+        self.reset_image_button = QAction("Reset image")
+        edit_menu.addAction(self.reset_image_button)
+        self.reset_profile_button = QAction("Reset profile")
+        edit_menu.addAction(self.reset_profile_button)
+        self.delete_profile_button = QAction("Delete profile")
+        edit_menu.addAction(self.delete_profile_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
         self.advanced_controls.setShortcut(QKeySequence("Ctrl+Shift+A"))
@@ -176,7 +183,7 @@ class MainWindow(QMainWindow):
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue)
 
         self.pre_flash = Slider()
-        self.pre_flash.setMinMaxTicks(-4, -2, 1, 20)
+        self.pre_flash.setMinMaxTicks(-4, -1, 1, 20)
         add_option(self.pre_flash, "Pre-flash:", self.dflt_img_params["pre_flash"], self.pre_flash.setValue, hideable=True)
 
         self.rotate = QWidget()
@@ -328,6 +335,9 @@ class MainWindow(QMainWindow):
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
         self.image_bar.copy_settings.connect(self.copy_settings)
+        self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
+        self.reset_image_button.triggered.connect(self.reset_image)
+        self.reset_profile_button.triggered.connect(self.reset_profile)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -358,6 +368,19 @@ class MainWindow(QMainWindow):
         self.save_timer = time.time()
 
         self.load_profile_params( )
+
+    def reset_image(self):
+        for src in self.image_bar.get_highlighted():
+            src_short = src.split("/")[-1]
+            if src_short in self.image_params:
+                self.image_params.pop(src_short)
+        self.load_image(self.image_bar.selected_label.image_path)
+
+    def reset_profile(self):
+        profile = self.profile_selector.currentText()
+        if profile in self.profile_params:
+            self.profile_params[profile] = {}
+        self.load_profile_params()
 
     def copy_settings(self, src):
         src_short = src.split("/")[-1]
