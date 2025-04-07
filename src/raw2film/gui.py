@@ -80,6 +80,9 @@ class MainWindow(QMainWindow):
         self.folder_selector = QAction("Open folder", self)
         self.folder_selector.setShortcut(QKeySequence("Ctrl+Shift+O"))
         file_menu.addAction(self.folder_selector)
+        self.quick_save_button = QAction("Quick save settings")
+        self.quick_save_button.setShortcut("Ctrl+S")
+        file_menu.addAction(self.quick_save_button)
         self.save_image_button = QAction("Quick export jpg")
         self.save_image_button.triggered.connect(self.save_image_dialog)
         file_menu.addAction(self.save_image_button)
@@ -95,6 +98,12 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.load_settings_button)
         self.delete_profile_button = QAction("Delete profile")
         profile_menu.addAction(self.delete_profile_button)
+        self.close_highlighted_button = QAction("Close selected images")
+        self.close_highlighted_button.setShortcut("Del")
+        file_menu.addAction(self.close_highlighted_button)
+        self.delete_highlighted_button = QAction("Delete selected images")
+        self.delete_highlighted_button.setShortcut("Shift+Del")
+        file_menu.addAction(self.delete_highlighted_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
         self.advanced_controls.setShortcut(QKeySequence("Ctrl+Shift+A"))
@@ -109,11 +118,11 @@ class MainWindow(QMainWindow):
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
 
-        self.default_profile_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier",
+        self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier",
                                        "red_light": 0, "green_light": 0, "blue_light": 0, "white_point": 1,
                                        "halation": True, "sharpness": True, "grain": True, "format": "135",
-                                       "grain_size": 0.002}
-        self.default_image_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
+                                       "grain_size": 0.002, "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500}
+        self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
                                      "profile": "Default", "lens_correction": True, "pre_flash": -4}
 
         self.profile_selector = QComboBox()
@@ -126,7 +135,7 @@ class MainWindow(QMainWindow):
         profile_widget_layout.addWidget(self.profile_selector)
         profile_widget_layout.addWidget(self.add_profile)
         profile_widget_layout.setContentsMargins(0, 0, 0, 0)
-        add_option(profile_widget, "Profile:", "Default", self.profile_selector.setCurrentText)
+        add_option(profile_widget, "Profile:", self.dflt_img_params["profile"], self.profile_selector.setCurrentText)
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -135,7 +144,7 @@ class MainWindow(QMainWindow):
         self.lenses["None"] = None
 
         self.lens_correction = QCheckBox()
-        add_option(self.lens_correction, "Lens correction:", True, self.lens_correction.setChecked)
+        add_option(self.lens_correction, "Lens correction:", self.dflt_img_params["lens_correction"], self.lens_correction.setChecked)
         self.camera_selector = QComboBox()
         self.camera_selector.setMaximumWidth(180)
         self.camera_selector.addItems(self.cameras.keys())
@@ -146,15 +155,15 @@ class MainWindow(QMainWindow):
         add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
 
         self.halation = QCheckBox()
-        add_option(self.halation, "Halation:", True, self.halation.setChecked, hideable=True)
+        add_option(self.halation, "Halation:", self.dflt_prf_params["halation"], self.halation.setChecked, hideable=True)
         self.sharpness = QCheckBox()
-        add_option(self.sharpness, "Sharpness:", True, self.sharpness.setChecked, hideable=True)
+        add_option(self.sharpness, "Sharpness:", self.dflt_prf_params["sharpness"], self.sharpness.setChecked, hideable=True)
         self.grain = QCheckBox()
-        add_option(self.grain, "Grain:", True, self.grain.setChecked, hideable=True)
+        add_option(self.grain, "Grain:", self.dflt_prf_params["grain"], self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
-        add_option(self.exp_comp, "Exposure:", 0, self.exp_comp.setValue)
+        add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue)
 
         self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800, "Fluorescent": 3800,
                          "Custom": None}
@@ -164,11 +173,11 @@ class MainWindow(QMainWindow):
 
         self.exp_wb = Slider()
         self.exp_wb.setMinMaxTicks(2000, 12000, 100)
-        add_option(self.exp_wb, "Kelvin:", 5500, self.exp_wb.setValue)
+        add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue)
 
         self.pre_flash = Slider()
         self.pre_flash.setMinMaxTicks(-4, -2, 1, 20)
-        add_option(self.pre_flash, "Pre-flash:", -5, self.pre_flash.setValue, hideable=True)
+        add_option(self.pre_flash, "Pre-flash:", self.dflt_img_params["pre_flash"], self.pre_flash.setValue, hideable=True)
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
@@ -182,15 +191,15 @@ class MainWindow(QMainWindow):
 
         self.rotation = Slider()
         self.rotation.setMinMaxTicks(-90, 90, 1, 2)
-        add_option(self.rotation, "Rotation angle:", 0, self.rotation.setValue)
+        add_option(self.rotation, "Rotation angle:", self.dflt_img_params["rotation"], self.rotation.setValue)
 
         self.zoom = Slider()
         self.zoom.setMinMaxTicks(1, 2, 1, 100)
-        add_option(self.zoom, "Zoom:", 0, self.zoom.setValue)
+        add_option(self.zoom, "Zoom:", self.dflt_img_params["zoom"], self.zoom.setValue)
 
         self.format_selector = QComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()))
-        add_option(self.format_selector, "Format:", "135", self.format_selector.setCurrentText)
+        add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText)
         self.width = QLineEdit()
         self.width.setValidator(QDoubleValidator())
         add_option(self.width, "Width:", "36", self.width.setText, hideable=True)
@@ -200,28 +209,28 @@ class MainWindow(QMainWindow):
 
         self.grain_size = Slider()
         self.grain_size.setMinMaxTicks(0.1, 6, 1, 10)
-        add_option(self.grain_size, "Grain size (microns):", 2, self.grain_size.setValue, hideable=True)
+        add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 1000, self.grain_size.setValue, hideable=True)
 
         self.halation_size = Slider()
         self.halation_size.setMinMaxTicks(0.5, 2, 1, 2)
-        add_option(self.halation_size, "Halation size:", 1, self.halation_size.setValue, hideable=True)
+        add_option(self.halation_size, "Halation size:", self.dflt_prf_params["halation_size"], self.halation_size.setValue, hideable=True)
         self.halation_green = Slider()
         self.halation_green.setMinMaxTicks(0, 1, 1, 10)
-        add_option(self.halation_green, "Halation color:", .4, self.halation_green.setValue, hideable=True)
+        add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"], self.halation_green.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
-        add_option(self.negative_selector, "Negativ stock:", "KodakPortra400", self.negative_selector.setCurrentText)
+        add_option(self.negative_selector, "Negativ stock:", self.dflt_prf_params["negative_film"], self.negative_selector.setCurrentText)
 
         self.red_light = Slider()
         self.red_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
-        add_option(self.red_light, "Red printer light:", 0, self.red_light.setValue, hideable=True)
+        add_option(self.red_light, "Red printer light:", self.dflt_prf_params["red_light"], self.red_light.setValue, hideable=True)
         self.green_light = Slider()
         self.green_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
-        add_option(self.green_light, "Green printer light:", 0, self.green_light.setValue, hideable=True)
+        add_option(self.green_light, "Green printer light:", self.dflt_prf_params["green_light"], self.green_light.setValue, hideable=True)
         self.blue_light = Slider()
         self.blue_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
-        add_option(self.blue_light, "Blue printer light:", 0, self.blue_light.setValue, hideable=True)
+        add_option(self.blue_light, "Blue printer light:", self.dflt_prf_params["blue_light"], self.blue_light.setValue, hideable=True)
 
         self.link_lights = QCheckBox()
         self.link_lights.setChecked(True)
@@ -230,15 +239,15 @@ class MainWindow(QMainWindow):
 
         self.print_selector = QComboBox()
         self.print_selector.addItems(["None"] + list(self.print_stocks.keys()))
-        add_option(self.print_selector, "Print stock:", "KodakEnduraPremier", self.print_selector.setCurrentText)
+        add_option(self.print_selector, "Print stock:", self.dflt_prf_params["print_film"], self.print_selector.setCurrentText)
 
         self.projector_kelvin = Slider()
         self.projector_kelvin.setMinMaxTicks(2700, 10000, 100)
-        add_option(self.projector_kelvin, "Projector wb:", 6500, self.projector_kelvin.setValue, hideable=True)
+        add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"], self.projector_kelvin.setValue, hideable=True)
 
         self.white_point = Slider()
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
-        add_option(self.white_point, "White point:", 1., self.white_point.setValue, hideable=True)
+        add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue, hideable=True)
 
         self.output_resolution = QLineEdit()
         self.output_resolution.setValidator(QIntValidator())
@@ -305,8 +314,8 @@ class MainWindow(QMainWindow):
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
-        self.width.textChanged.connect(lambda x: self.profile_changed(float("0" + x), "frame_width", crop_zoom=True))
-        self.height.textChanged.connect(lambda x: self.profile_changed(float("0" + x), "frame_height", crop_zoom=True))
+        self.width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width", crop_zoom=True))
+        self.height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height", crop_zoom=True))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
@@ -315,6 +324,9 @@ class MainWindow(QMainWindow):
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
         self.pre_flash.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash"))
+        self.quick_save_button.triggered.connect(self.quick_save)
+        self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
+        self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -343,6 +355,25 @@ class MainWindow(QMainWindow):
         self.load_settings_directory()
 
         self.save_timer = time.time()
+
+        self.load_profile_params( )
+
+    def delete_highlighted(self):
+        reply = QMessageBox()
+        number_images = len(self.image_bar.get_highlighted())
+        if number_images == 1:
+            reply.setText(f"Delete 1 image permanently?")
+        elif number_images > 1:
+            reply.setText(f"Delete {number_images} images permanently?")
+        else:
+            return
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes |
+                                 QMessageBox.StandardButton.No)
+        x = reply.exec()
+        if x == QMessageBox.StandardButton.Yes:
+            for image in self.image_bar.get_highlighted():
+                os.remove(image)
+            self.image_bar.close_highlighted()
 
     def delete_profile(self):
         current_profile = self.profile_selector.currentText()
@@ -490,12 +521,16 @@ class MainWindow(QMainWindow):
         else:
             self.parameter_changed()
 
+    def quick_save(self):
+        self.start_worker(self.save_settings_directory, semaphore=False)
+        self.save_timer = time.time()
+
+
     def setting_changed(self, value, key, crop_zoom=False):
         if self.loading:
             return
         if time.time() - self.save_timer > 10:
-            self.start_worker(self.save_settings_directory, semaphore=False)
-            self.save_timer = time.time()
+            self.quick_save()
         for src in self.image_bar.get_highlighted():
             src_short = src.split("/")[-1]
             if src_short not in self.image_params:
@@ -513,31 +548,25 @@ class MainWindow(QMainWindow):
 
     def setup_profile_params(self, profile, src=None):
         if profile in self.profile_params:
-            return {**self.default_profile_params, **self.profile_params[profile]}
+            return {**self.dflt_prf_params, **self.profile_params[profile]}
         else:
-            return self.default_profile_params
+            return self.dflt_prf_params
 
     def load_image_params(self, src):
         image_params = self.setup_image_params(src)
         self.loading = True
         self.exp_comp.setValue(image_params["exp_comp"])
         self.zoom.setValue(image_params["zoom"])
-        if "rotate_times" in image_params:
-            self.rotate_times = image_params["rotate_times"]
-        if "rotation" in image_params:
-            self.rotation.setValue(image_params["rotation"])
-        if "exposure_kelvin" in image_params:
-            self.exp_wb.setValue(image_params["exposure_kelvin"])
-        if "lens_correction" in image_params:
-            self.lens_correction.setChecked(image_params["lens_correction"])
-        if "profile" in image_params:
-            self.profile_selector.setCurrentText(image_params["profile"])
+        self.rotate_times = image_params["rotate_times"]
+        self.rotation.setValue(image_params["rotation"])
+        self.exp_wb.setValue(image_params["exposure_kelvin"])
+        self.lens_correction.setChecked(image_params["lens_correction"])
+        self.profile_selector.setCurrentText(image_params["profile"])
         if "cam" in image_params:
             self.camera_selector.setCurrentText(image_params["cam"])
         if "lens" in image_params:
             self.lens_selector.setCurrentText(image_params["lens"])
-        if "pre_flash" in image_params:
-            self.pre_flash.setValue(image_params["pre_flash"])
+        self.pre_flash.setValue(image_params["pre_flash"])
         self.loading = False
 
     def load_profile_params(self, profile=None):
@@ -547,13 +576,13 @@ class MainWindow(QMainWindow):
         self.setting_changed(profile, "profile")
         self.loading = True
         profile_params = self.setup_profile_params(profile)
-        if "projector_kelvin" in profile_params:
-            self.projector_kelvin.setValue(profile_params["projector_kelvin"])
         self.red_light.setValue(profile_params["red_light"])
         self.green_light.setValue(profile_params["green_light"])
         self.blue_light.setValue(profile_params["blue_light"])
         self.white_point.setValue(profile_params["white_point"])
         self.halation.setChecked(profile_params["halation"])
+        self.halation_size.setValue(profile_params["halation_size"])
+        self.halation_green.setValue(profile_params["halation_green_factor"])
         self.sharpness.setChecked(profile_params["sharpness"])
         self.grain.setChecked(profile_params["grain"])
         if "frame_width" in profile_params:
@@ -563,6 +592,9 @@ class MainWindow(QMainWindow):
         self.grain_size.setValue(profile_params["grain_size"] * 1000)
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
+
+        if "projector_kelvin" in profile_params:
+            self.projector_kelvin.setValue(profile_params["projector_kelvin"])
         self.loading = False
         self.format_selector.setCurrentText(profile_params["format"])
         self.active = True
@@ -625,7 +657,7 @@ class MainWindow(QMainWindow):
             self.load_image_params(src_short)
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
-        processing_args = {**self.default_profile_params, **image_args, **profile_args}
+        processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
         if "resolution" in processing_args:
             processing_args.pop("resolution")
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
@@ -647,7 +679,7 @@ class MainWindow(QMainWindow):
         self.scale_pixmap()
 
     def setup_image_params(self, src):
-        image_params = {**self.default_image_params, **self.image_params[src]}
+        image_params = {**self.dflt_img_params, **self.image_params[src]}
 
         return image_params
 
@@ -656,9 +688,9 @@ class MainWindow(QMainWindow):
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
         else:
-            image_args = self.default_image_params
+            image_args = self.dflt_img_params
         profile_args = self.setup_profile_params(image_args["profile"], src)
-        processing_args = {**self.default_profile_params, **image_args, **profile_args}
+        processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
         if self.output_resolution.text() != "":
             processing_args["resolution"] = int(self.output_resolution.text())
