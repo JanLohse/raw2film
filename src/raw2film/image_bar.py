@@ -212,9 +212,9 @@ class ImageBar(QScrollArea):
     def get_highlighted(self):
         return {label.image_path for label in self.highlighted_labels}
 
-    def close_highlighted(self):
+    def close_labels(self, labels):
         new_selected = self.image_labels.index(self.selected_label)
-        for image_label in self.highlighted_labels:
+        for image_label in labels:
             index = self.image_labels.index(image_label)
             self.image_layout.itemAt(index).widget().setParent(None)
             self.image_labels.pop(index)
@@ -222,6 +222,10 @@ class ImageBar(QScrollArea):
                 self.selected_label = None
             if index <= new_selected and (index or new_selected):
                 new_selected -= 1
+        return new_selected
+
+    def close_highlighted(self):
+        new_selected = self.close_labels(self.highlighted_labels)
         self.highlighted_labels = set()
         if self.image_labels:
             self.select_image(self.image_labels[new_selected])
@@ -231,3 +235,11 @@ class ImageBar(QScrollArea):
         for label in self.highlighted_labels:
             label.set_state("default")
         self.highlighted_labels = set()
+
+    def close_single_image(self, src):
+        for label in self.image_labels:
+            if label.image_path == src:
+                new_selected = self.close_labels([label,])
+                if self.image_labels:
+                    self.select_image(self.image_labels[new_selected])
+                return

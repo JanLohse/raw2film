@@ -8,14 +8,13 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog, QMessageBox
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
-
+    QInputDialog, QMessageBox, QDialog
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
 
 
 class MainWindow(QMainWindow):
@@ -728,7 +727,8 @@ class MainWindow(QMainWindow):
 
         return image_params
 
-    def save_image(self, src, filename, add_year=False, add_date=False, move_raw=False, quality=100, **kwargs):
+    def save_image(self, src, filename, add_year=False, add_date=False, move_raw=False, quality=100, close=False,
+                   **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -777,9 +777,13 @@ class MainWindow(QMainWindow):
         imageio.imwrite(path + filename, image, quality=quality, format='.jpg')
         add_metadata(path + filename, metadata, exp_comp=processing_args['exp_comp'])
         print(f"exported {filename}")
+        if close:
+            self.image_bar.close_single_image(src)
 
     def save_image_dialog(self):
         src = self.image_bar.current_image()
+        if src is None:
+            return
         filename = src.split("/")[-1].split(".")[0]
         filename, ok = QFileDialog.getSaveFileName(self, "Choose output file", filename, "*.jpg")
         if ok:
@@ -787,18 +791,77 @@ class MainWindow(QMainWindow):
 
     def save_all_process(self, folder, filenames, **kwargs):
         for filename in filenames:
-            self.save_image(src=filename, filename=folder + "/" + filename.split("/")[-1].split(".")[0])
+            self.save_image(src=filename, filename=folder + "/" + filename.split("/")[-1].split(".")[0], **kwargs)
+
+    def save_image_setting_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export settings")
+
+        layout = QVBoxLayout()
+
+        quality_slider = Slider()
+        quality_slider.setMinMaxTicks(0, 100)
+        quality_slider.setValue(100)
+        layout.addWidget(QLabel("JPEG quality:"))
+        layout.addWidget(quality_slider)
+
+        sort_by_year = QCheckBox("Sort by year")
+        sort_by_year.setChecked(True)
+        layout.addWidget(sort_by_year)
+
+        sort_by_month = QCheckBox("Sort by month")
+        sort_by_month.setChecked(True)
+        layout.addWidget(sort_by_month)
+
+        move_raw = QCheckBox("Move raw file to subfolder")
+        layout.addWidget(move_raw)
+
+        close_checkbox = QCheckBox("Close images after export")
+        move_raw.stateChanged.connect(lambda x: close_checkbox.setEnabled(not bool(x)))
+        move_raw.setChecked(True)
+        close_checkbox.setChecked(True)
+        layout.addWidget(close_checkbox)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+
+        # Connect buttons
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+
+        if dialog.exec():
+            kwargs = {"move_raw": move_raw.isChecked(), "add_year": sort_by_year.isChecked(),
+                      "close": close_checkbox.isChecked() or move_raw.isChecked(),
+                      "quality": int(quality_slider.getValue()),
+                      "add_month": sort_by_month.isChecked()}
+            return True, kwargs
+        else:
+            return False, {}
 
     def save_all_images(self):
-        folder = QFileDialog.getExistingDirectory(self)
-        if folder:
-            self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(), semaphore=False)
+        ok, kwargs = self.save_image_setting_dialog()
+
+        if ok:
+            folder = QFileDialog.getExistingDirectory(self)
+            if folder:
+                self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(),
+                                  semaphore=False, **kwargs)
 
     def save_selected_images(self):
-        folder = QFileDialog.getExistingDirectory(self)
-        if folder:
-            self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
-                              semaphore=False)
+        ok, kwargs = self.save_image_setting_dialog()
+
+        if ok:
+            folder = QFileDialog.getExistingDirectory(self)
+            if folder:
+                self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
+                                  semaphore=False, **kwargs)
 
     def save_settings_dialogue(self, src=None):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
