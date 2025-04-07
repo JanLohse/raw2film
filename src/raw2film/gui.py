@@ -8,7 +8,7 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QAction, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog, QMessageBox, QDialog
+    QInputDialog, QMessageBox, QDialog, QProgressDialog
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
@@ -254,10 +254,6 @@ class MainWindow(QMainWindow):
         self.white_point = Slider()
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
         add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue, hideable=True)
-
-        self.output_resolution = QLineEdit()
-        self.output_resolution.setValidator(QIntValidator())
-        add_option(self.output_resolution, "Output resolution:", "", hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -702,8 +698,6 @@ class MainWindow(QMainWindow):
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
-        if "resolution" in processing_args:
-            processing_args.pop("resolution")
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
@@ -728,7 +722,7 @@ class MainWindow(QMainWindow):
         return image_params
 
     def save_image(self, src, filename, add_year=False, add_date=False, move_raw=False, quality=100, close=False,
-                   **kwargs):
+                   resolution=None, **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -737,8 +731,8 @@ class MainWindow(QMainWindow):
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
-        if self.output_resolution.text() != "":
-            processing_args["resolution"] = int(self.output_resolution.text())
+        if resolution is not None:
+            processing_args["resolution"] = resolution
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
@@ -776,9 +770,9 @@ class MainWindow(QMainWindow):
             os.replace(src, path + 'RAW/' + src.split('/')[-1])
         imageio.imwrite(path + filename, image, quality=quality, format='.jpg')
         add_metadata(path + filename, metadata, exp_comp=processing_args['exp_comp'])
-        print(f"exported {filename}")
         if close:
             self.image_bar.close_single_image(src)
+        return f"exported {filename}"
 
     def save_image_dialog(self):
         src = self.image_bar.current_image()
@@ -789,9 +783,26 @@ class MainWindow(QMainWindow):
         if ok:
             self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
-    def save_all_process(self, folder, filenames, **kwargs):
-        for filename in filenames:
+    def save_multiple_process(self, folder, filenames, **kwargs):
+        progress_dialog = QProgressDialog("Processing...", "Cancel", 0, len(filenames), self)
+        progress_dialog.setWindowTitle("Exporting")
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setAutoReset(True)
+        progress_dialog.setMinimumDuration(0)  # Show immediately
+        progress_dialog.show()
+        progress_dialog.setValue(0)
+        progress_dialog.setLabelText("Starting export...")
+        QApplication.processEvents()  # Keep UI responsive
+        for i, filename in enumerate(filenames):
+            if progress_dialog.wasCanceled():
+                break
+            time.sleep(1)
             self.save_image(src=filename, filename=folder + "/" + filename.split("/")[-1].split(".")[0], **kwargs)
+            progress_dialog.setLabelText(f"Exported {filename}")
+            progress_dialog.setValue(i + 1)
+            QApplication.processEvents()  # Keep UI responsive
+        progress_dialog.close()
 
     def save_image_setting_dialog(self):
         dialog = QDialog(self)
@@ -809,9 +820,9 @@ class MainWindow(QMainWindow):
         sort_by_year.setChecked(True)
         layout.addWidget(sort_by_year)
 
-        sort_by_month = QCheckBox("Sort by month")
-        sort_by_month.setChecked(True)
-        layout.addWidget(sort_by_month)
+        sort_by_date = QCheckBox("Sort by date")
+        sort_by_date.setChecked(True)
+        layout.addWidget(sort_by_date)
 
         move_raw = QCheckBox("Move raw file to subfolder")
         layout.addWidget(move_raw)
@@ -821,6 +832,11 @@ class MainWindow(QMainWindow):
         move_raw.setChecked(True)
         close_checkbox.setChecked(True)
         layout.addWidget(close_checkbox)
+
+        resolution_field = QLineEdit()
+        resolution_field.setValidator(QDoubleValidator())
+        layout.addWidget(QLabel("Resolution:"))
+        layout.addWidget(resolution_field)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -837,10 +853,14 @@ class MainWindow(QMainWindow):
         cancel_button.clicked.connect(dialog.reject)
 
         if dialog.exec():
+            if resolution_field.text():
+                resolution = int(resolution_field.text())
+            else:
+                resolution = None
             kwargs = {"move_raw": move_raw.isChecked(), "add_year": sort_by_year.isChecked(),
                       "close": close_checkbox.isChecked() or move_raw.isChecked(),
-                      "quality": int(quality_slider.getValue()),
-                      "add_month": sort_by_month.isChecked()}
+                      "quality": int(quality_slider.getValue()), "add_date": sort_by_date.isChecked(),
+                      "resolution": resolution}
             return True, kwargs
         else:
             return False, {}
@@ -851,8 +871,7 @@ class MainWindow(QMainWindow):
         if ok:
             folder = QFileDialog.getExistingDirectory(self)
             if folder:
-                self.start_worker(self.save_all_process, folder=folder, filenames=self.filenames.values(),
-                                  semaphore=False, **kwargs)
+                self.save_multiple_process(folder=folder, filenames=self.filenames.values(), **kwargs)
 
     def save_selected_images(self):
         ok, kwargs = self.save_image_setting_dialog()
@@ -860,8 +879,7 @@ class MainWindow(QMainWindow):
         if ok:
             folder = QFileDialog.getExistingDirectory(self)
             if folder:
-                self.start_worker(self.save_all_process, folder=folder, filenames=self.image_bar.get_highlighted(),
-                                  semaphore=False, **kwargs)
+                self.save_multiple_process(folder=folder, filenames=self.image_bar.get_highlighted(), **kwargs)
 
     def save_settings_dialogue(self, src=None):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
