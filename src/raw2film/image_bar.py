@@ -38,6 +38,7 @@ class Thumbnail(QLabel):
 
 class ImageBar(QScrollArea):
     image_changed = pyqtSignal(str)
+    copy_settings = pyqtSignal(str)
 
     def __init__(self, thumbnail_size=100, padding=15):
         super().__init__()
@@ -101,6 +102,8 @@ class ImageBar(QScrollArea):
                 self.highlight_shift(label)
             else:
                 self.select_image(label)
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self.copy_settings.emit(label.image_path)
 
     def highlight_shift(self, label):
         if self.selected_label is None or self.selected_label == label:

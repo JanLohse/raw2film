@@ -327,6 +327,7 @@ class MainWindow(QMainWindow):
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
+        self.image_bar.copy_settings.connect(self.copy_settings)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -357,6 +358,27 @@ class MainWindow(QMainWindow):
         self.save_timer = time.time()
 
         self.load_profile_params( )
+
+    def copy_settings(self, src):
+        src_short = src.split("/")[-1]
+        if src_short in self.image_params:
+            for image in self.image_bar.get_highlighted():
+                image_short = image.split("/")[-1]
+                lens, cam = None, None
+                if "lens" in self.image_params[image_short]:
+                    lens = self.image_params[image_short]["lens"]
+                if "cam" in self.image_params[image_short]:
+                    cam = self.image_params[image_short]["cam"]
+                self.image_params[image_short] = self.image_params[src_short].copy()
+                if lens is not None:
+                    self.image_params[image_short]["lens"] = lens
+                if cam is not None:
+                    self.image_params[image_short]["cam"] = cam
+        else:
+            for image in self.image_bar.get_highlighted():
+                if image in self.image_params:
+                    self.image_params.pop(image.split("/")[-1])
+        self.load_image(self.image_bar.selected_label.image_path)
 
     def delete_highlighted(self):
         reply = QMessageBox()
