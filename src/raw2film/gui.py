@@ -6,8 +6,9 @@ from functools import lru_cache
 import exiftool
 import imageio
 import lensfunpy
-from PyQt6.QtCore import QSize, QThreadPool, QThread
-from PyQt6.QtGui import QPixmap, QImage, QDoubleValidator, QAction, QShortcut, QKeySequence
+from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
+from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, \
+    QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog
 from raw2film import data, utils
@@ -23,8 +24,13 @@ class MultiWorker(QObject):
     finished = pyqtSignal()
 
     def run_tasks(self, func, tasks, max_workers=None, **kwargs):
+        def func_wrapper(i, *args, **kwargs):
+            if i < max_workers:
+                time.sleep(i)
+            return func(*args, **kwargs)
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(func, *task, **kwargs) for task in tasks]
+            futures = [executor.submit(func_wrapper, i, *task, **kwargs) for i, task in enumerate(tasks)]
             for future in as_completed(futures):
                 self.progress.emit(future.result())
 
@@ -222,13 +228,14 @@ class MainWindow(QMainWindow):
         add_option(self.zoom, "Zoom:", self.dflt_img_params["zoom"], self.zoom.setValue)
 
         self.format_selector = QComboBox()
-        self.format_selector.addItems(list(data.FORMATS.keys()))
+        self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
         add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText)
         self.width = QLineEdit()
-        self.width.setValidator(QDoubleValidator())
+        regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
+        self.width.setValidator(QRegularExpressionValidator(regex))
         add_option(self.width, "Width:", "36", self.width.setText, hideable=True)
         self.height = QLineEdit()
-        self.height.setValidator(QDoubleValidator())
+        self.height.setValidator(QRegularExpressionValidator(regex))
         add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
@@ -467,9 +474,10 @@ class MainWindow(QMainWindow):
             self.profile_selector.addItem(text)
 
     def format_changed(self, format):
-        width, height = data.FORMATS[format]
-        self.width.setText(str(width))
-        self.height.setText(str(height))
+        if format != "Custom":
+            width, height = data.FORMATS[format]
+            self.width.setText(str(width))
+            self.height.setText(str(height))
 
     def hide_controls(self):
         if self.advanced_controls.isChecked():
@@ -581,6 +589,14 @@ class MainWindow(QMainWindow):
                 return
             else:
                 value = float(value)
+            width, height = self.width.text(), self.height.text()
+            if width and height:
+                dimensions = (float(width), float(height))
+                if dimensions in data.FORMATS.values():
+                    format_name = list(data.FORMATS.keys())[list(data.FORMATS.values()).index(dimensions)]
+                    self.format_selector.setCurrentText(format_name)
+                else:
+                    self.format_selector.setCurrentText("Custom")
         profile = self.profile_selector.currentText()
         if profile not in self.profile_params:
             self.profile_params[profile] = {}
@@ -875,9 +891,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(close_checkbox)
 
         resolution_field = QLineEdit()
-        resolution_field.setValidator(QDoubleValidator())
+        resolution_field.setValidator(QIntValidator())
         layout.addWidget(QLabel("Resolution:"))
         layout.addWidget(resolution_field)
+
+        thread_slider = Slider()
+        cpu_count = os.cpu_count()
+        thread_slider.setMinMaxTicks(1, os.cpu_count())
+        thread_slider.setValue(max(cpu_count // 2, 1))
+        layout.addWidget(QLabel("Threads:"))
+        layout.addWidget(thread_slider)
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -901,12 +924,14 @@ class MainWindow(QMainWindow):
             kwargs = {"move_raw": move_raw.isChecked(), "add_year": sort_by_year.isChecked(),
                       "close": close_checkbox.isChecked() or move_raw.isChecked(),
                       "quality": int(quality_slider.getValue()), "add_date": sort_by_date.isChecked(),
-                      "resolution": resolution}
+                      "resolution": resolution, "max_workers": int(thread_slider.getValue())}
             return True, kwargs
         else:
             return False, {}
 
     def save_all_images(self):
+        if not self.filenames or self.filenames is None:
+            return
         ok, kwargs = self.save_image_setting_dialog()
 
         if ok:
@@ -915,6 +940,8 @@ class MainWindow(QMainWindow):
                 self.save_multiple_process(folder=folder, filenames=self.filenames.values(), **kwargs)
 
     def save_selected_images(self):
+        if not self.image_bar.get_highlighted():
+            return
         ok, kwargs = self.save_image_setting_dialog()
 
         if ok:

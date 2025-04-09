@@ -5,7 +5,6 @@ from shutil import copy
 
 import exiftool
 from raw2film import data
-import lensfunpy
 
 
 def find_data(metadata, db):
@@ -157,9 +156,8 @@ def hex_color(arg):
     return list(int(arg[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def add_metadata(src, metadata, exp_comp, artist="Jan Lohse"):
+def add_metadata(src, metadata, exp_comp):
     metadata = {key: metadata[key] for key in metadata if key.startswith("EXIF") and key[5:] in data.METADATA_KEYS}
-    metadata['EXIF:Artist'] = artist
     metadata['EXIF:ExposureCompensation'] = exp_comp
     with exiftool.ExifToolHelper() as et:
         et.set_tags([src], metadata, '-overwrite_original')
