@@ -291,20 +291,9 @@ class MainWindow(QMainWindow):
         add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue,
                    hideable=True)
 
-        self.l = Slider()
-        self.l.setMinMaxTicks(1, 2, 1, 100)
-        add_option(self.l, "l:", 1.2, self.l.setValue, hideable=True)
-
-        self.t = Slider()
-        self.t.setMinMaxTicks(0, 1, 1, 100)
-        add_option(self.t, "t:", 0.8, self.t.setValue, hideable=True)
-
-        self.p = Slider()
-        self.p.setMinMaxTicks(0, 2, 1, 100)
-        add_option(self.p, "p:", 1.2, self.p.setValue, hideable=True)
-
-        self.gamut_compression = QCheckBox()
-        add_option(self.gamut_compression, "Gamut compression:", hideable=True)
+        self.gamut_compression = Slider()
+        self.gamut_compression.setMinMaxTicks(0, 0.5, 1, 100)
+        add_option(self.gamut_compression, "Gamut compression:", 0.15, self.gamut_compression.setValue, hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -384,10 +373,7 @@ class MainWindow(QMainWindow):
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
         self.reset_image_button.triggered.connect(self.reset_image)
         self.reset_profile_button.triggered.connect(self.reset_profile)
-        self.l.valueChanged.connect(lambda x: self.setting_changed(x, "l"))
-        self.t.valueChanged.connect(lambda x: self.setting_changed(x, "t"))
-        self.p.valueChanged.connect(lambda x: self.setting_changed(x, "p"))
-        self.gamut_compression.stateChanged.connect(lambda x: self.setting_changed(x, "gamut_compression"))
+        self.gamut_compression.valueChanged.connect(lambda x: self.profile_changed(x, "gamut_compression"))
 
         widget = QWidget()
         widget.setLayout(page_layout)

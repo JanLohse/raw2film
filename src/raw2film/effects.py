@@ -1,4 +1,5 @@
 import math
+import time
 
 import cv2
 import cv2 as cv
@@ -170,7 +171,9 @@ def exponential_blur(rgb, size):
 def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
+    start = time.time()
     noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
+    print(f"{time.time() - start:.4f}s")
     red_rms = np.interp(rgb[..., 0], (stock.red_rms_density + 0.25) / d_factor, stock.red_rms * std_factor)
     green_rms = np.interp(rgb[..., 1], (stock.green_rms_density + 0.25) / d_factor, stock.green_rms * std_factor)
     blue_rms = np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
