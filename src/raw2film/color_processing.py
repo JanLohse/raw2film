@@ -59,7 +59,7 @@ def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
     return exp_comp
 
 
-def gamut_compression(rgb, a=0.2):
+def gamut_compression(rgb, adaption=0.2):
     # compute achromaticity (max rgb value per pixel)
     achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
 
@@ -68,8 +68,8 @@ def gamut_compression(rgb, a=0.2):
 
     # smoothing parameter is a
     # precompute smooth compression function
-    x = np.linspace(1 - a, 1 + a, 16)
-    y = 1 - a + (x - 1 + a) / (np.sqrt(1 + ((x - 1) / a + 1) ** 2))
+    x = np.linspace(1 - adaption, 1 + adaption, 16)
+    y = 1 - adaption + (x - 1 + adaption) / (np.sqrt(1 + ((x - 1) / adaption + 1) ** 2))
     # compress distance
     distance = np.interp(distance, np.concatenate((np.array([0]), x)), np.concatenate((np.array([0]), y)))
 

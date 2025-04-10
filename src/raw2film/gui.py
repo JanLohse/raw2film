@@ -1,4 +1,5 @@
 import json
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cache, partial
 from functools import lru_cache
@@ -239,7 +240,7 @@ class MainWindow(QMainWindow):
         add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(0.1, 6, 1, 10)
+        self.grain_size.setMinMaxTicks(1, 4, 1, 10)
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 1000,
                    self.grain_size.setValue, hideable=True)
 
@@ -289,6 +290,21 @@ class MainWindow(QMainWindow):
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
         add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue,
                    hideable=True)
+
+        self.l = Slider()
+        self.l.setMinMaxTicks(1, 2, 1, 100)
+        add_option(self.l, "l:", 1.2, self.l.setValue, hideable=True)
+
+        self.t = Slider()
+        self.t.setMinMaxTicks(0, 1, 1, 100)
+        add_option(self.t, "t:", 0.8, self.t.setValue, hideable=True)
+
+        self.p = Slider()
+        self.p.setMinMaxTicks(0, 2, 1, 100)
+        add_option(self.p, "p:", 1.2, self.p.setValue, hideable=True)
+
+        self.gamut_compression = QCheckBox()
+        add_option(self.gamut_compression, "Gamut compression:", hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -368,6 +384,10 @@ class MainWindow(QMainWindow):
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
         self.reset_image_button.triggered.connect(self.reset_image)
         self.reset_profile_button.triggered.connect(self.reset_profile)
+        self.l.valueChanged.connect(lambda x: self.setting_changed(x, "l"))
+        self.t.valueChanged.connect(lambda x: self.setting_changed(x, "t"))
+        self.p.valueChanged.connect(lambda x: self.setting_changed(x, "p"))
+        self.gamut_compression.stateChanged.connect(lambda x: self.setting_changed(x, "gamut_compression"))
 
         widget = QWidget()
         widget.setLayout(page_layout)
