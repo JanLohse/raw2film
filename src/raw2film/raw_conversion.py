@@ -17,7 +17,7 @@ def raw_to_linear(src, half_size=True):
         # noinspection PyUnresolvedReferences
         rgb = raw.postprocess(output_color=rawpy.ColorSpace(5), gamma=(1, 1), output_bps=16, no_auto_bright=True,
                               use_camera_wb=False, use_auto_wb=False, half_size=half_size,
-                              demosaic_algorithm=rawpy.DemosaicAlgorithm(11), four_color_rgb=True, )
+                              demosaic_algorithm=rawpy.DemosaicAlgorithm(2), four_color_rgb=False, )
 
     return rgb
 
