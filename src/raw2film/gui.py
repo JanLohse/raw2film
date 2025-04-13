@@ -1,5 +1,4 @@
 import json
-import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cache, partial
 from functools import lru_cache
@@ -8,16 +7,16 @@ import exiftool
 import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
-from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, \
-    QRegularExpressionValidator, QIntValidator
+from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.utils import *
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
 
 
 class MultiWorker(QObject):
@@ -148,7 +147,8 @@ class MainWindow(QMainWindow):
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier", "red_light": 0,
                                 "green_light": 0, "blue_light": 0, "white_point": 1, "halation": True,
                                 "sharpness": True, "grain": True, "format": "135", "grain_size": 0.002,
-                                "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500}
+                                "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
+                                "halation_intensity": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
                                 "profile": "Default", "lens_correction": True, "pre_flash": -4}
 
@@ -245,13 +245,17 @@ class MainWindow(QMainWindow):
                    self.grain_size.setValue, hideable=True)
 
         self.halation_size = Slider()
-        self.halation_size.setMinMaxTicks(0.5, 2, 1, 2)
+        self.halation_size.setMinMaxTicks(0.5, 8, 1, 4)
         add_option(self.halation_size, "Halation size:", self.dflt_prf_params["halation_size"],
                    self.halation_size.setValue, hideable=True)
         self.halation_green = Slider()
-        self.halation_green.setMinMaxTicks(0, 1, 1, 10)
+        self.halation_green.setMinMaxTicks(0, 1, 1, 20)
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
                    self.halation_green.setValue, hideable=True)
+        self.halation_intensity = Slider()
+        self.halation_intensity.setMinMaxTicks(0.5, 4, 1, 4)
+        add_option(self.halation_intensity, "Halation intensity:", self.dflt_prf_params["halation_intensity"],
+                   self.halation_intensity.setValue, hideable=True)
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
@@ -290,10 +294,6 @@ class MainWindow(QMainWindow):
         self.white_point.setMinMaxTicks(.5, 2., 1, 20)
         add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue,
                    hideable=True)
-
-        self.gamut_compression = Slider()
-        self.gamut_compression.setMinMaxTicks(0, 0.5, 1, 100)
-        add_option(self.gamut_compression, "Gamut compression:", 0.15, self.gamut_compression.setValue, hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
         self.advanced_controls.triggered.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 1000, "grain_size"))
         self.halation_size.valueChanged.connect(lambda x: self.profile_changed(x, "halation_size"))
+        self.halation_intensity.valueChanged.connect(lambda x: self.profile_changed(x, "halation_intensity"))
         self.halation_green.valueChanged.connect(lambda x: self.profile_changed(x, "halation_green_factor"))
         self.rotate_right.released.connect(self.rotate_image)
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
@@ -373,7 +374,6 @@ class MainWindow(QMainWindow):
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
         self.reset_image_button.triggered.connect(self.reset_image)
         self.reset_profile_button.triggered.connect(self.reset_profile)
-        self.gamut_compression.valueChanged.connect(lambda x: self.profile_changed(x, "gamut_compression"))
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -673,6 +673,7 @@ class MainWindow(QMainWindow):
         self.halation.setChecked(profile_params["halation"])
         self.halation_size.setValue(profile_params["halation_size"])
         self.halation_green.setValue(profile_params["halation_green_factor"])
+        self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
         self.grain.setChecked(profile_params["grain"])
         if "frame_width" in profile_params:

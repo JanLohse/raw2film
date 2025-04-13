@@ -1,11 +1,10 @@
 import math
-import time
+from functools import cache
 
 import cv2
 import cv2 as cv
 import lensfunpy
 import numpy as np
-import torch
 from lensfunpy import util as lensfunpy_util
 
 
@@ -168,17 +167,27 @@ def exponential_blur(rgb, size):
     return cv.filter2D(rgb, -1, kernel)
 
 
+@cache
+def gaussian_noise_cache(shape):
+    return np.random.default_rng().standard_normal(shape, dtype=np.float32)
+
+
+def gaussian_noise(shape):
+    assert len(shape) == 3
+    noise_size = ((max(shape[:2]) + 100) // 1024 + 1) * 1024
+    noise_map = gaussian_noise_cache((noise_size, noise_size))
+    offsets = np.random.randint([0, 0], [noise_size - shape[0] + 1, noise_size - shape[1] + 1], size=(shape[2], 2))
+    noise = np.stack([noise_map[x:shape[0] + x, y:shape[1] + y] for x, y in offsets], axis=-1)
+    return noise
+
+
 def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
-    start = time.time()
-    noise = np.array(torch.empty(rgb.shape, dtype=torch.float32).normal_(), dtype=np.float32)
-    print(f"{time.time() - start:.4f}s")
-    red_rms = np.interp(rgb[..., 0], (stock.red_rms_density + 0.25) / d_factor, stock.red_rms * std_factor)
-    green_rms = np.interp(rgb[..., 1], (stock.green_rms_density + 0.25) / d_factor, stock.green_rms * std_factor)
-    blue_rms = np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
-    rms = np.stack([red_rms, green_rms, blue_rms], axis=-1, dtype=rgb.dtype)
-    noise = np.multiply(noise, rms)
+    noise = gaussian_noise(rgb.shape)
+    noise[..., 0] *= np.interp(rgb[..., 0], (stock.red_rms_density + 0.25) / d_factor, stock.red_rms * std_factor)
+    noise[..., 1] *= np.interp(rgb[..., 1], (stock.green_rms_density + 0.25) / d_factor, stock.green_rms * std_factor)
+    noise[..., 2] *= np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
     factor = scale * grain_size * 2 * math.sqrt(math.pi)
     if factor > 1:
         noise = gaussian_blur(noise, scale * grain_size)
@@ -186,9 +195,11 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     return rgb
 
 
-def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0., **kwargs):
+def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
+             halation_intensity=1, **kwargs):
     blured = exponential_blur(rgb, scale / 4 * halation_size)
-    color_factors = np.array([halation_red_factor, halation_green_factor, halation_blue_factor], dtype=np.float32)
+    color_factors = halation_intensity * np.array([halation_red_factor, halation_green_factor, halation_blue_factor],
+                                                  dtype=np.float32)
     rgb += np.multiply(blured, color_factors)
     rgb = np.divide(rgb, color_factors + 1)
     return rgb
