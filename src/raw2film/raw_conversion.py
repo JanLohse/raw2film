@@ -32,7 +32,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
     return image
 
 
-def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
+def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=True, resolution=None, metadata=None, **kwargs):
     exp_comp = calc_exposure(image, metadata=metadata, **kwargs)
     if "exp_comp" in kwargs:
@@ -89,10 +89,16 @@ def process_image(image, negative_film, frame_width=36, frame_height=24, fast_mo
         image = transform(image)
 
         if sharpness:
+            start = time.time()
             image = effects.film_sharpness(image, negative_film, scale)
+            end = time.time()
+            print(f"{'sharpness':28} {end - start:.4f}s {image.dtype} {image.shape}")
 
         if grain:
-            image = effects.grain(image, negative_film, scale, d_factor=d_factor, **kwargs)
+            start = time.time()
+            image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
+            end = time.time()
+            print(f"{'grain':28} {end - start:.4f}s {image.dtype} {image.shape}")
 
         image = np.clip(image, 0, 1)
         image *= 2 ** 16 - 1

@@ -6,6 +6,7 @@ import cv2 as cv
 import lensfunpy
 import numpy as np
 from lensfunpy import util as lensfunpy_util
+from spectral_film_lut.utils import multi_channel_interp
 
 
 def lens_correction(rgb, metadata, cam, lens):
@@ -185,9 +186,9 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     noise = gaussian_noise(rgb.shape)
-    noise[..., 0] *= np.interp(rgb[..., 0], (stock.red_rms_density + 0.25) / d_factor, stock.red_rms * std_factor)
-    noise[..., 1] *= np.interp(rgb[..., 1], (stock.green_rms_density + 0.25) / d_factor, stock.green_rms * std_factor)
-    noise[..., 2] *= np.interp(rgb[..., 2], (stock.blue_rms_density + 0.25) / d_factor, stock.blue_rms * std_factor)
+    xps = [(stock.red_rms_density + 0.25) / d_factor, (stock.green_rms_density + 0.25) / d_factor, (stock.blue_rms_density + 0.25) / d_factor]
+    fps = [stock.red_rms * std_factor, stock.green_rms * std_factor, stock.blue_rms * std_factor]
+    noise *= multi_channel_interp(rgb, xps, fps)
     factor = scale * grain_size * 2 * math.sqrt(math.pi)
     if factor > 1:
         noise = gaussian_blur(noise, scale * grain_size)
