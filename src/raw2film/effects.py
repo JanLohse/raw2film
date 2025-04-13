@@ -1,5 +1,4 @@
 import math
-import time
 from functools import cache
 
 import cv2
@@ -127,8 +126,6 @@ def film_sharpness(rgb, stock, scale):
     size = int(scale // 2)
     if not size % 2:
         size += 1
-    if size < 13:
-        size = 13
 
     kernel = np.zeros((size, size))
     kernel[size // 2, size // 2] = 1
@@ -147,9 +144,13 @@ def film_sharpness(rgb, stock, scale):
     else:
         kernel = mtf_kernel(stock.mtf, frequency, f_shift)
 
-    rgb = cv.filter2D(rgb, ddepth=-1, kernel=kernel)
-
+    if len(kernel.shape) == 2 or size >= 13:
+        rgb = cv.filter2D(rgb, -1, kernel=kernel)
+    elif len(kernel.shape) == 3:
+        for c in range(kernel.shape[-1]):
+            rgb[..., c] = cv2.filter2D(rgb[..., c], -1, kernel[..., c])
     return rgb
+
 
 @njit
 def exponential_blur_kernel(size):
@@ -206,6 +207,7 @@ def apply_halation_inplace(rgb, blured, color_factors):
             for c in range(rgb.shape[2]):
                 rgb[i, j, c] += blured[i, j, c] * color_factors[c]
                 rgb[i, j, c] /= (color_factors[c] + 1.0)
+
 
 def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
              halation_intensity=1, **kwargs):

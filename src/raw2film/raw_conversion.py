@@ -89,22 +89,15 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         image = transform(image)
 
         if sharpness:
-            start = time.time()
             image = effects.film_sharpness(image, negative_film, scale)
-            end = time.time()
-            print(f"{'sharpness':28} {end - start:.4f}s {image.dtype} {image.shape}")
 
         if grain:
-            start = time.time()
             image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
-            end = time.time()
-            print(f"{'grain':28} {end - start:.4f}s {image.dtype} {image.shape}")
 
         image = np.clip(image, 0, 1)
         image *= 2 ** 16 - 1
         image = image.astype(np.uint16)
 
-    start = time.time()
     lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None, **kwargs)
 
     height, width, _ = image.shape
@@ -118,7 +111,5 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
     image = process.stdout.read(width * height * 3)
     process.wait()
     os.remove(lut)
-    end = time.time()
-    print(f"{'lut':28} {end - start:.4f}s")
 
     return np.frombuffer(image, np.uint8).reshape([height, width, 3])
