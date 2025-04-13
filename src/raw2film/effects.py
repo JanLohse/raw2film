@@ -1,4 +1,5 @@
 import math
+import time
 from functools import cache
 
 import cv2
@@ -6,6 +7,7 @@ import cv2 as cv
 import lensfunpy
 import numpy as np
 from lensfunpy import util as lensfunpy_util
+from numba import njit
 from spectral_film_lut.utils import multi_channel_interp
 
 
@@ -149,8 +151,8 @@ def film_sharpness(rgb, stock, scale):
 
     return rgb
 
-
-def exponential_blur(rgb, size):
+@njit
+def exponential_blur_kernel(size):
     radius = size / 2
     size = 2 * math.floor(math.ceil(size) / 2) + 1
     center = math.ceil(size / 2)
@@ -165,7 +167,7 @@ def exponential_blur(rgb, size):
                 kernel[i, j] = (1 / dist) * max((radius - np.sqrt(dist)) / radius, 0)
     kernel /= np.sum(kernel)
 
-    return cv.filter2D(rgb, -1, kernel)
+    return kernel
 
 
 @cache
@@ -186,7 +188,8 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     noise = gaussian_noise(rgb.shape)
-    xps = [(stock.red_rms_density + 0.25) / d_factor, (stock.green_rms_density + 0.25) / d_factor, (stock.blue_rms_density + 0.25) / d_factor]
+    xps = [(stock.red_rms_density + 0.25) / d_factor, (stock.green_rms_density + 0.25) / d_factor,
+           (stock.blue_rms_density + 0.25) / d_factor]
     fps = [stock.red_rms * std_factor, stock.green_rms * std_factor, stock.blue_rms * std_factor]
     noise *= multi_channel_interp(rgb, xps, fps)
     factor = scale * grain_size * 2 * math.sqrt(math.pi)
@@ -196,11 +199,19 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     return rgb
 
 
+@njit
+def apply_halation_inplace(rgb, blured, color_factors):
+    for i in range(rgb.shape[0]):
+        for j in range(rgb.shape[1]):
+            for c in range(rgb.shape[2]):
+                rgb[i, j, c] += blured[i, j, c] * color_factors[c]
+                rgb[i, j, c] /= (color_factors[c] + 1.0)
+
 def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
              halation_intensity=1, **kwargs):
-    blured = exponential_blur(rgb, scale / 4 * halation_size)
+    kernel = exponential_blur_kernel(scale / 4 * halation_size)
+    blured = cv2.filter2D(rgb, -1, kernel)
     color_factors = halation_intensity * np.array([halation_red_factor, halation_green_factor, halation_blue_factor],
                                                   dtype=np.float32)
-    rgb += np.multiply(blured, color_factors)
-    rgb = np.divide(rgb, color_factors + 1)
+    apply_halation_inplace(rgb, blured, color_factors)
     return rgb
