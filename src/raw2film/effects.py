@@ -136,19 +136,15 @@ def film_sharpness(rgb, stock, scale):
     frequency_x, frequency_y = np.meshgrid(frequency, frequency)
     frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
 
-    if hasattr(stock, 'red_mtf') and hasattr(stock, 'green_mtf') and hasattr(stock, 'blue_mtf'):
-        red_kernel = mtf_kernel(stock.red_mtf, frequency, f_shift)
-        green_kernel = mtf_kernel(stock.green_mtf, frequency, f_shift)
-        blue_kernel = mtf_kernel(stock.blue_mtf, frequency, f_shift)
-        kernel = np.dstack((red_kernel, green_kernel, blue_kernel))
-    else:
-        kernel = mtf_kernel(stock.mtf, frequency, f_shift)
+    kernel = np.stack([mtf_kernel(mtf, frequency, f_shift) for mtf in stock.mtf], axis=-1)
 
     if len(kernel.shape) == 2 or size >= 13:
         rgb = cv.filter2D(rgb, -1, kernel=kernel)
     elif len(kernel.shape) == 3:
         for c in range(kernel.shape[-1]):
             rgb[..., c] = cv2.filter2D(rgb[..., c], -1, kernel[..., c])
+    if len(rgb.shape) == 2:
+        rgb = rgb[..., np.newaxis]
     return rgb
 
 
@@ -177,7 +173,6 @@ def gaussian_noise_cache(shape):
 
 
 def gaussian_noise(shape):
-    assert len(shape) == 3
     noise_size = ((max(shape[:2]) + 100) // 1024 + 1) * 1024
     noise_map = gaussian_noise_cache((noise_size, noise_size))
     offsets = np.random.randint([0, 0], [noise_size - shape[0] + 1, noise_size - shape[1] + 1], size=(shape[2], 2))
@@ -189,13 +184,14 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     noise = gaussian_noise(rgb.shape)
-    xps = [(stock.red_rms_density + 0.25) / d_factor, (stock.green_rms_density + 0.25) / d_factor,
-           (stock.blue_rms_density + 0.25) / d_factor]
-    fps = [stock.red_rms * std_factor, stock.green_rms * std_factor, stock.blue_rms * std_factor]
+    xps = [(rms_density + 0.25) / d_factor for rms_density in stock.rms_density]
+    fps = [rms * std_factor for rms in stock.rms_curve]
     noise *= multi_channel_interp(rgb, xps, fps)
     factor = scale * grain_size * 2 * math.sqrt(math.pi)
     if factor > 1:
         noise = gaussian_blur(noise, scale * grain_size)
+        if len(noise.shape) == 2:
+            noise = noise[..., np.newaxis]
     rgb += noise
     return rgb
 
@@ -209,11 +205,22 @@ def apply_halation_inplace(rgb, blured, color_factors):
                 rgb[i, j, c] /= (color_factors[c] + 1.0)
 
 
+@njit
+def apply_halation_bw(rgb, blured, intensity):
+    for i in range(rgb.shape[0]):
+        for j in range(rgb.shape[1]):
+            rgb[i, j] += blured[i, j] * intensity
+            rgb[i, j] /= (intensity + 1.0)
+
+
 def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
              halation_intensity=1, **kwargs):
     kernel = exponential_blur_kernel(scale / 4 * halation_size)
     blured = cv2.filter2D(rgb, -1, kernel)
     color_factors = halation_intensity * np.array([halation_red_factor, halation_green_factor, halation_blue_factor],
                                                   dtype=np.float32)
-    apply_halation_inplace(rgb, blured, color_factors)
+    if rgb.shape[-1] == 1:
+        apply_halation_bw(rgb, blured, color_factors[0])
+    else:
+        apply_halation_inplace(rgb, blured, color_factors)
     return rgb

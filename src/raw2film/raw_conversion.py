@@ -100,6 +100,9 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
 
     lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None, **kwargs)
 
+    if image.shape[-1] == 1:
+        image = image.repeat(3, -1)
+
     height, width, _ = image.shape
     process = run_async(
         ffmpeg.input('pipe:', format='rawvideo', pix_fmt='rgb48', s='{}x{}'.format(width, height)).filter('lut3d',
