@@ -1,4 +1,5 @@
 import math
+import time
 from functools import cache
 
 import cv2
@@ -79,11 +80,6 @@ def crop_image(rgb, zoom=1, aspect=1.5):
         rgb = rgb[x: -x, y: -y, :]
 
     return rgb
-
-
-def gaussian_filter(input, sigma=1.):
-    """Compute gaussian filter"""
-    return cv.GaussianBlur(input, ksize=(0, 0), sigmaX=sigma)
 
 
 def gaussian_blur(rgb, sigma=1.):
@@ -180,18 +176,32 @@ def gaussian_noise(shape):
     return noise
 
 
-def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, **kwargs):
+def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     noise = gaussian_noise(rgb.shape)
     xps = [(rms_density + 0.25) / d_factor for rms_density in stock.rms_density]
     fps = [rms * std_factor for rms in stock.rms_curve]
-    noise *= multi_channel_interp(rgb, xps, fps)
-    factor = scale * grain_size * 2 * math.sqrt(math.pi)
-    if factor > 1:
-        noise = gaussian_blur(noise, scale * grain_size)
+    noise_factors = multi_channel_interp(rgb, xps, fps)
+    grain_size_1 = grain_size * variation * scale
+    grain_size_2 = grain_size / variation * scale
+    factor_1 = grain_size_1 * 2 * math.sqrt(math.pi)
+    factor_2 = grain_size_2 * 2 * math.sqrt(math.pi)
+    if factor_1 > 1:
+        if factor_2 > 1 and variation > 1:
+            max_noise = noise_factors.max(axis=(0, 1))
+            min_noise = noise_factors.min(axis=(0, 1))
+            noise_2 = gaussian_blur(noise * (min_noise / (min_noise - max_noise)) * (noise_factors - max_noise),
+                                    grain_size_2)
+            noise_1 = gaussian_blur(noise * (max_noise / (max_noise - min_noise)) * (noise_factors - min_noise),
+                                    grain_size_1)
+            noise = noise_1 + noise_2
+        else:
+            noise = gaussian_blur(noise * noise_factors, grain_size_1)
         if len(noise.shape) == 2:
             noise = noise[..., np.newaxis]
+    else:
+        noise *= noise_factors
     rgb += noise
     return rgb
 

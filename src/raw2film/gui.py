@@ -1,4 +1,5 @@
 import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cache, partial
 from functools import lru_cache
@@ -145,7 +146,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.full_preview)
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier", "red_light": 0,
-                                "green_light": 0, "blue_light": 0, "white_point": 1, "halation": True,
+                                "green_light": 0, "blue_light": 0, "halation": True,
                                 "sharpness": True, "grain": True, "format": "135", "grain_size": 0.002,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
                                 "halation_intensity": 1}
@@ -172,7 +173,7 @@ class MainWindow(QMainWindow):
 
         self.lens_correction = QCheckBox()
         add_option(self.lens_correction, "Lens correction:", self.dflt_img_params["lens_correction"],
-                   self.lens_correction.setChecked)
+                   self.lens_correction.setChecked, hideable=True)
         self.camera_selector = QComboBox()
         self.camera_selector.setMaximumWidth(180)
         self.camera_selector.addItems(self.cameras.keys())
@@ -231,13 +232,13 @@ class MainWindow(QMainWindow):
         self.format_selector = QComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
         add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText)
-        self.width = QLineEdit()
+        self.frame_width = QLineEdit()
         regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
-        self.width.setValidator(QRegularExpressionValidator(regex))
-        add_option(self.width, "Width:", "36", self.width.setText, hideable=True)
-        self.height = QLineEdit()
-        self.height.setValidator(QRegularExpressionValidator(regex))
-        add_option(self.height, "Height:", "24", self.height.setText, hideable=True)
+        self.frame_width.setValidator(QRegularExpressionValidator(regex))
+        add_option(self.frame_width, "Width:", "36", self.frame_width.setText, hideable=True)
+        self.frame_height = QLineEdit()
+        self.frame_height.setValidator(QRegularExpressionValidator(regex))
+        add_option(self.frame_height, "Height:", "24", self.frame_height.setText, hideable=True)
 
         self.grain_size = Slider()
         self.grain_size.setMinMaxTicks(1, 4, 1, 10)
@@ -290,15 +291,14 @@ class MainWindow(QMainWindow):
         add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"],
                    self.projector_kelvin.setValue, hideable=True)
 
-        self.white_point = Slider()
-        self.white_point.setMinMaxTicks(.5, 2., 1, 20)
-        add_option(self.white_point, "White point:", self.dflt_prf_params["white_point"], self.white_point.setValue,
-                   hideable=True)
-
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
         QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(self.rotation.increase)
         QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(self.rotation.decrease)
+        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(self.pre_flash.increase)
+        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(self.pre_flash.decrease)
+        QShortcut(QKeySequence("Ctrl+Shift+Up"), self).activated.connect(lambda: self.pre_flash.increase(5))
+        QShortcut(QKeySequence("Ctrl+Shift+Down"), self).activated.connect(lambda: self.pre_flash.decrease(5))
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
         QShortcut(QKeySequence("Ctrl++"), self).activated.connect(lambda: self.zoom.increase(5))
         QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(lambda: self.zoom.decrease(5))
@@ -339,7 +339,6 @@ class MainWindow(QMainWindow):
         self.red_light.valueChanged.connect(lambda x: self.light_changed(x, "red_light"))
         self.green_light.valueChanged.connect(lambda x: self.light_changed(x, "green_light"))
         self.blue_light.valueChanged.connect(lambda x: self.light_changed(x, "blue_light"))
-        self.white_point.valueChanged.connect(lambda x: self.profile_changed(x, "white_point"))
         self.lens_correction.stateChanged.connect(lambda x: self.setting_changed(x, "lens_correction"))
         self.full_preview.triggered.connect(lambda: self.parameter_changed())
         self.halation.stateChanged.connect(lambda x: self.profile_changed(x, "halation"))
@@ -357,8 +356,8 @@ class MainWindow(QMainWindow):
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
-        self.width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width", crop_zoom=True))
-        self.height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height", crop_zoom=True))
+        self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width", crop_zoom=True))
+        self.frame_height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height", crop_zoom=True))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
@@ -480,10 +479,10 @@ class MainWindow(QMainWindow):
             self.profile_selector.addItem(text)
 
     def format_changed(self, format):
-        if format != "Custom":
+        if format != "Custom" and not self.loading:
             width, height = data.FORMATS[format]
-            self.width.setText(str(width))
-            self.height.setText(str(height))
+            self.frame_width.setText(str(width))
+            self.frame_height.setText(str(height))
 
     def hide_controls(self):
         if self.advanced_controls.isChecked():
@@ -595,7 +594,7 @@ class MainWindow(QMainWindow):
                 return
             else:
                 value = float(value)
-            width, height = self.width.text(), self.height.text()
+            width, height = self.frame_width.text(), self.frame_height.text()
             if width and height:
                 dimensions = (float(width), float(height))
                 if dimensions in data.FORMATS.values():
@@ -669,7 +668,6 @@ class MainWindow(QMainWindow):
         self.red_light.setValue(profile_params["red_light"])
         self.green_light.setValue(profile_params["green_light"])
         self.blue_light.setValue(profile_params["blue_light"])
-        self.white_point.setValue(profile_params["white_point"])
         self.halation.setChecked(profile_params["halation"])
         self.halation_size.setValue(profile_params["halation_size"])
         self.halation_green.setValue(profile_params["halation_green_factor"])
@@ -677,9 +675,14 @@ class MainWindow(QMainWindow):
         self.sharpness.setChecked(profile_params["sharpness"])
         self.grain.setChecked(profile_params["grain"])
         if "frame_width" in profile_params:
-            self.width.setText(str(profile_params["frame_width"]))
+            self.frame_width.setText(str(profile_params["frame_width"]))
         if "frame_height" in profile_params:
-            self.height.setText(str(profile_params["frame_height"]))
+            self.frame_height.setText(str(profile_params["frame_height"]))
+        if "frame_width" in profile_params and "frame_height" in profile_params:
+            dimensions = (profile_params["frame_width"], profile_params["frame_height"])
+            if dimensions in data.FORMATS.values():
+                format_name = list(data.FORMATS.keys())[list(data.FORMATS.values()).index(dimensions)]
+                self.format_selector.setCurrentText(format_name)
         self.grain_size.setValue(profile_params["grain_size"] * 1000)
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
@@ -687,7 +690,6 @@ class MainWindow(QMainWindow):
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
         self.loading = False
-        self.format_selector.setCurrentText(profile_params["format"])
         self.active = True
         self.parameter_changed()
 
@@ -772,7 +774,7 @@ class MainWindow(QMainWindow):
 
         return image_params
 
-    def save_image(self, src, filename, add_year=False, add_date=False, move_raw=False, quality=100, close=False,
+    def save_image(self, src, filename, add_year=False, add_date=False, move_raw=0, quality=100, close=False,
                    resolution=None, **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
@@ -818,7 +820,10 @@ class MainWindow(QMainWindow):
             if not os.path.exists(path + 'RAW'):
                 os.makedirs(path + 'RAW')
             self.save_settings_directory(path + 'RAW', src=src_short)
-            os.replace(src, path + 'RAW/' + src.split('/')[-1])
+            if move_raw == 2:
+                os.replace(src, path + 'RAW/' + src.split('/')[-1])
+            elif move_raw == 1 and not os.path.isfile(path + 'RAW/' + src.split('/')[-1]):
+                shutil.copy2(src, path + 'RAW/' + src.split('/')[-1])
         imageio.imwrite(path + filename, image, quality=quality, format='.jpg')
         add_metadata(path + filename, metadata, exp_comp=processing_args['exp_comp'])
         if close:
@@ -889,6 +894,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(sort_by_date)
 
         move_raw = QCheckBox("Move raw file to subfolder")
+        move_raw.setTristate(True)
+        move_raw.setToolTip("Checked: move file \nPartially checked: copy file\nUnchecked: do nothing to raw file")
         layout.addWidget(move_raw)
 
         close_checkbox = QCheckBox("Close images after export")
@@ -928,7 +935,7 @@ class MainWindow(QMainWindow):
                 resolution = int(resolution_field.text())
             else:
                 resolution = None
-            kwargs = {"move_raw": move_raw.isChecked(), "add_year": sort_by_year.isChecked(),
+            kwargs = {"move_raw": move_raw.checkState().value, "add_year": sort_by_year.isChecked(),
                       "close": close_checkbox.isChecked() or move_raw.isChecked(),
                       "quality": int(quality_slider.getValue()), "add_date": sort_by_date.isChecked(),
                       "resolution": resolution, "max_workers": int(thread_slider.getValue())}

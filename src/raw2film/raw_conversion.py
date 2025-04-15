@@ -5,10 +5,11 @@ import cv2 as cv
 import ffmpeg
 import numpy as np
 import rawpy
-from raw2film import effects
-from raw2film.color_processing import calc_exposure
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import create_lut, run_async
+
+from raw2film import effects
+from raw2film.color_processing import calc_exposure
 
 
 def raw_to_linear(src, half_size=True):

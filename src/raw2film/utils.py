@@ -4,6 +4,8 @@ from pathlib import Path
 from shutil import copy
 
 import exiftool
+import numpy as np
+
 from raw2film import data
 
 
@@ -161,3 +163,19 @@ def add_metadata(src, metadata, exp_comp):
     metadata['EXIF:ExposureCompensation'] = exp_comp
     with exiftool.ExifToolHelper() as et:
         et.set_tags([src], metadata, '-overwrite_original')
+
+
+# TODO: integrate
+def add_canvas(image, output_ratio, output_scale, output_color):
+    """Adds background canvas to image."""
+    img_ratio = image.shape[1] / image.shape[0]
+    if img_ratio > output_ratio:
+        output_resolution = (
+            int(image.shape[1] / output_ratio * output_scale), int(image.shape[1] * output_scale))
+    else:
+        output_resolution = (
+            int(image.shape[0] * output_scale), int(image.shape[0] * output_ratio * output_scale))
+    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    canvas = np.tensordot(np.ones(output_resolution), output_color, axes=0)
+    canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
+    return canvas.astype(dtype='uint8')
