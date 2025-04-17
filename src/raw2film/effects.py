@@ -1,14 +1,10 @@
-import math
-import time
 from functools import cache
 
 import cv2
 import cv2 as cv
 import lensfunpy
-import numpy as np
 from lensfunpy import util as lensfunpy_util
-from numba import njit
-from spectral_film_lut.utils import multi_channel_interp
+from spectral_film_lut.utils import *
 
 
 def lens_correction(rgb, metadata, cam, lens):
@@ -84,7 +80,10 @@ def crop_image(rgb, zoom=1, aspect=1.5):
 
 def gaussian_blur(rgb, sigma=1.):
     """Applies gaussian blur per channel of rgb image."""
-    return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
+    if cuda_available:
+        return xdimage.gaussian_filter(rgb, sigma=(sigma, sigma, 0), mode='constant')
+    else:
+        return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
 
 
 def mtf_curve(mtf_data, lowest=1, highest=200):
@@ -115,7 +114,7 @@ def mtf_kernel(mtf_data, frequency, f_shift):
     shift = f_shift * factors
     kernel = np.fft.ifft2(np.fft.ifftshift(shift)).real
     kernel /= np.sum(kernel)
-    return kernel
+    return xp.asarray(kernel)
 
 
 def film_sharpness(rgb, stock, scale):
@@ -129,18 +128,18 @@ def film_sharpness(rgb, stock, scale):
     f_shift = np.fft.fftshift(f)
 
     frequency = np.abs(np.fft.fftfreq(size, 1 / scale)[:, None])
-    frequency_x, frequency_y = np.meshgrid(frequency, frequency)
+    frequency_x, frequency_y = np.meshgrid(frequency.reshape(-1), frequency.reshape(-1))
     frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
 
-    kernel = np.stack([mtf_kernel(mtf, frequency, f_shift) for mtf in stock.mtf], axis=-1)
+    kernel = xp.stack([mtf_kernel(mtf, frequency, f_shift) for mtf in stock.mtf], axis=-1, dtype=xp.float32)
 
-    if len(kernel.shape) == 2 or size >= 13:
-        rgb = cv.filter2D(rgb, -1, kernel=kernel)
+    if len(kernel.shape) == 2 or size >= 13 or cuda_available:
+        rgb = convolution_filter(rgb, kernel, padding=True)
     elif len(kernel.shape) == 3:
         for c in range(kernel.shape[-1]):
             rgb[..., c] = cv2.filter2D(rgb[..., c], -1, kernel[..., c])
     if len(rgb.shape) == 2:
-        rgb = rgb[..., np.newaxis]
+        rgb = rgb[..., xp.newaxis]
     return rgb
 
 
@@ -165,14 +164,18 @@ def exponential_blur_kernel(size):
 
 @cache
 def gaussian_noise_cache(shape):
-    return np.random.default_rng().standard_normal(shape, dtype=np.float32)
+    return xp.random.default_rng().standard_normal(shape, dtype=np.float32)
 
 
 def gaussian_noise(shape):
     noise_size = ((max(shape[:2]) + 100) // 1024 + 1) * 1024
     noise_map = gaussian_noise_cache((noise_size, noise_size))
-    offsets = np.random.randint([0, 0], [noise_size - shape[0] + 1, noise_size - shape[1] + 1], size=(shape[2], 2))
-    noise = np.stack([noise_map[x:shape[0] + x, y:shape[1] + y] for x, y in offsets], axis=-1)
+    if cuda_available:
+        offsets = xp.stack(
+            [xp.random.randint(0, x, size=shape[2]) for x in [noise_size - shape[0] + 1, noise_size - shape[1] + 1]]).T
+    else:
+        offsets = xp.random.randint([0, 0], [noise_size - shape[0] + 1, noise_size - shape[1] + 1], size=(shape[2], 2))
+    noise = xp.stack([noise_map[x:shape[0] + x, y:shape[1] + y] for x, y in offsets], axis=-1)
     return noise
 
 
@@ -199,7 +202,7 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, **kwargs
         else:
             noise = gaussian_blur(noise * noise_factors, grain_size_1)
         if len(noise.shape) == 2:
-            noise = noise[..., np.newaxis]
+            noise = noise[..., xp.newaxis]
     else:
         noise *= noise_factors
     rgb += noise
@@ -223,13 +226,30 @@ def apply_halation_bw(rgb, blured, intensity):
             rgb[i, j] /= (intensity + 1.0)
 
 
+def convolution_filter(rgb, kernel, padding=False):
+    if not cuda_available:
+        return cv2.filter2D(rgb, -1, kernel)
+    else:
+        if len(kernel.shape) == 2:
+            kernel = kernel[..., xp.newaxis]
+        if padding:
+            pad_h = kernel.shape[0] // 2
+            pad_w = kernel.shape[1] // 2
+            rgb = xp.pad(rgb, ((pad_h, pad_h), (pad_w, pad_w), (0, 0)), 'reflect')
+            return signal.oaconvolve(rgb, kernel, mode='valid', axes=(0, 1))
+        else:
+            return signal.oaconvolve(rgb, kernel, mode='same', axes=(0, 1))
+
+
 def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
              halation_intensity=1, **kwargs):
-    kernel = exponential_blur_kernel(scale / 4 * halation_size)
-    blured = cv2.filter2D(rgb, -1, kernel)
-    color_factors = halation_intensity * np.array([halation_red_factor, halation_green_factor, halation_blue_factor],
+    kernel = xp.asarray(exponential_blur_kernel(scale / 4 * halation_size), dtype=xp.float32)
+    blured = convolution_filter(rgb, kernel)
+    color_factors = halation_intensity * xp.array([halation_red_factor, halation_green_factor, halation_blue_factor],
                                                   dtype=np.float32)
-    if rgb.shape[-1] == 1:
+    if cuda_available:
+        rgb = (rgb + blured * color_factors) / (color_factors + 1)
+    elif rgb.shape[-1] == 1:
         apply_halation_bw(rgb, blured, color_factors[0])
     else:
         apply_halation_inplace(rgb, blured, color_factors)

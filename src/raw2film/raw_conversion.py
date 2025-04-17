@@ -1,12 +1,8 @@
-import os
-import time
-
 import cv2 as cv
 import ffmpeg
-import numpy as np
 import rawpy
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.utils import create_lut, run_async
+from spectral_film_lut.utils import *
 
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
@@ -34,7 +30,11 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
-                  halation=True, sharpness=True, grain=True, resolution=None, metadata=None, **kwargs):
+                  halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
+                  **kwargs):
+    if measure_time:
+        kwargs['measure_time'] = True
+        start = time.time()
     exp_comp = calc_exposure(image, metadata=metadata, **kwargs)
     if "exp_comp" in kwargs:
         kwargs["exp_comp"] += exp_comp
@@ -78,6 +78,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         kwargs["gamma"] = 4
         kwargs["lut_size"] = 17
     else:
+        image = xp.asarray(image)
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
         if halation:
@@ -90,17 +91,24 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         image = transform(image)
 
         if sharpness:
+            start_sub = time.time()
             image = effects.film_sharpness(image, negative_film, scale)
+            if measure_time:
+                print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
         if grain:
+            start_sub = time.time()
             image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
+            if measure_time:
+                print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-        image = np.clip(image, 0, 1)
+        image = xp.clip(image, 0, 1)
         image *= 2 ** 16 - 1
-        image = image.astype(np.uint16)
+        image = to_numpy(image.astype(np.uint16))
 
     lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None, **kwargs)
 
+    start_sub = time.time()
     if image.shape[-1] == 1:
         image = image.repeat(3, -1)
 
@@ -115,5 +123,8 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
     image = process.stdout.read(width * height * 3)
     process.wait()
     os.remove(lut)
+    if measure_time:
+        print(f"{'lut':28} {time.time() - start_sub:.4f}s")
+        print(f"{'total':28} {time.time() - start:.4f}s")
 
     return np.frombuffer(image, np.uint8).reshape([height, width, 3])
