@@ -1,4 +1,4 @@
-import numpy as np
+from spectral_film_lut.utils import *
 
 
 def XYZ_to_kelvin(XYZ):
@@ -59,18 +59,51 @@ def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
     return exp_comp
 
 
-def gamut_compression(rgb, adaption=0.2):
-    # compute achromaticity (max rgb value per pixel)
-    achromatic = np.repeat(np.max(rgb, axis=2)[:, :, np.newaxis], 3, axis=2)
+def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
+    """
+    Convert from XYZ (D65) to sRGB using CuPy.
 
-    # compute distance to gamut
-    distance = (achromatic - rgb) / achromatic
+    Parameters:
+        XYZ (cp.ndarray): Input array of shape (..., 3), dtype float32 or float64.
+        output_uint8 (bool): If True, returns output in 0–255 uint8 range.
+        clip (bool): If True, clips RGB values to [0, 1] before gamma.
 
-    # smoothing parameter is a
-    # precompute smooth compression function
-    x = np.linspace(1 - adaption, 1 + adaption, 16)
-    y = 1 - adaption + (x - 1 + adaption) / (np.sqrt(1 + ((x - 1) / adaption + 1) ** 2))
-    # compress distance
-    distance = np.interp(distance, np.concatenate((np.array([0]), x)), np.concatenate((np.array([0]), y)))
+    Returns:
+        cp.ndarray: sRGB values, same shape as XYZ (or uint8 if output_uint8 is True).
+    """
+    # XYZ to linear RGB matrix (sRGB, D65)
+    if M is None:
+        M = xp.array([[3.2406, -1.5372, -0.4986],
+                      [-0.9689, 1.8758,  0.0415],
+                      [0.0557, -0.2040,  1.0570]],
+            dtype=XYZ.dtype)
 
-    rgb = achromatic - distance * achromatic
+    # Linear RGB
+    if apply_matrix:
+        RGB_linear = XYZ @ M.T
+    else:
+        RGB_linear = XYZ
+
+    # Optional clipping before gamma (standard practice)
+    if clip:
+        RGB_linear = xp.clip(RGB_linear, 0.0, 1.0)
+
+    # Apply sRGB gamma encoding
+    a = 0.055
+    threshold = 0.0031308
+    RGB = xp.where(RGB_linear <= threshold, 12.92 * RGB_linear, (1 + a) * xp.power(RGB_linear, 1 / 2.4) - a)
+
+    # Optional output in uint8
+    if output_uint8:
+        RGB = xp.clip(RGB, 0.0, 1.0) * 255
+        RGB = RGB.get().astype(xp.uint8)
+
+    return RGB
+
+
+def xyz_to_displayP3(XYZ, **kwargs):
+    M = xp.array([[2.493496911941425, -0.9313836179191239, -0.40271078445071684],
+        [-0.8294889695615747, 1.7626640603183463, 0.023624685841943577],
+        [0.03584583024378447, -0.07617238926804182, 0.9568845240076872]], dtype=XYZ.dtype)
+
+    return xyz_to_srgb(XYZ, M, **kwargs)
