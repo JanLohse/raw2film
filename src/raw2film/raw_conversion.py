@@ -30,7 +30,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
-                  **kwargs):
+                  full_cuda=True, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -104,13 +104,13 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
             if measure_time:
                 print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-        if not cuda_available:
+        if not cuda_available or not full_cuda:
             image = xp.clip(image, 0, 1)
             image *= 2 ** 16 - 1
-            image = to_numpy(image.astype(xp.uint16))
+            image = to_numpy(image).astype(xp.uint16)
 
     start_sub = time.time()
-    if cuda_available:
+    if cuda_available and full_cuda:
         if "output_colourspace" in kwargs and kwargs["output_colourspace"] == "Display P3":
             output_transform = xyz_to_displayP3
         else:

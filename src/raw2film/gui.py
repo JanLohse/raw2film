@@ -803,7 +803,7 @@ class MainWindow(QMainWindow):
                     processing_args["lens"] = None
             image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                             self.lenses[processing_args["lens"]])
-        image = process_image(image, fast_mode=False, **processing_args)
+        image = process_image(image, fast_mode=False, full_cuda=False, **processing_args)
         path = "/".join(filename.split("/")[:-1])
         if path:
             path += "/"
