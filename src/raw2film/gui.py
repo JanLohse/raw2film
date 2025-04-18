@@ -1,5 +1,6 @@
 import json
 import shutil
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cache, partial
 from functools import lru_cache
@@ -25,6 +26,9 @@ class MultiWorker(QObject):
     finished = pyqtSignal()
 
     def run_tasks(self, func, tasks, max_workers=None, **kwargs):
+        semaphore = threading.Semaphore()
+        kwargs["semaphore"] = semaphore
+
         def func_wrapper(i, *args, **kwargs):
             if i < max_workers:
                 time.sleep(i)
@@ -775,7 +779,7 @@ class MainWindow(QMainWindow):
         return image_params
 
     def save_image(self, src, filename, add_year=False, add_date=False, move_raw=0, quality=100, close=False,
-                   resolution=None, **kwargs):
+                   resolution=None, semaphore=None, **kwargs):
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -784,6 +788,8 @@ class MainWindow(QMainWindow):
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
         processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        if semaphore is not None:
+            processing_args["semaphore"] = semaphore
         if resolution is not None:
             processing_args["resolution"] = resolution
         if "print_film" in processing_args and processing_args["print_film"] is not None:

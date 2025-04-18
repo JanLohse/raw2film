@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import cv2 as cv
 import ffmpeg
 import rawpy
@@ -30,7 +32,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
-                  full_cuda=True, **kwargs):
+                  full_cuda=True, semaphore=None, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -80,34 +82,36 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
             kwargs["gamma"] = 4
             kwargs["lut_size"] = 17
     else:
-        image = xp.asarray(image)
-        scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
+        lock = semaphore if semaphore is not None and cuda_available else nullcontext()
+        with lock:
+            image = xp.asarray(image)
+            scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
-        if halation:
-            halation_func = lambda x: effects.halation(x, scale, **kwargs)
-        else:
-            halation_func = None
+            if halation:
+                halation_func = lambda x: effects.halation(x, scale, **kwargs)
+            else:
+                halation_func = None
 
-        transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None,
-                                                               halation_func=halation_func, **kwargs)
-        image = transform(image)
+            transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None,
+                                                                   halation_func=halation_func, **kwargs)
+            image = transform(image)
 
-        if sharpness:
-            start_sub = time.time()
-            image = effects.film_sharpness(image, negative_film, scale)
-            if measure_time:
-                print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
+            if sharpness:
+                start_sub = time.time()
+                image = effects.film_sharpness(image, negative_film, scale)
+                if measure_time:
+                    print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-        if grain:
-            start_sub = time.time()
-            image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
-            if measure_time:
-                print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
+            if grain:
+                start_sub = time.time()
+                image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
+                if measure_time:
+                    print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-        if not cuda_available or not full_cuda:
-            image = xp.clip(image, 0, 1)
-            image *= 2 ** 16 - 1
-            image = to_numpy(image).astype(xp.uint16)
+            if not cuda_available or not full_cuda:
+                image = xp.clip(image, 0, 1)
+                image *= 2 ** 16 - 1
+                image = to_numpy(image).astype(xp.uint16)
 
     start_sub = time.time()
     if cuda_available and full_cuda:
