@@ -212,6 +212,9 @@ class ImageBar(QScrollArea):
     def get_highlighted(self):
         return {label.image_path for label in self.highlighted_labels}
 
+    def get_all(self):
+        return {label.image_path for label in self.image_labels}
+
     def close_labels(self, labels):
         if self.selected_label is not None:
             new_selected = self.image_labels.index(self.selected_label)

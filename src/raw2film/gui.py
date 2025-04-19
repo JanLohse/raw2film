@@ -12,33 +12,47 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.utils import *
-
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 
 
 class MultiWorker(QObject):
     progress = pyqtSignal(str)
     finished = pyqtSignal()
 
+    def __init__(self):
+        super().__init__()
+        self.cancel_event = threading.Event()
+
     def run_tasks(self, func, tasks, max_workers=None, **kwargs):
-        semaphore = threading.Semaphore()
-        kwargs["semaphore"] = semaphore
+        semaphore = threading.Semaphore(1)
+        kwargs['semaphore'] = semaphore
+        kwargs['cancel_event'] = self.cancel_event  # Pass cancel flag to each task
 
         def func_wrapper(i, *args, **kwargs):
+            if self.cancel_event.is_set():
+                return "Cancelled"
+
             if i < max_workers:
                 time.sleep(i)
             return func(*args, **kwargs)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(func_wrapper, i, *task, **kwargs) for i, task in enumerate(tasks)]
+            futures = [executor.submit(func_wrapper, i, *task, **kwargs)
+                       for i, task in enumerate(tasks) if not self.cancel_event.is_set()]
+
             for future in as_completed(futures):
+                if self.cancel_event.is_set():
+                    break
                 self.progress.emit(future.result())
 
+        self.finished.emit()
+
+    def cancel(self):
+        self.cancel_event.set()
         self.finished.emit()
 
 
@@ -397,8 +411,6 @@ class MainWindow(QMainWindow):
 
         self.hide_controls()
 
-        self.filenames = None
-
         self.image_params = {}
         self.profile_params = {}
 
@@ -507,7 +519,6 @@ class MainWindow(QMainWindow):
                                                      filter=f"RAW (*{' *'.join(data.EXTENSION_LIST)})")
 
         if ok:
-            self.filenames = {filename.split("/")[-1]: filename for filename in filenames}
             for folder in set(["/".join(filename.split("/")[:-1]) for filename in filenames]):
                 self.load_settings_directory(folder)
             self.image_bar.clear_images()
@@ -517,10 +528,9 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
         if folder:
             self.load_settings_directory(folder)
-            self.filenames = {filename.split("/")[-1]: folder + "/" + filename for filename in os.listdir(folder) if
-                              filename.lower().endswith(data.EXTENSION_LIST)}
+            filenames = [folder + "/" + filename for filename in os.listdir(folder) if filename.lower().endswith(data.EXTENSION_LIST)]
             self.image_bar.clear_images()
-            self.image_bar.load_images(self.filenames.values())
+            self.image_bar.load_images(filenames)
 
     def load_image(self, src, **kwargs):
         self.start_worker(self.load_image_process, src=src)
@@ -538,7 +548,8 @@ class MainWindow(QMainWindow):
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = self.profile_selector.currentText()
         self.load_image_params(src_short)
-        self.update_preview(src)
+        if self.active:
+            self.update_preview(src)
 
     @cache
     def load_metadata(self, src):
@@ -846,10 +857,15 @@ class MainWindow(QMainWindow):
             self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
     def save_multiple_process(self, folder, filenames, **kwargs):
+        self.active=False
+        if cuda_available:
+            xp.get_default_memory_pool().free_all_blocks()
+            xp.get_default_pinned_memory_pool().free_all_blocks()
         self.task_count = len(filenames)
         self.progress_dialog = QProgressDialog("Starting export...", "Cancel", 0, self.task_count, self)
         self.progress_dialog.setWindowTitle("Export")
-        self.progress_dialog.setAutoClose(True)
+        self.progress_dialog.setAutoClose(False)
+        self.progress_dialog.setAutoReset(False)
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
@@ -857,12 +873,12 @@ class MainWindow(QMainWindow):
 
         self.thread = QThread()
         self.worker = MultiWorker()
+        self.progress_dialog.canceled.connect(self.worker.cancel)
         self.worker.moveToThread(self.thread)
 
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.tasks_finished)
         tasks = [(filename, folder + "/" + filename.split("/")[-1].split(".")[0]) for filename in filenames]
-        # 👇 Pass parameters using functools.partial
         self.thread.started.connect(partial(self.worker.run_tasks, self.save_image, tasks, **kwargs))
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -877,7 +893,13 @@ class MainWindow(QMainWindow):
         self.progress_dialog.setLabelText(f"{value} ({self.tasks_done}/{self.task_count})")
 
     def tasks_finished(self):
-        self.progress_dialog.setValue(self.progress_dialog.maximum())
+        self.active = True
+        self.progress_dialog.close()
+        if cuda_available:
+            xp.get_default_memory_pool().free_all_blocks()
+            xp.get_default_pinned_memory_pool().free_all_blocks()
+        if self.image_bar.current_image() is not None:
+            self.load_image(self.image_bar.current_image())
 
     def save_image_setting_dialog(self):
         dialog = QDialog(self)
@@ -905,7 +927,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(move_raw)
 
         close_checkbox = QCheckBox("Close images after export")
-        move_raw.stateChanged.connect(lambda x: close_checkbox.setEnabled(not bool(x)))
+        move_raw.stateChanged.connect(lambda x: close_checkbox.setEnabled(x != 2))
         move_raw.setChecked(True)
         close_checkbox.setChecked(True)
         layout.addWidget(close_checkbox)
@@ -942,7 +964,7 @@ class MainWindow(QMainWindow):
             else:
                 resolution = None
             kwargs = {"move_raw": move_raw.checkState().value, "add_year": sort_by_year.isChecked(),
-                      "close": close_checkbox.isChecked() or move_raw.isChecked(),
+                      "close": close_checkbox.isChecked() or move_raw.checkState().value == 2,
                       "quality": int(quality_slider.getValue()), "add_date": sort_by_date.isChecked(),
                       "resolution": resolution, "max_workers": int(thread_slider.getValue())}
             return True, kwargs
@@ -950,14 +972,14 @@ class MainWindow(QMainWindow):
             return False, {}
 
     def save_all_images(self):
-        if not self.filenames or self.filenames is None:
+        if not self.image_bar.get_all():
             return
         ok, kwargs = self.save_image_setting_dialog()
 
         if ok:
             folder = QFileDialog.getExistingDirectory(self)
             if folder:
-                self.save_multiple_process(folder=folder, filenames=self.filenames.values(), **kwargs)
+                self.save_multiple_process(folder=folder, filenames=self.image_bar.get_all(), **kwargs)
 
     def save_selected_images(self):
         if not self.image_bar.get_highlighted():
