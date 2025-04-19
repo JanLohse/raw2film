@@ -5,6 +5,7 @@ import ffmpeg
 import rawpy
 from raw2film import effects
 from raw2film.color_processing import calc_exposure, xyz_to_srgb, xyz_to_displayP3
+from raw2film.effects import add_canvas, add_canvas_uniform
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import *
 
@@ -32,7 +33,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
-                  full_cuda=True, semaphore=None, **kwargs):
+                  full_cuda=True, semaphore=None, canvas_mode="No", **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -61,8 +62,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         image = image.astype(xp.float32) / 65535
         mode = 'print'
 
-    if not fast_mode:
-        image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
+    image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
 
     if resolution is not None:
         h, w = image.shape[:2]
@@ -92,7 +92,8 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
             else:
                 halation_func = None
 
-            transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative', input_colourspace=None,
+            transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative',
+                                                                   input_colourspace=None,
                                                                    halation_func=halation_func, **kwargs)
             image = transform(image)
 
@@ -120,7 +121,8 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         else:
             output_transform = xyz_to_srgb
         transform, _ = FilmSpectral.generate_conversion(negative_film, print_film, mode=mode, input_colourspace=None,
-                                                        output_transform=output_transform, matrix_method=False, **kwargs)
+                                                        output_transform=output_transform, matrix_method=False,
+                                                        **kwargs)
         image = transform(image)
     else:
         lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None, **kwargs)
@@ -143,5 +145,22 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
     if measure_time:
         print(f"{'lut':28} {time.time() - start_sub:.4f}s")
         print(f"{'total':28} {time.time() - start:.4f}s")
+
+    if canvas_mode and canvas_mode is not None and canvas_mode != "No":
+        if "white" in canvas_mode:
+            kwargs["canvas_color"] = [255, 255, 255]
+        elif "black" in canvas_mode:
+            kwargs["canvas_color"] = [0, 0, 0]
+        else:
+            kwargs["canvas_color"] = [128, 128, 128]
+        if "canvas_scale" not in kwargs:
+            kwargs["canvas_scale"] = 1
+        if "Proportional" in canvas_mode:
+            kwargs["canvas_ratio"] = image.shape[1] / image.shape[0]
+            image = add_canvas(image, **kwargs)
+        elif "Fixed" in canvas_mode and "canvas_ratio" in kwargs:
+            image = add_canvas(image, **kwargs)
+        elif "Uniform" in canvas_mode:
+            image = add_canvas_uniform(image, **kwargs)
 
     return image

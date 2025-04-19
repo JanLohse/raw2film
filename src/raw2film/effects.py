@@ -254,3 +254,28 @@ def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green
     else:
         apply_halation_inplace(rgb, blured, color_factors)
     return rgb
+
+
+def add_canvas(image, canvas_ratio, canvas_scale, canvas_color, **kwargs):
+    """Adds background canvas to image."""
+    img_ratio = image.shape[1] / image.shape[0]
+    if img_ratio > canvas_ratio:
+        output_resolution = (
+            int(image.shape[1] / canvas_ratio * canvas_scale), int(image.shape[1] * canvas_scale))
+    else:
+        output_resolution = (
+            int(image.shape[0] * canvas_scale), int(image.shape[0] * canvas_ratio * canvas_scale))
+    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
+    canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
+    return canvas.astype(dtype='uint8')
+
+def add_canvas_uniform(image, canvas_scale, canvas_color, **kwargs):
+    """Adds background canvas to image."""
+    side_length = max(image.shape[:2])
+    border_size = int(side_length * (canvas_scale - 1))
+    output_resolution = (image.shape[0] + border_size, image.shape[1] + border_size)
+    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
+    canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
+    return canvas.astype(dtype='uint8')

@@ -169,7 +169,8 @@ class MainWindow(QMainWindow):
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
                                 "halation_intensity": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
-                                "profile": "Default", "lens_correction": True, "pre_flash": -4}
+                                "profile": "Default", "lens_correction": True, "pre_flash": -4, "canvas_mode": "No",
+                                "canvas_scale": 1, "canvas_ratio": 0.8}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -250,13 +251,22 @@ class MainWindow(QMainWindow):
         self.format_selector = QComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
         add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText)
+
+        self.frame_size = QWidget()
+        frame_layout = QHBoxLayout()
         self.frame_width = QLineEdit()
         regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
         self.frame_width.setValidator(QRegularExpressionValidator(regex))
-        add_option(self.frame_width, "Width:", "36", self.frame_width.setText, hideable=True)
+        self.frame_width.setFixedWidth(100)
         self.frame_height = QLineEdit()
         self.frame_height.setValidator(QRegularExpressionValidator(regex))
-        add_option(self.frame_height, "Height:", "24", self.frame_height.setText, hideable=True)
+        self.frame_height.setFixedWidth(100)
+        frame_layout.addWidget(self.frame_width)
+        frame_layout.addWidget(self.frame_height)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        self.frame_size.setLayout(frame_layout)
+        add_option(self.frame_size, "Width/Height:", self.dflt_prf_params["format"],
+                   self.format_selector.setCurrentText, hideable=True)
 
         self.grain_size = Slider()
         self.grain_size.setMinMaxTicks(1, 4, 1, 10)
@@ -308,6 +318,32 @@ class MainWindow(QMainWindow):
         self.projector_kelvin.setMinMaxTicks(2700, 10000, 100)
         add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"],
                    self.projector_kelvin.setValue, hideable=True)
+
+        self.canvas_mode = QComboBox()
+        self.canvas_mode.addItems(
+            ["No", "Proportional white", "Proportional black", "Uniform white", "Uniform black", "Fixed white",
+             "Fixed black"])
+        add_option(self.canvas_mode, "Canvas:", self.dflt_img_params["canvas_mode"], self.canvas_mode.setCurrentText,
+                   hideable=True)
+
+        self.canvas_scale = Slider()
+        self.canvas_scale.setMinMaxTicks(1, 2, 1, 40)
+        add_option(self.canvas_scale, "Canvas scale:", self.dflt_img_params["canvas_scale"], self.canvas_scale.setValue,
+                   hideable=True)
+
+        self.canvas_size = QWidget()
+        canvas_layout = QHBoxLayout()
+        self.canvas_width = QLineEdit()
+        self.canvas_width.setValidator(QRegularExpressionValidator(regex))
+        self.canvas_width.setFixedWidth(100)
+        self.canvas_height = QLineEdit()
+        self.canvas_height.setValidator(QRegularExpressionValidator(regex))
+        self.canvas_height.setFixedWidth(100)
+        canvas_layout.addWidget(self.canvas_width)
+        canvas_layout.addWidget(self.canvas_height)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        self.canvas_size.setLayout(canvas_layout)
+        add_option(self.canvas_size, "Width/Height:", 1, lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")), hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -391,6 +427,10 @@ class MainWindow(QMainWindow):
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
         self.reset_image_button.triggered.connect(self.reset_image)
         self.reset_profile_button.triggered.connect(self.reset_profile)
+        self.canvas_mode.currentTextChanged.connect(lambda x: self.setting_changed(x, "canvas_mode"))
+        self.canvas_scale.valueChanged.connect(lambda x: self.setting_changed(x, "canvas_scale"))
+        self.canvas_width.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8, "canvas_ratio"))
+        self.canvas_height.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8, "canvas_ratio"))
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -528,7 +568,8 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, 'Select image folder', '')
         if folder:
             self.load_settings_directory(folder)
-            filenames = [folder + "/" + filename for filename in os.listdir(folder) if filename.lower().endswith(data.EXTENSION_LIST)]
+            filenames = [folder + "/" + filename for filename in os.listdir(folder) if
+                         filename.lower().endswith(data.EXTENSION_LIST)]
             self.image_bar.clear_images()
             self.image_bar.load_images(filenames)
 
@@ -621,10 +662,7 @@ class MainWindow(QMainWindow):
         if profile not in self.profile_params:
             self.profile_params[profile] = {}
         self.profile_params[profile][key] = value
-        if crop_zoom:
-            self.crop_zoom_changed()
-        else:
-            self.parameter_changed()
+        self.parameter_changed()
 
     def quick_save(self):
         self.start_worker(self.save_settings_directory, semaphore=False)
@@ -645,10 +683,7 @@ class MainWindow(QMainWindow):
                 self.wb_mode.setCurrentText(list(self.wb_modes.keys())[list(self.wb_modes.values()).index(value)])
             else:
                 self.wb_mode.setCurrentText("Custom")
-        if crop_zoom:
-            self.crop_zoom_changed()
-        else:
-            self.parameter_changed()
+        self.parameter_changed()
 
     def setup_profile_params(self, profile, src=None):
         if profile in self.profile_params:
@@ -666,6 +701,8 @@ class MainWindow(QMainWindow):
         self.exp_wb.setValue(image_params["exposure_kelvin"])
         self.lens_correction.setChecked(image_params["lens_correction"])
         self.profile_selector.setCurrentText(image_params["profile"])
+        self.canvas_mode.setCurrentText(image_params["canvas_mode"])
+        self.canvas_scale.setValue(image_params["canvas_scale"])
         if "cam" in image_params:
             self.camera_selector.setCurrentText(image_params["cam"])
         if "lens" in image_params:
@@ -776,8 +813,6 @@ class MainWindow(QMainWindow):
             self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
                                                metadata=self.load_metadata(src), **processing_args)
         image = self.preview_image
-        if not self.full_preview.isChecked():
-            image = crop_rotate_zoom(image, **processing_args)
         height, width, _ = image.shape
         image = QImage(np.require(image, np.uint8, 'C'), width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
@@ -857,7 +892,7 @@ class MainWindow(QMainWindow):
             self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
     def save_multiple_process(self, folder, filenames, **kwargs):
-        self.active=False
+        self.active = False
         if cuda_available:
             xp.get_default_memory_pool().free_all_blocks()
             xp.get_default_pinned_memory_pool().free_all_blocks()
