@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier", "red_light": 0,
                                 "green_light": 0, "blue_light": 0, "halation": True,
-                                "sharpness": True, "grain": True, "format": "135", "grain_size": 0.002,
+                                "sharpness": True, "grain": True, "format": "135", "grain_size": 0.004,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
                                 "halation_intensity": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
                    self.format_selector.setCurrentText, hideable=True)
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(1, 4, 1, 10)
+        self.grain_size.setMinMaxTicks(1, 5, 1, 10)
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 1000,
                    self.grain_size.setValue, hideable=True)
 
@@ -1026,10 +1026,10 @@ class MainWindow(QMainWindow):
             if folder:
                 self.save_multiple_process(folder=folder, filenames=self.image_bar.get_highlighted(), **kwargs)
 
-    def save_settings_dialogue(self, src=None):
+    def save_settings_dialogue(self):
         filename, ok = QFileDialog.getSaveFileName(self, "Select file name", "raw2film_settings.json", "*.json")
         if ok:
-            self.save_settings(filename, src)
+            self.save_settings(filename)
 
     def save_settings_directory(self, root='', src=None, **kwargs):
         if root:
@@ -1051,7 +1051,8 @@ class MainWindow(QMainWindow):
         if Path(filename).is_file():
             with open(filename, "r") as f:
                 old_dict = json.load(f)
-            complete_dict["image_params"] = {**old_dict, **complete_dict["image_params"]}
+            complete_dict["image_params"] = {**old_dict["image_params"], **complete_dict["image_params"]}
+            complete_dict["profile_params"] = {**old_dict["profile_params"], **complete_dict["profile_params"]}
         with open(filename, "w") as f:
             json.dump(complete_dict, f)
 
