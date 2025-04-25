@@ -191,7 +191,6 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, **kwargs
     factor_1 = grain_size_1 * 2 * math.sqrt(math.pi)
     factor_2 = grain_size_2 * 2 * math.sqrt(math.pi)
     if factor_1 > 1:
-        print("applying")
         if factor_2 > 1 and variation > 1:
             max_noise = noise_factors.max(axis=(0, 1))
             min_noise = noise_factors.min(axis=(0, 1))

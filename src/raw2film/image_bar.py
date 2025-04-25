@@ -1,6 +1,6 @@
 import rawpy
-from PyQt6.QtCore import QThreadPool, Qt
-from PyQt6.QtGui import QPixmap, QWheelEvent, QShortcut, QKeySequence
+from PyQt6.QtCore import QThreadPool
+from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
@@ -70,7 +70,7 @@ class ImageBar(QScrollArea):
         QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
 
     def load_images(self, image_paths):
-        for img_path in image_paths:
+        for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
             label = Thumbnail(img_path, self.thumbnail_size, self)
             label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
             self.image_layout.addWidget(label)

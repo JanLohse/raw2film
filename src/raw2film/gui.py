@@ -12,11 +12,12 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 
 
 class MultiWorker(QObject):
@@ -165,12 +166,12 @@ class MainWindow(QMainWindow):
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier", "red_light": 0,
                                 "green_light": 0, "blue_light": 0, "halation": True,
-                                "sharpness": True, "grain": True, "format": "135", "grain_size": 0.004,
+                                "sharpness": True, "grain": True, "format": "135", "grain_size": 0.0035,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
                                 "halation_intensity": 1}
-        self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 5500,
-                                "profile": "Default", "lens_correction": True, "pre_flash": -4, "canvas_mode": "No",
-                                "canvas_scale": 1, "canvas_ratio": 0.8}
+        self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
+                                "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
+                                "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -215,8 +216,8 @@ class MainWindow(QMainWindow):
         self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
         add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue)
 
-        self.wb_modes = {"Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800, "Fluorescent": 3800,
-                         "Custom": None}
+        self.wb_modes = {"Default": 6000, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800,
+                         "Fluorescent": 3800, "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
@@ -225,10 +226,15 @@ class MainWindow(QMainWindow):
         self.exp_wb.setMinMaxTicks(2000, 12000, 100)
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue)
 
-        self.pre_flash = Slider()
-        self.pre_flash.setMinMaxTicks(-4, -1, 1, 20)
-        add_option(self.pre_flash, "Pre-flash:", self.dflt_img_params["pre_flash"], self.pre_flash.setValue,
+        self.pre_flash_neg = Slider()
+        self.pre_flash_neg.setMinMaxTicks(-4, -2, 1, 10)
+        add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_img_params["pre_flash_neg"],
+                   self.pre_flash_neg.setValue,
                    hideable=True)
+        self.pre_flash_print = Slider()
+        self.pre_flash_print.setMinMaxTicks(-4, -2, 1, 10)
+        add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_img_params["pre_flash_print"],
+                   self.pre_flash_print.setValue)
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
@@ -292,15 +298,15 @@ class MainWindow(QMainWindow):
                    self.negative_selector.setCurrentText)
 
         self.red_light = Slider()
-        self.red_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
+        self.red_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.red_light, "Red printer light:", self.dflt_prf_params["red_light"], self.red_light.setValue,
                    hideable=True)
         self.green_light = Slider()
-        self.green_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
+        self.green_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.green_light, "Green printer light:", self.dflt_prf_params["green_light"],
                    self.green_light.setValue, hideable=True)
         self.blue_light = Slider()
-        self.blue_light.setMinMaxTicks(-0.5, 0.5, 1, 50)
+        self.blue_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.blue_light, "Blue printer light:", self.dflt_prf_params["blue_light"], self.blue_light.setValue,
                    hideable=True)
 
@@ -343,16 +349,17 @@ class MainWindow(QMainWindow):
         canvas_layout.addWidget(self.canvas_height)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         self.canvas_size.setLayout(canvas_layout)
-        add_option(self.canvas_size, "Width/Height:", 1, lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")), hideable=True)
+        add_option(self.canvas_size, "Width/Height:", 1,
+                   lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")), hideable=True)
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
         QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(self.rotation.increase)
         QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(self.rotation.decrease)
-        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(self.pre_flash.increase)
-        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(self.pre_flash.decrease)
-        QShortcut(QKeySequence("Ctrl+Shift+Up"), self).activated.connect(lambda: self.pre_flash.increase(5))
-        QShortcut(QKeySequence("Ctrl+Shift+Down"), self).activated.connect(lambda: self.pre_flash.decrease(5))
+        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(self.pre_flash_neg.increase)
+        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(self.pre_flash_neg.decrease)
+        QShortcut(QKeySequence("Ctrl+Up"), self).activated.connect(self.pre_flash_print.increase)
+        QShortcut(QKeySequence("Ctrl+Down"), self).activated.connect(self.pre_flash_print.decrease)
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
         QShortcut(QKeySequence("Ctrl++"), self).activated.connect(lambda: self.zoom.increase(5))
         QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(lambda: self.zoom.decrease(5))
@@ -419,7 +426,8 @@ class MainWindow(QMainWindow):
         self.image_bar.image_changed.connect(self.load_image)
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
-        self.pre_flash.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash"))
+        self.pre_flash_neg.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_neg"))
+        self.pre_flash_print.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_print"))
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
@@ -429,8 +437,12 @@ class MainWindow(QMainWindow):
         self.reset_profile_button.triggered.connect(self.reset_profile)
         self.canvas_mode.currentTextChanged.connect(lambda x: self.setting_changed(x, "canvas_mode"))
         self.canvas_scale.valueChanged.connect(lambda x: self.setting_changed(x, "canvas_scale"))
-        self.canvas_width.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8, "canvas_ratio"))
-        self.canvas_height.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8, "canvas_ratio"))
+        self.canvas_width.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(
+            self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8,
+                                                                           "canvas_ratio"))
+        self.canvas_height.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(
+            self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8,
+                                                                            "canvas_ratio"))
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -707,7 +719,8 @@ class MainWindow(QMainWindow):
             self.camera_selector.setCurrentText(image_params["cam"])
         if "lens" in image_params:
             self.lens_selector.setCurrentText(image_params["lens"])
-        self.pre_flash.setValue(image_params["pre_flash"])
+        self.pre_flash_neg.setValue(image_params["pre_flash_neg"])
+        self.pre_flash_print.setValue(image_params["pre_flash_print"])
         self.loading = False
 
     def load_profile_params(self, profile=None):
