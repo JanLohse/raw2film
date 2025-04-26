@@ -185,6 +185,7 @@ cython_debug/
 *.RWL
 *.PEF 
 *.PTX
+*.ARW
 __pycache__
 20*
 .idea
