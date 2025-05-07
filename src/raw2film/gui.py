@@ -150,6 +150,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.reset_profile_button)
         self.delete_profile_button = QAction("Delete profile")
         edit_menu.addAction(self.delete_profile_button)
+        self.delete_all_profiles_button = QAction("Delete all profiles")
+        edit_menu.addAction(self.delete_all_profiles_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
         self.advanced_controls.setShortcut(QKeySequence("Ctrl+Shift+A"))
@@ -227,12 +229,11 @@ class MainWindow(QMainWindow):
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue)
 
         self.pre_flash_neg = Slider()
-        self.pre_flash_neg.setMinMaxTicks(-4, -2, 1, 10)
+        self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10)
         add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_img_params["pre_flash_neg"],
-                   self.pre_flash_neg.setValue,
-                   hideable=True)
+                   self.pre_flash_neg.setValue)
         self.pre_flash_print = Slider()
-        self.pre_flash_print.setMinMaxTicks(-4, -2, 1, 10)
+        self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10)
         add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_img_params["pre_flash_print"],
                    self.pre_flash_print.setValue)
 
@@ -247,7 +248,7 @@ class MainWindow(QMainWindow):
         add_option(self.rotate, "Rotate:")
 
         self.rotation = Slider()
-        self.rotation.setMinMaxTicks(-90, 90, 1, 2)
+        self.rotation.setMinMaxTicks(-90, 90, 1, 4)
         add_option(self.rotation, "Rotation angle:", self.dflt_img_params["rotation"], self.rotation.setValue)
 
         self.zoom = Slider()
@@ -426,6 +427,7 @@ class MainWindow(QMainWindow):
         self.image_bar.image_changed.connect(self.load_image)
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
+        self.delete_all_profiles_button.triggered.connect(self.delete_all_profiles)
         self.pre_flash_neg.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_neg"))
         self.pre_flash_print.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_print"))
         self.quick_save_button.triggered.connect(self.quick_save)
@@ -537,8 +539,35 @@ class MainWindow(QMainWindow):
                 if current_profile in self.profile_params:
                     self.profile_params.pop(current_profile)
                 for image in self.image_params:
-                    if 'profile' in self.image_params[image]:
+                    if 'profile' in self.image_params[image] and self.image_params[image]['profile'] == current_profile:
                         self.image_params[image]['profile'] = "Default"
+            self.load_profile_params()
+
+    def delete_all_profiles(self):
+        reply = QMessageBox()
+        profile_count = len(self.profile_params)
+        if not profile_count:
+            return
+        if profile_count == 1:
+            message = f"Delete 1 profile permanently?"
+        elif profile_count > 1:
+            message = f"Delete {profile_count} profiles permanently?"
+        reply.setText(message)
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        x = reply.exec()
+        if x == QMessageBox.StandardButton.Yes:
+            profiles = tuple(self.profile_params.keys())
+            for profile in profiles:
+                if profile == "Default":
+                    self.profile_params[profile] = {}
+                else:
+                    self.profile_selector.setCurrentText("Default")
+                    self.profile_selector.removeItem(self.profile_selector.findText(profile))
+                    if profile in self.profile_params:
+                        self.profile_params.pop(profile)
+                    for image in self.image_params:
+                        if 'profile' in self.image_params[image] and self.image_params[image]['profile'] == profile:
+                            self.image_params[image]['profile'] = "Default"
             self.load_profile_params()
 
     def add_profile_prompt(self):
