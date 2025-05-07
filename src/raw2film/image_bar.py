@@ -210,10 +210,10 @@ class ImageBar(QScrollArea):
             self.horizontalScrollBar().setValue(x - area_width + 2 * label_width)
 
     def get_highlighted(self):
-        return {label.image_path for label in self.highlighted_labels}
+        return sorted([label.image_path for label in self.highlighted_labels])
 
     def get_all(self):
-        return {label.image_path for label in self.image_labels}
+        return [label.image_path for label in self.image_labels]
 
     def close_labels(self, labels):
         if self.selected_label is not None:

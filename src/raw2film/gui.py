@@ -58,6 +58,8 @@ class MultiWorker(QObject):
 
 
 class MainWindow(QMainWindow):
+    ui_update = pyqtSignal(dict)
+
     def __init__(self):
         super().__init__()
 
@@ -170,10 +172,11 @@ class MainWindow(QMainWindow):
                                 "green_light": 0, "blue_light": 0, "halation": True,
                                 "sharpness": True, "grain": True, "format": "135", "grain_size": 0.0035,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
-                                "halation_intensity": 1}
+                                "halation_intensity": 1, "black_offset": 0}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
-                                "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4}
+                                "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
+                                "burn_scale": 50}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -215,7 +218,7 @@ class MainWindow(QMainWindow):
         add_option(self.grain, "Grain:", self.dflt_prf_params["grain"], self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-2, 2, 1, 6)
+        self.exp_comp.setMinMaxTicks(-3, 3, 1, 6)
         add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue)
 
         self.wb_modes = {"Default": 6000, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800,
@@ -236,6 +239,14 @@ class MainWindow(QMainWindow):
         self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10)
         add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_img_params["pre_flash_print"],
                    self.pre_flash_print.setValue)
+        self.highlight_burn = Slider()
+        self.highlight_burn.setMinMaxTicks(0, 1, 1, 20)
+        add_option(self.highlight_burn, "Highlight burn:", self.dflt_img_params["highlight_burn"],
+                   self.highlight_burn.setValue)
+        self.burn_scale = Slider()
+        self.burn_scale.setMinMaxTicks(1, 200 )
+        add_option(self.burn_scale, "Burn scale:", self.dflt_img_params["burn_scale"], self.burn_scale.setValue,
+                   hideable=True)
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
@@ -338,6 +349,11 @@ class MainWindow(QMainWindow):
         add_option(self.canvas_scale, "Canvas scale:", self.dflt_img_params["canvas_scale"], self.canvas_scale.setValue,
                    hideable=True)
 
+        self.black_offset = Slider()
+        self.black_offset.setMinMaxTicks(-2, 2, 1, 10)
+        add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
+                   hideable=True)
+
         self.canvas_size = QWidget()
         canvas_layout = QHBoxLayout()
         self.canvas_width = QLineEdit()
@@ -430,6 +446,8 @@ class MainWindow(QMainWindow):
         self.delete_all_profiles_button.triggered.connect(self.delete_all_profiles)
         self.pre_flash_neg.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_neg"))
         self.pre_flash_print.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_print"))
+        self.highlight_burn.valueChanged.connect(lambda x: self.setting_changed(x, "highlight_burn"))
+        self.burn_scale.valueChanged.connect(lambda x: self.setting_changed(x, "burn_scale"))
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
@@ -445,6 +463,8 @@ class MainWindow(QMainWindow):
         self.canvas_height.textChanged.connect(lambda: self.setting_changed(float(self.canvas_height.text()) / float(
             self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8,
                                                                             "canvas_ratio"))
+        self.black_offset.valueChanged.connect(lambda x: self.profile_changed(x, "black_offset"))
+        self.ui_update.connect(self.load_image_params_to_ui)
 
         widget = QWidget()
         widget.setLayout(page_layout)
@@ -720,11 +740,14 @@ class MainWindow(QMainWindow):
                 self.image_params[src_short] = {}
             self.image_params[src_short][key] = value
         if key == "exposure_kelvin":
-            if value in self.wb_modes.values():
-                self.wb_mode.setCurrentText(list(self.wb_modes.keys())[list(self.wb_modes.values()).index(value)])
-            else:
-                self.wb_mode.setCurrentText("Custom")
+            self.update_wb_mode(value)
         self.parameter_changed()
+
+    def update_wb_mode(self, value):
+        if value in self.wb_modes.values():
+            self.wb_mode.setCurrentText(list(self.wb_modes.keys())[list(self.wb_modes.values()).index(value)])
+        else:
+            self.wb_mode.setCurrentText("Custom")
 
     def setup_profile_params(self, profile, src=None):
         if profile in self.profile_params:
@@ -734,23 +757,40 @@ class MainWindow(QMainWindow):
 
     def load_image_params(self, src):
         image_params = self.setup_image_params(src)
-        self.loading = True
-        self.exp_comp.setValue(image_params["exp_comp"])
-        self.zoom.setValue(image_params["zoom"])
-        self.rotate_times = image_params["rotate_times"]
-        self.rotation.setValue(image_params["rotation"])
-        self.exp_wb.setValue(image_params["exposure_kelvin"])
-        self.lens_correction.setChecked(image_params["lens_correction"])
-        self.profile_selector.setCurrentText(image_params["profile"])
-        self.canvas_mode.setCurrentText(image_params["canvas_mode"])
-        self.canvas_scale.setValue(image_params["canvas_scale"])
-        if "cam" in image_params:
-            self.camera_selector.setCurrentText(image_params["cam"])
-        if "lens" in image_params:
-            self.lens_selector.setCurrentText(image_params["lens"])
-        self.pre_flash_neg.setValue(image_params["pre_flash_neg"])
-        self.pre_flash_print.setValue(image_params["pre_flash_print"])
-        self.loading = False
+        self.ui_update.emit(image_params)
+
+    def load_image_params_to_ui(self, image_params):
+        def set_safely(widget, method_name, key):
+            if key in image_params:
+                widget.blockSignals(True)
+                getattr(widget, method_name)(image_params[key])
+                widget.blockSignals(False)
+
+        # Use the helper to set values safely
+        set_safely(self.exp_comp, "setValue", "exp_comp")
+        set_safely(self.zoom, "setValue", "zoom")
+
+        if "rotate_times" in image_params:
+            self.rotate_times = image_params["rotate_times"]
+
+        set_safely(self.rotation, "setValue", "rotation")
+        set_safely(self.exp_wb, "setValue", "exposure_kelvin")
+
+        set_safely(self, "update_wb_mode", "exposure_kelvin")
+
+        set_safely(self.lens_correction, "setChecked", "lens_correction")
+        set_safely(self.profile_selector, "setCurrentText", "profile")
+        set_safely(self.canvas_mode, "setCurrentText", "canvas_mode")
+        set_safely(self.canvas_scale, "setValue", "canvas_scale")
+
+        set_safely(self.camera_selector, "setCurrentText", "cam")
+
+        set_safely(self.lens_selector, "setCurrentText", "lens")
+
+        set_safely(self.pre_flash_neg, "setValue", "pre_flash_neg")
+        set_safely(self.pre_flash_print, "setValue", "pre_flash_print")
+        set_safely(self.highlight_burn, "setValue", "highlight_burn")
+        set_safely(self.burn_scale, "setValue", "burn_scale")
 
     def load_profile_params(self, profile=None):
         if profile is None:
@@ -780,6 +820,7 @@ class MainWindow(QMainWindow):
         self.grain_size.setValue(profile_params["grain_size"] * 1000)
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
+        self.black_offset.setValue(profile_params["black_offset"])
 
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
