@@ -6,6 +6,17 @@ import lensfunpy
 from lensfunpy import util as lensfunpy_util
 from spectral_film_lut.utils import *
 
+if cuda_available:
+    try:
+        import torch
+
+        torch_available = True
+    except ImportError:
+        torch_available = False
+else:
+    torch_available = False
+
+
 
 def lens_correction(rgb, metadata, cam, lens):
     """Apply lens correction using lensfunpy."""
@@ -279,3 +290,54 @@ def add_canvas_uniform(image, canvas_scale, canvas_color, **kwargs):
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
     return canvas.astype(dtype='uint8')
+
+
+def down_up_blur(image, scale=50, func=None):
+    scale = math.ceil(min(image.shape[:2]) / scale)
+    # Downsample
+    blurred_channels = []
+    for c in range(image.shape[-1]):
+        # Downsample
+        if cuda_available:
+            if torch_available:
+                down = cupy_area_downsample(image[:, :, c], scale)
+            else:
+                down = xdimage.zoom(image[:, :, c], 1 / scale, order=1)
+        else:
+            down = cv.resize(image[:, :, c], (image.shape[1] // scale, image.shape[0] // scale), interpolation=cv.INTER_AREA)
+        # Downsample channel
+        blurred = xdimage.gaussian_filter(down, sigma=3)
+        if func is not None:
+            blurred = func(blurred)
+
+        # Upsample back
+        up = xdimage.zoom(blurred, scale, order=1)
+        # Crop or pad to match original shape
+        up_resized = xp.pad(up, [(0, max(x - y, 0)) for x, y in zip(image.shape, up.shape)], mode='edge')[:image.shape[0],
+                     :image.shape[1]]
+        blurred_channels.append(up_resized)
+
+    # Stack back into (H, W, 3)
+    return xp.stack(blurred_channels, axis=-1)
+
+
+def cupy_area_downsample(image, factor):
+    img_torch = torch.utils.dlpack.from_dlpack(xp.asarray(image)[None, None, ...].toDlpack())
+
+    # Apply mean pooling
+    downsampled = torch.nn.functional.avg_pool2d(img_torch, kernel_size=factor, stride=factor)
+
+    # Convert back to CuPy (remove batch and channel dimensions)
+    return xp.fromDlpack(torch.utils.dlpack.to_dlpack(downsampled))[0, 0]
+
+
+def burn(image, negative_film, highlight_burn, burn_scale, d_factor):
+    func = lambda x: xp.clip(x * d_factor - 0.25 - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0], 0,
+        None)
+    if image.shape[-1] == 3:
+        image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func) / d_factor
+    else:
+        image = image - highlight_burn * down_up_blur(image, burn_scale, func) / d_factor
+
+
+    return image

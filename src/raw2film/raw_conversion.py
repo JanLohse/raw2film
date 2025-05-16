@@ -33,7 +33,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
-                  full_cuda=True, semaphore=None, canvas_mode="No", **kwargs):
+                  full_cuda=True, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -109,6 +109,12 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
+            if highlight_burn:
+                start_sub = time.time()
+                image = effects.burn(image, negative_film, highlight_burn, burn_scale, d_factor)
+                if measure_time:
+                    print(f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
+
             if not cuda_available or not full_cuda:
                 image = xp.clip(image, 0, 1)
                 image *= 2 ** 16 - 1
@@ -120,9 +126,17 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
             output_transform = xyz_to_displayP3
         else:
             output_transform = xyz_to_srgb
-        transform, _ = FilmSpectral.generate_conversion(negative_film, print_film, mode=mode, input_colourspace=None,
-                                                        output_transform=output_transform, matrix_method=False,
-                                                        **kwargs)
+
+        if highlight_burn:
+            transform, d_factor = FilmSpectral.generate_conversion(negative_film, print_film, mode="negative",
+                                                                   input_colourspace=None,**kwargs)
+            image = transform(image)
+            image = effects.burn(image, negative_film, highlight_burn, burn_scale, d_factor)
+            mode = "print"
+
+        transform, d_factor = FilmSpectral.generate_conversion(negative_film, print_film, mode=mode,
+                                                               input_colourspace=None,
+                                                               output_transform=output_transform, **kwargs)
         image = transform(image)
     else:
         lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None, **kwargs)

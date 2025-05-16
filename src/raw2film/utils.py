@@ -4,7 +4,6 @@ from pathlib import Path
 from shutil import copy
 
 import exiftool
-import numpy as np
 
 from raw2film import data
 
@@ -45,7 +44,7 @@ def find_data(metadata, db):
             else:
                 continue
             break
-        if cam is not None:
+        if cam is not None and cam:
             for lens_make in lens_makes:
                 if lens_make is not None:
                     lens_make = str(lens_make)
@@ -59,6 +58,8 @@ def find_data(metadata, db):
                 else:
                     continue
                 break
+        elif cam is not None:
+            cam = None
 
     return cam, lens
 

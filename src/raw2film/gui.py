@@ -645,8 +645,12 @@ class MainWindow(QMainWindow):
             cam, lens = utils.find_data(metadata, self.lensfunpy_db)
             if cam is not None:
                 self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
+            else:
+                self.image_params[src_short]["cam"] = "None"
             if lens is not None:
                 self.image_params[src_short]["lens"] = lens.model
+            else:
+                self.image_params[src_short]["lens"] = "None"
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = self.profile_selector.currentText()
         self.load_image_params(src_short)
