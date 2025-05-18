@@ -237,10 +237,13 @@ class ImageBar(QScrollArea):
             self.select_image(self.image_labels[new_selected])
 
     def deselect_all(self):
-        self.selected_label = None
         for label in self.highlighted_labels:
-            label.set_state("default")
-        self.highlighted_labels = set()
+            if label != self.selected_label:
+                label.set_state("default")
+        if self.selected_label is not None:
+            self.highlighted_labels = {self.selected_label}
+        else:
+            self.highlighted_labels = set()
 
     def close_single_image(self, src):
         for label in self.image_labels:

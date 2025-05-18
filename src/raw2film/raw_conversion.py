@@ -127,7 +127,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
         else:
             output_transform = xyz_to_srgb
 
-        if highlight_burn:
+        if highlight_burn and fast_mode:
             transform, d_factor = FilmSpectral.generate_conversion(negative_film, print_film, mode="negative",
                                                                    input_colourspace=None,**kwargs)
             image = transform(image)
