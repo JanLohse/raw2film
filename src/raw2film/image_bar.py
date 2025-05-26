@@ -227,7 +227,10 @@ class ImageBar(QScrollArea):
             if image_label == self.selected_label:
                 self.selected_label = None
             if new_selected is not None and index <= new_selected and (index or new_selected):
-                new_selected -= 1
+                if index < new_selected:
+                    new_selected -= 1
+                if new_selected >= len(self.image_labels) - 1:
+                    new_selected = len(self.image_labels) - 1
         return new_selected
 
     def close_highlighted(self):

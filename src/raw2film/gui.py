@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
 
-        self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakEnduraPremier", "red_light": 0,
+        self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakDuraflexPlus", "red_light": 0,
                                 "green_light": 0, "blue_light": 0, "halation": True,
                                 "sharpness": True, "grain": True, "format": "135", "grain_size": 0.0035,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
@@ -252,9 +252,13 @@ class MainWindow(QMainWindow):
         rotate_layout = QHBoxLayout()
         self.rotate_left = QPushButton("Left")
         self.rotate_right = QPushButton("Right")
-        rotate_layout.addWidget(self.rotate_left)
-        rotate_layout.addWidget(self.rotate_right)
+        self.flip = QPushButton("Flip")
+        for btn in (self.rotate_left, self.rotate_right, self.flip):
+            btn.setMaximumWidth(65)
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+            rotate_layout.addWidget(btn, stretch=1)
         rotate_layout.setContentsMargins(0, 0, 0, 0)
+        rotate_layout.setSpacing(0)
         self.rotate.setLayout(rotate_layout)
         add_option(self.rotate, "Rotate:")
 
@@ -932,16 +936,12 @@ class MainWindow(QMainWindow):
         if processing_args["lens_correction"]:
             if "cam" not in processing_args or "lens" not in processing_args:
                 cam, lens = utils.find_data(metadata, self.lensfunpy_db)
-                if cam is not None:
+                if cam is not None or lens is not None:
                     processing_args["cam"] = cam.maker + " " + cam.model
-                else:
-                    processing_args["cam"] = None
-                if lens is not None:
                     processing_args["lens"] = lens.model
-                else:
-                    processing_args["lens"] = None
-            image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
-                                            self.lenses[processing_args["lens"]])
+            if "cam" in processing_args and "lens" in processing_args:
+                image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
+                                                self.lenses[processing_args["lens"]])
         image = process_image(image, fast_mode=False, full_cuda=False, **processing_args)
         path = "/".join(filename.split("/")[:-1])
         if path:

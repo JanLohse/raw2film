@@ -21,7 +21,7 @@ def raw_to_linear(src, half_size=True):
     return rgb
 
 
-def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, rotate_times=0, **kwargs):
+def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1, rotate_times=0, flip=False, **kwargs):
     image = effects.crop_image(image, 1, aspect=frame_width / frame_height)
     if rotation:
         image = effects.rotate(image, rotation)

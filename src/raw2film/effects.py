@@ -66,24 +66,24 @@ def rotate(rgb, degrees):
     return rgb
 
 
-def crop_image(rgb, zoom=1, aspect=1.5):
+def crop_image(rgb, zoom=1, aspect=1.5, flip=True):
     """Crops rgb data to aspect ratio."""
-    x, y, c = rgb.shape
+    x, y, _ = rgb.shape
     if x > y:
         if x > aspect * y:
-            rgb = rgb[round(x / 2 - y * aspect / 2): round(x / 2 + y * aspect / 2), :, :]
+            rgb = rgb[math.ceil(x / 2 - y * aspect / 2): math.ceil(x / 2 + y * aspect / 2), :, :]
         else:
-            rgb = rgb[:, round(y / 2 - x / aspect / 2): round(y / 2 + x / aspect / 2), :]
+            rgb = rgb[:, math.ceil(y / 2 - x / aspect / 2): math.ceil(y / 2 + x / aspect / 2), :]
     elif y > aspect * x:
-        rgb = rgb[:, round(y / 2 - x * aspect / 2): round(y / 2 + x * aspect / 2), :]
+        rgb = rgb[:, math.ceil(y / 2 - x * aspect / 2): math.ceil(y / 2 + x * aspect / 2), :]
     else:
-        rgb = rgb[round(x / 2 - y / aspect / 2): round(x / 2 + y / aspect / 2), :, :]
+        rgb = rgb[math.ceil(x / 2 - y / aspect / 2): math.ceil(x / 2 + y / aspect / 2), :, :]
 
     if zoom > 1:
-        x, y, c = rgb.shape
+        x, y, _ = rgb.shape
         zoom_factor = (zoom - 1) / (2 * zoom)
-        x = round(zoom_factor * x)
-        y = round(zoom_factor * y)
+        x = math.ceil(zoom_factor * x)
+        y = math.ceil(zoom_factor * y)
         rgb = rgb[x: -x, y: -y, :]
 
     return rgb
@@ -305,10 +305,10 @@ def down_up_blur(image, scale=50, func=None):
                 down = xdimage.zoom(image[:, :, c], 1 / scale, order=1)
         else:
             down = cv.resize(image[:, :, c], (image.shape[1] // scale, image.shape[0] // scale), interpolation=cv.INTER_AREA)
+        if func is not None:
+            down = func(down)
         # Downsample channel
         blurred = xdimage.gaussian_filter(down, sigma=3)
-        if func is not None:
-            blurred = func(blurred)
 
         # Upsample back
         up = xdimage.zoom(blurred, scale, order=1)
