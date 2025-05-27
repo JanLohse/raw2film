@@ -66,9 +66,11 @@ def rotate(rgb, degrees):
     return rgb
 
 
-def crop_image(rgb, zoom=1, aspect=1.5, flip=True):
+def crop_image(rgb, zoom=1, aspect=1.5, flip=False):
     """Crops rgb data to aspect ratio."""
     x, y, _ = rgb.shape
+    if flip:
+        aspect = 1 / aspect
     if x > y:
         if x > aspect * y:
             rgb = rgb[math.ceil(x / 2 - y * aspect / 2): math.ceil(x / 2 + y * aspect / 2), :, :]

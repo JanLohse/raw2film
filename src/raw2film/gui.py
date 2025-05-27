@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
                                 "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
-                                "burn_scale": 50}
+                                "burn_scale": 50, "flip": False}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -252,8 +252,8 @@ class MainWindow(QMainWindow):
         rotate_layout = QHBoxLayout()
         self.rotate_left = QPushButton("Left")
         self.rotate_right = QPushButton("Right")
-        self.flip = QPushButton("Flip")
-        for btn in (self.rotate_left, self.rotate_right, self.flip):
+        self.flip_button = QPushButton("Flip")
+        for btn in (self.rotate_left, self.rotate_right, self.flip_button):
             btn.setMaximumWidth(65)
             btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             rotate_layout.addWidget(btn, stretch=1)
@@ -436,6 +436,7 @@ class MainWindow(QMainWindow):
         self.halation_green.valueChanged.connect(lambda x: self.profile_changed(x, "halation_green_factor"))
         self.rotate_right.released.connect(self.rotate_image)
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
+        self.flip_button.released.connect(self.flip_image)
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
         self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width", crop_zoom=True))
@@ -484,6 +485,7 @@ class MainWindow(QMainWindow):
         self.corrected_image = None
         self.preview_image = None
         self.rotate_times = 0
+        self.flip_image = False
         self.active = True  # prevent from running update_preview by setting inactive
         self.loading = False  # prevent from storing settings while setting widget values
 
@@ -780,6 +782,9 @@ class MainWindow(QMainWindow):
 
         if "rotate_times" in image_params:
             self.rotate_times = image_params["rotate_times"]
+
+        if "flip" in image_params:
+            self.flip = image_params["flip"]
 
         set_safely(self.rotation, "setValue", "rotation")
         set_safely(self.exp_wb, "setValue", "exposure_kelvin")
@@ -1186,6 +1191,10 @@ class MainWindow(QMainWindow):
     def rotate_image(self, direction=1):
         self.rotate_times = (self.rotate_times - direction) % 4
         self.setting_changed(self.rotate_times, "rotate_times", crop_zoom=True)
+
+    def flip_image(self):
+        self.flip = not self.flip
+        self.setting_changed(self.flip, "flip")
 
 
 def gui_main():
