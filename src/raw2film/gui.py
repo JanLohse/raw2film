@@ -11,7 +11,7 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog, QMessageBox, QDialog, QProgressDialog
+    QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea
 from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 
 from raw2film import data, utils
@@ -75,11 +75,18 @@ class MainWindow(QMainWindow):
         top_widget = QWidget()
         top_widget.setLayout(top_layout)
         sidebar = QWidget()
-        sidebar.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
         side_layout = QGridLayout()
         sidebar.setLayout(side_layout)
         side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         top_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setWidget(sidebar)
+        scroll_area.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        scroll_area.setFixedWidth(320)
 
         self.image = QLabel("Select a reference image for the preview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -90,9 +97,13 @@ class MainWindow(QMainWindow):
         self.image_bar = ImageBar()
         page_layout.addWidget(top_widget)
         page_layout.addWidget(self.image_bar)
+        page_layout.setSpacing(5)
+        top_layout.setSpacing(5)
+        page_layout.setContentsMargins(8, 8, 8, 8)
+        top_layout.setContentsMargins(0, 0, 0, 0)
 
         top_layout.addWidget(self.image)
-        top_layout.addWidget(sidebar, alignment=Qt.AlignmentFlag.AlignBottom)
+        top_layout.addWidget(scroll_area)
 
         self.side_counter = -1
 
@@ -200,11 +211,11 @@ class MainWindow(QMainWindow):
         add_option(self.lens_correction, "Lens correction:", self.dflt_img_params["lens_correction"],
                    self.lens_correction.setChecked, hideable=True)
         self.camera_selector = QComboBox()
-        self.camera_selector.setMaximumWidth(180)
+        self.camera_selector.setMinimumWidth(100)
         self.camera_selector.addItems(self.cameras.keys())
         add_option(self.camera_selector, "Camera model:", "None", self.camera_selector.setCurrentText, hideable=True)
         self.lens_selector = QComboBox()
-        self.lens_selector.setMaximumWidth(180)
+        self.lens_selector.setMinimumWidth(100)
         self.lens_selector.addItems(self.lenses.keys())
         add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
 
@@ -255,7 +266,7 @@ class MainWindow(QMainWindow):
         self.rotate_right = QPushButton("Right")
         self.flip_button = QPushButton("Flip")
         for btn in (self.rotate_left, self.rotate_right, self.flip_button):
-            btn.setMaximumWidth(65)
+            btn.setMinimumWidth(10)
             btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             rotate_layout.addWidget(btn, stretch=1)
         rotate_layout.setContentsMargins(0, 0, 0, 0)
@@ -280,10 +291,8 @@ class MainWindow(QMainWindow):
         self.frame_width = QLineEdit()
         regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
         self.frame_width.setValidator(QRegularExpressionValidator(regex))
-        self.frame_width.setFixedWidth(100)
         self.frame_height = QLineEdit()
         self.frame_height.setValidator(QRegularExpressionValidator(regex))
-        self.frame_height.setFixedWidth(100)
         frame_layout.addWidget(self.frame_width)
         frame_layout.addWidget(self.frame_height)
         frame_layout.setContentsMargins(0, 0, 0, 0)
@@ -311,6 +320,7 @@ class MainWindow(QMainWindow):
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
+        self.negative_selector.setMinimumWidth(100)
         add_option(self.negative_selector, "Negativ stock:", self.dflt_prf_params["negative_film"],
                    self.negative_selector.setCurrentText)
 
@@ -334,6 +344,7 @@ class MainWindow(QMainWindow):
 
         self.print_selector = QComboBox()
         self.print_selector.addItems(["None"] + list(self.print_stocks.keys()))
+        self.print_selector.setMinimumWidth(100)
         add_option(self.print_selector, "Print stock:", self.dflt_prf_params["print_film"],
                    self.print_selector.setCurrentText)
 
@@ -363,10 +374,8 @@ class MainWindow(QMainWindow):
         canvas_layout = QHBoxLayout()
         self.canvas_width = QLineEdit()
         self.canvas_width.setValidator(QRegularExpressionValidator(regex))
-        self.canvas_width.setFixedWidth(100)
         self.canvas_height = QLineEdit()
         self.canvas_height.setValidator(QRegularExpressionValidator(regex))
-        self.canvas_height.setFixedWidth(100)
         canvas_layout.addWidget(self.canvas_width)
         canvas_layout.addWidget(self.canvas_height)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
@@ -476,7 +485,7 @@ class MainWindow(QMainWindow):
         widget.setLayout(page_layout)
         self.setCentralWidget(widget)
 
-        self.resize(QSize(1024, 512))
+        self.resize(QSize(1080, 720))
 
         self.waiting = False
         self.running = False
