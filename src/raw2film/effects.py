@@ -192,7 +192,7 @@ def gaussian_noise(shape):
     return noise
 
 
-def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, bw_grain=False, **kwargs):
+def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, bw_grain=False, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     shape = rgb.shape
@@ -202,7 +202,7 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, bw_grain
     xps = [(rms_density + 0.25) / d_factor for rms_density in stock.rms_density]
     fps = [rms * std_factor for rms in stock.rms_curve]
     noise_factors = multi_channel_interp(rgb, xps, fps)
-    grain_size = grain_size * variation * scale
+    grain_size = grain_size * scale
     factor = grain_size * 2 * math.sqrt(math.pi)
     if factor > 1:
         noise = gaussian_blur(noise * noise_factors, grain_size)
@@ -210,6 +210,8 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, variation=1, bw_grain
             noise = noise[..., xp.newaxis]
     else:
         noise = noise * noise_factors
+    if bw_grain:
+        noise /= 1.5
     rgb += noise
     return rgb
 
