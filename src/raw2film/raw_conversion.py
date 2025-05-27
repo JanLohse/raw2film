@@ -32,7 +32,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
-                  halation=True, sharpness=True, grain=True, resolution=None, metadata=None, measure_time=False,
+                  halation=True, sharpness=True, grain=2, resolution=None, metadata=None, measure_time=False,
                   full_cuda=True, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
@@ -105,7 +105,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
 
             if grain:
                 start_sub = time.time()
-                image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor)
+                image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor, bw_grain=grain==1)
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 

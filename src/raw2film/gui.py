@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakDuraflexPlus", "red_light": 0,
                                 "green_light": 0, "blue_light": 0, "halation": True,
-                                "sharpness": True, "grain": True, "format": "135", "grain_size": 0.0035,
+                                "sharpness": True, "grain": 2, "format": "135", "grain_size": 0.0035,
                                 "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
                                 "halation_intensity": 1, "black_offset": 0}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
@@ -215,6 +215,7 @@ class MainWindow(QMainWindow):
         add_option(self.sharpness, "Sharpness:", self.dflt_prf_params["sharpness"], self.sharpness.setChecked,
                    hideable=True)
         self.grain = QCheckBox()
+        self.grain.setTristate(True)
         add_option(self.grain, "Grain:", self.dflt_prf_params["grain"], self.grain.setChecked, hideable=True)
 
         self.exp_comp = Slider()
@@ -820,7 +821,7 @@ class MainWindow(QMainWindow):
         self.halation_green.setValue(profile_params["halation_green_factor"])
         self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
-        self.grain.setChecked(profile_params["grain"])
+        self.grain.setCheckState(Qt.CheckState(profile_params["grain"]))
         if "frame_width" in profile_params:
             self.frame_width.setText(str(profile_params["frame_width"]))
         if "frame_height" in profile_params:
