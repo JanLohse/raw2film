@@ -179,11 +179,11 @@ class MainWindow(QMainWindow):
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
 
-        self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "KodakDuraflexPlus", "red_light": 0,
-                                "green_light": 0, "blue_light": 0, "halation": True,
-                                "sharpness": True, "grain": 2, "format": "135", "grain_size": 0.0035,
-                                "halation_size": 1, "halation_green_factor": 0.4, "projector_kelvin": 6500,
-                                "halation_intensity": 1, "black_offset": 0}
+        self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
+                                "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
+                                "grain": 2, "format": "135", "grain_size": 0.0035, "halation_size": 1,
+                                "halation_green_factor": 0.4, "projector_kelvin": 6500, "halation_intensity": 1,
+                                "black_offset": 0}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
                                 "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
@@ -715,11 +715,6 @@ class MainWindow(QMainWindow):
             self.profile_changed(self.print_selector.currentText(), "print_film")
         else:
             self.profile_changed(None, "print_film")
-        if negative in REVERSAL_FILM and self.negative_stocks[negative].projection_kelvin is not None:
-            self.projector_kelvin.setValue(self.negative_stocks[negative].projection_kelvin)
-        elif self.print_selector.currentText() != "None" and self.print_stocks[
-            self.print_selector.currentText()].projection_kelvin is not None:
-            self.projector_kelvin.setValue(self.print_stocks[self.print_selector.currentText()].projection_kelvin)
         self.active = True
         self.profile_changed(negative, "negative_film")
 
