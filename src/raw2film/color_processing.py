@@ -44,7 +44,7 @@ def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
 
     factor = 3
     if metadata is not None:
-        if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber']:
+        if 'EXIF:FNumber' in metadata and metadata['EXIF:FNumber'] and metadata['EXIF:FNumber'] != 'undef':
             factor = metadata['EXIF:FNumber'] ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         else:
             factor = 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']

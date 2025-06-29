@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
-                                "grain": 2, "format": "135", "grain_size": 0.0035, "halation_size": 1,
+                                "grain": 2, "format": "135", "grain_size": 0.0025, "halation_size": 1,
                                 "halation_green_factor": 0.4, "projector_kelvin": 6500, "halation_intensity": 1,
                                 "black_offset": 0}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,

@@ -26,8 +26,8 @@ def lens_correction(rgb, metadata, cam, lens):
         return rgb
     try:
         focal_length = metadata['EXIF:FocalLength']
-        aperture = metadata['EXIF:FNumber']
-    except KeyError:
+        aperture = float(metadata['EXIF:FNumber'])
+    except (KeyError, ValueError):
         return rgb
     height, width = rgb.shape[0], rgb.shape[1]
     # noinspection PyUnresolvedReferences
