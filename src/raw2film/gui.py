@@ -12,12 +12,11 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 
 
 class MultiWorker(QObject):
@@ -42,8 +41,8 @@ class MultiWorker(QObject):
             return func(*args, **kwargs)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(func_wrapper, i, *task, **kwargs)
-                       for i, task in enumerate(tasks) if not self.cancel_event.is_set()]
+            futures = [executor.submit(func_wrapper, i, *task, **kwargs) for i, task in enumerate(tasks) if
+                       not self.cancel_event.is_set()]
 
             for future in as_completed(futures):
                 if self.cancel_event.is_set():
@@ -114,7 +113,7 @@ class MainWindow(QMainWindow):
         view_menu = menu.addMenu("View")
         edit_menu = menu.addMenu("Edit")
 
-        def add_option(widget, name=None, default=None, setter=None, hideable=False):
+        def add_option(widget, name=None, default=None, setter=None, hideable=False, tool_tip=None):
             self.side_counter += 1
             side_layout.addWidget(widget, self.side_counter, 1)
             label = QLabel(name, alignment=(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
@@ -125,6 +124,9 @@ class MainWindow(QMainWindow):
             if default is not None and setter is not None:
                 label.mouseDoubleClickEvent = lambda *args: setter(default)
                 setter(default)
+            if tool_tip is not None:
+                label.setToolTip(tool_tip)
+                widget.setToolTip(tool_tip)
 
         self.image_selector = QAction("Open images", self)
         self.image_selector.setShortcut(QKeySequence("Ctrl+O"))
@@ -199,7 +201,9 @@ class MainWindow(QMainWindow):
         profile_widget_layout.addWidget(self.profile_selector)
         profile_widget_layout.addWidget(self.add_profile)
         profile_widget_layout.setContentsMargins(0, 0, 0, 0)
-        add_option(profile_widget, "Profile:", self.dflt_img_params["profile"], self.profile_selector.setCurrentText)
+        add_option(profile_widget, "Profile:", self.dflt_img_params["profile"], self.profile_selector.setCurrentText,
+                   tool_tip="""Select the profile specifying film and format parameters.
+(1-9: select profile)""")
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras}
@@ -209,56 +213,85 @@ class MainWindow(QMainWindow):
 
         self.lens_correction = QCheckBox()
         add_option(self.lens_correction, "Lens correction:", self.dflt_img_params["lens_correction"],
-                   self.lens_correction.setChecked, hideable=True)
+                   self.lens_correction.setChecked, hideable=True, tool_tip="Correct lens distortion and vignetting.")
         self.camera_selector = QComboBox()
         self.camera_selector.setMinimumWidth(100)
         self.camera_selector.addItems(self.cameras.keys())
-        add_option(self.camera_selector, "Camera model:", "None", self.camera_selector.setCurrentText, hideable=True)
+        add_option(self.camera_selector, "Camera model:", "None", self.camera_selector.setCurrentText, hideable=True,
+                   tool_tip="Select camera model for lens correction.")
         self.lens_selector = QComboBox()
         self.lens_selector.setMinimumWidth(100)
         self.lens_selector.addItems(self.lenses.keys())
-        add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True)
+        add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True,
+                   tool_tip="Select lens model for lens correction.")
 
         self.halation = QCheckBox()
         add_option(self.halation, "Halation:", self.dflt_prf_params["halation"], self.halation.setChecked,
-                   hideable=True)
+                   hideable=True,
+                   tool_tip="Activate halation, a warm glow around highlights,\nresulting from reflections on the back of the film.")
         self.sharpness = QCheckBox()
         add_option(self.sharpness, "Sharpness:", self.dflt_prf_params["sharpness"], self.sharpness.setChecked,
-                   hideable=True)
+                   hideable=True, tool_tip="Emulate the resolution and micro-contrast of film.")
         self.grain = QCheckBox()
         self.grain.setTristate(True)
-        add_option(self.grain, "Grain:", self.dflt_prf_params["grain"], self.grain.setChecked, hideable=True)
+        add_option(self.grain, "Grain:", self.dflt_prf_params["grain"], self.grain.setChecked, hideable=True, tool_tip="""
+<table>
+  <tr><td><u>Unchecked: </u></td><td>No film grain.</td></tr>
+  <tr><td><u>Partially Checked: </u></td><td>Monochromatic film grain.</td></tr>
+  <tr><td><u>Checked: </u></td><td>RGB film grain.</td></tr>
+</table>
+""")
 
         self.exp_comp = Slider()
         self.exp_comp.setMinMaxTicks(-3, 3, 1, 6)
-        add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue)
+        add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue, tool_tip="""Adjust exposure in stops.
+(Up: increase exposure)
+(Down: decrease exposure)""")
 
         self.wb_modes = {"Default": 6000, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800,
                          "Fluorescent": 3800, "Custom": None}
         self.wb_mode = QComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
-        add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText)
+        add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText, tool_tip="""Select preset white balance.
+(Shift+D: daylight)
+(Shift+C: cloudy)
+(Shift+S: shade)
+(Shift+F: fluorescent)
+(Shift+T: Tungsten)""")
 
         self.exp_wb = Slider()
         self.exp_wb.setMinMaxTicks(2000, 12000, 100)
-        add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue)
+        add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue,
+                   tool_tip="Adjust white balance in kelvin.")
 
         self.pre_flash_neg = Slider()
         self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10)
         add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_img_params["pre_flash_neg"],
-                   self.pre_flash_neg.setValue)
+                   self.pre_flash_neg.setValue, tool_tip="""Simulate the effect of exposing the negative with uniform light.
+Helps to reduce contrast by lifting the shadows.
+Set in how many stops below middle gray the uniform exposure is.
+-4 will turn off the effect completely.""")
         self.pre_flash_print = Slider()
         self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10)
         add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_img_params["pre_flash_print"],
-                   self.pre_flash_print.setValue)
+                   self.pre_flash_print.setValue, tool_tip="""Simulate the effect of exposing the print film with uniform light.
+Helps to reduce contrast by lowering the highlights.
+Set in how many stops below middle gray the uniform exposure is.
+-4 will turn off the effect completely.
+(Ctrl+Up: increase)
+(Ctrl+Down: decrease)""")
         self.highlight_burn = Slider()
         self.highlight_burn.setMinMaxTicks(0, 1, 1, 20)
         add_option(self.highlight_burn, "Highlight burn:", self.dflt_img_params["highlight_burn"],
-                   self.highlight_burn.setValue)
+                   self.highlight_burn.setValue, tool_tip="""Lower the brightness of bright areas on the print film.
+Only visible in preview if GPU acceleration is enabled
+or full-preview is enabled.
+(Shift+Up: increase)
+(Shift+Down: decrease)""")
         self.burn_scale = Slider()
-        self.burn_scale.setMinMaxTicks(1, 200 )
+        self.burn_scale.setMinMaxTicks(1, 200)
         add_option(self.burn_scale, "Burn scale:", self.dflt_img_params["burn_scale"], self.burn_scale.setValue,
-                   hideable=True)
+                   hideable=True, tool_tip="How much blur is applied to the highlight burn.")
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
@@ -272,19 +305,27 @@ class MainWindow(QMainWindow):
         rotate_layout.setContentsMargins(0, 0, 0, 0)
         rotate_layout.setSpacing(0)
         self.rotate.setLayout(rotate_layout)
-        add_option(self.rotate, "Rotate:")
+        add_option(self.rotate, "Rotate:", tool_tip="""Rotate the image by 90 degrees or change the orientation.
+(Ctrl+R: rotate right)""")
 
         self.rotation = Slider()
         self.rotation.setMinMaxTicks(-90, 90, 1, 4)
-        add_option(self.rotation, "Rotation angle:", self.dflt_img_params["rotation"], self.rotation.setValue)
+        add_option(self.rotation, "Rotation angle:", self.dflt_img_params["rotation"], self.rotation.setValue, tool_tip="""Rotate by an angle in degrees.
+(Ctrl+Right: rotate right)
+(Ctrl+Left: rotate left)""")
 
         self.zoom = Slider()
         self.zoom.setMinMaxTicks(1, 2, 1, 100)
-        add_option(self.zoom, "Zoom:", self.dflt_img_params["zoom"], self.zoom.setValue)
+        add_option(self.zoom, "Zoom:", self.dflt_img_params["zoom"], self.zoom.setValue, tool_tip="""Crop into the image.
+(Ctrl+Plus: zoom in)
+(Ctrl+Minus: zoom out)""")
 
         self.format_selector = QComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
-        add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText)
+        add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText,
+                   tool_tip="""Select a preset film format.
+Adjusts scale of film characteristics (halation, resolution, grain)
+and changes aspect ratio.""")
 
         self.frame_size = QWidget()
         frame_layout = QHBoxLayout()
@@ -298,77 +339,85 @@ class MainWindow(QMainWindow):
         frame_layout.setContentsMargins(0, 0, 0, 0)
         self.frame_size.setLayout(frame_layout)
         add_option(self.frame_size, "Width/Height:", self.dflt_prf_params["format"],
-                   self.format_selector.setCurrentText, hideable=True)
+                   self.format_selector.setCurrentText, hideable=True, tool_tip="""Specify simulated film frame size.
+Adjusts scale of film characteristics (halation, resolution, grain)
+and changes aspect ratio.""")
 
         self.grain_size = Slider()
         self.grain_size.setMinMaxTicks(1, 5, 1, 10)
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 1000,
-                   self.grain_size.setValue, hideable=True)
+                   self.grain_size.setValue, hideable=True, tool_tip="Size of simulated film grains.")
 
         self.halation_size = Slider()
         self.halation_size.setMinMaxTicks(0.5, 8, 1, 4)
         add_option(self.halation_size, "Halation size:", self.dflt_prf_params["halation_size"],
-                   self.halation_size.setValue, hideable=True)
+                   self.halation_size.setValue, hideable=True, tool_tip="""How far the halation spreads.
+Halation is a warm glow around highlights,\nresulting from reflections on the film backing.""")
         self.halation_green = Slider()
         self.halation_green.setMinMaxTicks(0, 1, 1, 20)
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
-                   self.halation_green.setValue, hideable=True)
+                   self.halation_green.setValue, hideable=True, tool_tip="""How red or yellow the halation is.
+Specifies how strongly the halation reaches into the green sensitive layer.""")
         self.halation_intensity = Slider()
         self.halation_intensity.setMinMaxTicks(0.5, 4, 1, 4)
         add_option(self.halation_intensity, "Halation intensity:", self.dflt_prf_params["halation_intensity"],
-                   self.halation_intensity.setValue, hideable=True)
+                   self.halation_intensity.setValue, hideable=True, tool_tip="""How intense the halation is.
+Halation is a warm glow around highlights,
+resulting from reflections on the film backing.""")
 
         self.negative_selector = QComboBox()
         self.negative_selector.addItems(list(negative_stocks.keys()))
         self.negative_selector.setMinimumWidth(100)
         add_option(self.negative_selector, "Negativ stock:", self.dflt_prf_params["negative_film"],
-                   self.negative_selector.setCurrentText)
+                   self.negative_selector.setCurrentText, tool_tip="""Which negative film stock to emulate.
+Affects colors, resolution, and graininess""")
 
         self.red_light = Slider()
         self.red_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.red_light, "Red printer light:", self.dflt_prf_params["red_light"], self.red_light.setValue,
-                   hideable=True)
+                   hideable=True, tool_tip="""How strong the simulated red light is during printing.
+Decreases how red the print is.""")
         self.green_light = Slider()
         self.green_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.green_light, "Green printer light:", self.dflt_prf_params["green_light"],
-                   self.green_light.setValue, hideable=True)
+                   self.green_light.setValue, hideable=True, tool_tip="""How strong the simulated green light is during printing.
+Decreases how green the print is.""")
         self.blue_light = Slider()
         self.blue_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
         add_option(self.blue_light, "Blue printer light:", self.dflt_prf_params["blue_light"], self.blue_light.setValue,
-                   hideable=True)
+                   hideable=True, tool_tip="""How strong the simulated blue light is during printing.
+Decreases how blue the print is.""")
 
         self.link_lights = QCheckBox()
         self.link_lights.setChecked(True)
         self.link_lights.setText("link lights")
-        add_option(self.link_lights, hideable=True)
+        add_option(self.link_lights, hideable=True,
+                   tool_tip="Whether to adjust the printer lights individually or not.")
 
         self.print_selector = QComboBox()
         self.print_selector.addItems(["None"] + list(self.print_stocks.keys()))
         self.print_selector.setMinimumWidth(100)
         add_option(self.print_selector, "Print stock:", self.dflt_prf_params["print_film"],
-                   self.print_selector.setCurrentText)
+                   self.print_selector.setCurrentText, tool_tip="""Which print material to emulate.
+Affects only colors.""")
 
         self.projector_kelvin = Slider()
         self.projector_kelvin.setMinMaxTicks(2700, 10000, 100)
         add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"],
-                   self.projector_kelvin.setValue, hideable=True)
+                   self.projector_kelvin.setValue, hideable=True,
+                   tool_tip="Under what light temperature to view the print or slide.")
 
         self.canvas_mode = QComboBox()
         self.canvas_mode.addItems(
             ["No", "Proportional white", "Proportional black", "Uniform white", "Uniform black", "Fixed white",
              "Fixed black"])
         add_option(self.canvas_mode, "Canvas:", self.dflt_img_params["canvas_mode"], self.canvas_mode.setCurrentText,
-                   hideable=True)
+                   hideable=True, tool_tip="What type of border to add to the image.")
 
         self.canvas_scale = Slider()
         self.canvas_scale.setMinMaxTicks(1, 2, 1, 40)
         add_option(self.canvas_scale, "Canvas scale:", self.dflt_img_params["canvas_scale"], self.canvas_scale.setValue,
-                   hideable=True)
-
-        self.black_offset = Slider()
-        self.black_offset.setMinMaxTicks(-2, 2, 1, 10)
-        add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
-                   hideable=True)
+                   hideable=True, tool_tip="How big the canvas is.")
 
         self.canvas_size = QWidget()
         canvas_layout = QHBoxLayout()
@@ -381,14 +430,20 @@ class MainWindow(QMainWindow):
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         self.canvas_size.setLayout(canvas_layout)
         add_option(self.canvas_size, "Width/Height:", 1,
-                   lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")), hideable=True)
+                   lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")), hideable=True,
+                   tool_tip="""Aspect ratio of added canvas.""")
+
+        self.black_offset = Slider()
+        self.black_offset.setMinMaxTicks(-2, 2, 1, 10)
+        add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
+                   hideable=True, tool_tip="Change the black value without affecting other areas.")
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
         QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(self.rotation.increase)
         QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(self.rotation.decrease)
-        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(self.pre_flash_neg.increase)
-        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(self.pre_flash_neg.decrease)
+        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(self.highlight_burn.increase)
+        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(self.highlight_burn.decrease)
         QShortcut(QKeySequence("Ctrl+Up"), self).activated.connect(self.pre_flash_print.increase)
         QShortcut(QKeySequence("Ctrl+Down"), self).activated.connect(self.pre_flash_print.decrease)
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
