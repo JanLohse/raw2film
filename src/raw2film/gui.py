@@ -181,9 +181,9 @@ class MainWindow(QMainWindow):
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
-                                "grain": 2, "format": "135", "grain_size": 0.0025, "halation_size": 1,
-                                "halation_green_factor": 0.4, "projector_kelvin": 6500, "halation_intensity": 1,
-                                "black_offset": 0}
+                                "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
+                                "grain_size": 0.0025, "halation_size": 1, "halation_green_factor": 0.4,
+                                "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
                                 "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
@@ -797,18 +797,19 @@ class MainWindow(QMainWindow):
         set_safely(self, "update_wb_mode", "exposure_kelvin")
 
         set_safely(self.lens_correction, "setChecked", "lens_correction")
-        set_safely(self.profile_selector, "setCurrentText", "profile")
         set_safely(self.canvas_mode, "setCurrentText", "canvas_mode")
         set_safely(self.canvas_scale, "setValue", "canvas_scale")
 
         set_safely(self.camera_selector, "setCurrentText", "cam")
-
         set_safely(self.lens_selector, "setCurrentText", "lens")
 
         set_safely(self.pre_flash_neg, "setValue", "pre_flash_neg")
         set_safely(self.pre_flash_print, "setValue", "pre_flash_print")
         set_safely(self.highlight_burn, "setValue", "highlight_burn")
         set_safely(self.burn_scale, "setValue", "burn_scale")
+
+        if "profile" in image_params:
+            self.profile_selector.setCurrentText(image_params["profile"])
 
     def load_profile_params(self, profile=None):
         if profile is None:

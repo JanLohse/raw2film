@@ -97,13 +97,13 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                                                                    halation_func=halation_func, **kwargs)
             image = transform(image)
 
-            if sharpness:
+            if sharpness and negative_film.mtf is not None:
                 start_sub = time.time()
                 image = effects.film_sharpness(image, negative_film, scale)
                 if measure_time:
                     print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            if grain:
+            if grain and negative_film.rms_density is not None:
                 start_sub = time.time()
                 image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor, bw_grain=grain==1)
                 if measure_time:
