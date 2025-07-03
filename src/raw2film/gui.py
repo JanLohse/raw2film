@@ -799,9 +799,18 @@ Affects only colors.""")
         self.start_worker(self.save_settings_directory, semaphore=False)
         self.save_timer = time.time()
 
-    def setting_changed(self, value, key, crop_zoom=False):
+    def setting_changed(self, value, key):
         if self.loading:
             return
+        current_image = self.image_bar.current_image()
+        if current_image is not None:
+            current_image = current_image.split("/")[-1]
+            if current_image in self.image_params:
+                if key in self.image_params[current_image] and value == self.image_params[current_image][key]:
+                    return # no change
+            elif (key in self.dflt_img_params and self.dflt_img_params[key] == value) or (
+                key in self.dflt_prf_params and self.dflt_prf_params[key] == value):
+                return # default value and nothing to overwrite
         if time.time() - self.save_timer > 10:
             self.quick_save()
         for src in self.image_bar.get_highlighted():
