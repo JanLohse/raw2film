@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
                                 "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
-                                "burn_scale": 50, "flip": False}
+                                "burn_scale": 50, "flip": False, "tint": 0}
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
 """)
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-3, 3, 1, 6)
+        self.exp_comp.setMinMaxTicks(-3, 3, 1, 10)
         add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue, tool_tip="""Adjust exposure in stops.
 (Up: increase exposure)
 (Down: decrease exposure)""")
@@ -263,6 +263,11 @@ class MainWindow(QMainWindow):
         self.exp_wb.setMinMaxTicks(2000, 12000, 100)
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue,
                    tool_tip="Adjust white balance in kelvin.")
+
+        self.tint = Slider()
+        self.tint.setMinMaxTicks(-1, 1, 1, 100)
+        add_option(self.tint, "Tint:", self.dflt_img_params["tint"], self.tint.setValue,
+                   tool_tip="Change tint on green-magenta axis.")
 
         self.pre_flash_neg = Slider()
         self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10)
@@ -483,6 +488,7 @@ Affects only colors.""")
         self.exp_comp.valueChanged.connect(lambda x: self.setting_changed(x, "exp_comp"))
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
         self.exp_wb.valueChanged.connect(lambda x: self.setting_changed(x, "exposure_kelvin"))
+        self.tint.valueChanged.connect(lambda x: self.setting_changed(x, "tint"))
         self.red_light.valueChanged.connect(lambda x: self.light_changed(x, "red_light"))
         self.green_light.valueChanged.connect(lambda x: self.light_changed(x, "green_light"))
         self.blue_light.valueChanged.connect(lambda x: self.light_changed(x, "blue_light"))
@@ -491,8 +497,8 @@ Affects only colors.""")
         self.halation.stateChanged.connect(lambda x: self.profile_changed(x, "halation"))
         self.sharpness.stateChanged.connect(lambda x: self.profile_changed(x, "sharpness"))
         self.grain.stateChanged.connect(lambda x: self.profile_changed(x, "grain"))
-        self.rotation.valueChanged.connect(lambda x: self.setting_changed(x, "rotation", crop_zoom=True))
-        self.zoom.valueChanged.connect(lambda x: self.setting_changed(x, "zoom", crop_zoom=True))
+        self.rotation.valueChanged.connect(lambda x: self.setting_changed(x, "rotation"))
+        self.zoom.valueChanged.connect(lambda x: self.setting_changed(x, "zoom"))
         self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.triggered.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 1000, "grain_size"))
@@ -504,8 +510,8 @@ Affects only colors.""")
         self.flip_button.released.connect(self.flip_image)
         self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
         self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
-        self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width", crop_zoom=True))
-        self.frame_height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height", crop_zoom=True))
+        self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width"))
+        self.frame_height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height"))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
@@ -857,6 +863,7 @@ Affects only colors.""")
 
         set_safely(self.rotation, "setValue", "rotation")
         set_safely(self.exp_wb, "setValue", "exposure_kelvin")
+        set_safely(self.tint, "setValue", "tint")
 
         set_safely(self, "update_wb_mode", "exposure_kelvin")
 
@@ -1260,7 +1267,7 @@ Affects only colors.""")
 
     def rotate_image(self, direction=1):
         self.rotate_times = (self.rotate_times - direction) % 4
-        self.setting_changed(self.rotate_times, "rotate_times", crop_zoom=True)
+        self.setting_changed(self.rotate_times, "rotate_times")
 
     def flip_image(self):
         self.flip = not self.flip
