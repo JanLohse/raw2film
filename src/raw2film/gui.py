@@ -8,15 +8,16 @@ from functools import lru_cache
 import exiftool
 import imageio
 import lensfunpy
-from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression
+from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
 
 
 class MultiWorker(QObject):
@@ -68,6 +69,8 @@ class MainWindow(QMainWindow):
         self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
         self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
         self.print_stocks["None"] = None
+
+        self.settings = QSettings("JanLohse", "Raw2Film")
 
         page_layout = QVBoxLayout()
         top_layout = QHBoxLayout()
@@ -161,6 +164,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.deselect_all_button)
         self.reset_image_button = QAction("Reset image")
         edit_menu.addAction(self.reset_image_button)
+        self.reset_all_images_button = QAction("Reset all images")
+        edit_menu.addAction(self.reset_all_images_button)
         self.reset_profile_button = QAction("Reset profile")
         edit_menu.addAction(self.reset_profile_button)
         self.delete_profile_button = QAction("Delete profile")
@@ -530,6 +535,7 @@ Affects only colors.""")
         self.image_bar.copy_settings.connect(self.copy_settings)
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
         self.reset_image_button.triggered.connect(self.reset_image)
+        self.reset_all_images_button.triggered.connect(self.reset_all_images)
         self.reset_profile_button.triggered.connect(self.reset_profile)
         self.canvas_mode.currentTextChanged.connect(lambda x: self.setting_changed(x, "canvas_mode"))
         self.canvas_scale.valueChanged.connect(lambda x: self.setting_changed(x, "canvas_scale"))
@@ -565,7 +571,7 @@ Affects only colors.""")
         self.image_params = {}
         self.profile_params = {}
 
-        self.load_settings_directory()
+        self.load_settings_system()
 
         self.save_timer = time.time()
 
@@ -576,6 +582,10 @@ Affects only colors.""")
             src_short = src.split("/")[-1]
             if src_short in self.image_params:
                 self.image_params.pop(src_short)
+        self.load_image(self.image_bar.selected_label.image_path)
+
+    def reset_all_images(self):
+        self.image_params = {}
         self.load_image(self.image_bar.selected_label.image_path)
 
     def reset_profile(self):
@@ -779,7 +789,7 @@ Affects only colors.""")
         self.active = True
         self.profile_changed(negative, "negative_film")
 
-    def profile_changed(self, value, key, crop_zoom=False):
+    def profile_changed(self, value, key):
         if self.loading:
             return
         if key in ["frame_width", "frame_height"]:
@@ -802,7 +812,7 @@ Affects only colors.""")
         self.parameter_changed()
 
     def quick_save(self):
-        self.start_worker(self.save_settings_directory, semaphore=False)
+        self.save_settings_system()
         self.save_timer = time.time()
 
     def setting_changed(self, value, key):
@@ -813,10 +823,10 @@ Affects only colors.""")
             current_image = current_image.split("/")[-1]
             if current_image in self.image_params:
                 if key in self.image_params[current_image] and value == self.image_params[current_image][key]:
-                    return # no change
+                    return  # no change
             elif (key in self.dflt_img_params and self.dflt_img_params[key] == value) or (
-                key in self.dflt_prf_params and self.dflt_prf_params[key] == value):
-                return # default value and nothing to overwrite
+                    key in self.dflt_prf_params and self.dflt_prf_params[key] == value):
+                return  # default value and nothing to overwrite
         if time.time() - self.save_timer > 10:
             self.quick_save()
         for src in self.image_bar.get_highlighted():
@@ -1224,6 +1234,18 @@ Affects only colors.""")
             complete_dict["profile_params"] = {**old_dict["profile_params"], **complete_dict["profile_params"]}
         with open(filename, "w") as f:
             json.dump(complete_dict, f)
+
+    def save_settings_system(self):
+        self.settings.setValue("profile_params", json.dumps(self.profile_params))
+        self.settings.setValue("image_params", json.dumps(self.image_params))
+
+    def load_settings_system(self):
+        self.profile_params = json.loads(self.settings.value("profile_params", "{}"))
+        self.image_params = json.loads(self.settings.value("image_params", "{}"))
+
+        for profile in self.profile_params:
+            if self.profile_selector.findText(profile) == -1:
+                self.profile_selector.addItem(profile)
 
     def load_settings_dialogue(self):
         filename, ok = QFileDialog.getOpenFileName(self)
