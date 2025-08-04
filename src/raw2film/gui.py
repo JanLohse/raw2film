@@ -12,12 +12,13 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSetti
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata
+from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
+from spectral_film_lut.film_loader import load_ui
+from spectral_film_lut.filmstock_selector import FilmStockSelector
 
 
 class MultiWorker(QObject):
@@ -60,15 +61,25 @@ class MultiWorker(QObject):
 class MainWindow(QMainWindow):
     ui_update = pyqtSignal(dict)
 
-    def __init__(self):
+    def __init__(self, filmstocks):
         super().__init__()
 
         self.setWindowTitle("Raw2Film")
 
-        negative_stocks = {**NEGATIVE_FILM, **REVERSAL_FILM}
-        self.negative_stocks = {k: v() for k, v in negative_stocks.items() if v is not None}
-        self.print_stocks = {k: v() for k, v in PRINT_FILM.items() if v is not None}
-        self.print_stocks["None"] = None
+        self.filmstocks = filmstocks
+        filmstock_info = {x: {'Year': filmstocks[x].year, 'Manufacturer': filmstocks[x].manufacturer, 'Type':
+            {"camerapositive": "Slide", "cameranegative": "Negative", "printnegative": "Print",
+             "printpositive": "SlidePrint"}[filmstocks[x].stage + filmstocks[x].type], 'Medium': filmstocks[x].medium,
+                              'Sensitivity': f"ISO {filmstocks[x].iso}" if filmstocks[x].iso is not None else None,
+                              'sensitivity': filmstocks[x].iso if filmstocks[x].iso is not None else None,
+                              'resolution': f"{filmstocks[x].resolution} lines/mm" if filmstocks[
+                                                                                          x].resolution is not None else None,
+                              'Resolution': filmstocks[x].resolution if filmstocks[x].resolution is not None else None,
+                              'Granularity': f"{filmstocks[x].rms} rms" if filmstocks[x].rms is not None else None,
+                              'Decade': f"{filmstocks[x].year // 10 * 10}s" if filmstocks[x].year is not None else None,
+                              'stage': filmstocks[x].stage,
+                              'Chromaticity': 'BW' if filmstocks[x].density_measure == 'bw' else 'Color'} for x in
+                          filmstocks}
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
@@ -375,8 +386,16 @@ Specifies how strongly the halation reaches into the green sensitive layer.""")
 Halation is a warm glow around highlights,
 resulting from reflections on the film backing.""")
 
-        self.negative_selector = QComboBox()
-        self.negative_selector.addItems(list(negative_stocks.keys()))
+        negative_info = {x: y for x, y in filmstock_info.items() if y['stage'] == 'camera'}
+        sort_keys_negative = ["Name", "Year", "Resolution", "Granularity", "sensitivity"]
+        group_keys_negative = ["Manufacturer", "Type", "Decade", "Medium"]
+        list_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "Chromaticity"]
+        sidebar_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity", "Medium",
+                                 "Chromaticity"]
+        self.filmstocks["None"] = None
+        self.negative_selector = FilmStockSelector(negative_info, sort_keys=sort_keys_negative,
+                                                   group_keys=group_keys_negative, list_keys=list_keys_negative,
+                                                   sidebar_keys=sidebar_keys_negative, default_group="Manufacturer")
         self.negative_selector.setMinimumWidth(100)
         add_option(self.negative_selector, "Negativ stock:", self.dflt_prf_params["negative_film"],
                    self.negative_selector.setCurrentText, tool_tip="""Which negative film stock to emulate.
@@ -404,8 +423,15 @@ Decreases how blue the print is.""")
         add_option(self.link_lights, hideable=True,
                    tool_tip="Whether to adjust the printer lights individually or not.")
 
-        self.print_selector = QComboBox()
-        self.print_selector.addItems(["None"] + list(self.print_stocks.keys()))
+        print_info = {x: y for x, y in filmstock_info.items() if y['stage'] == 'print'}
+        print_info["None"] = {}
+        sort_keys_print = ["Name", "Year"]
+        group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
+        list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
+        sidebar_keys_print = ["Manufacturer", "Type", "Year", "Medium", "Chromaticity"]
+        self.print_selector = FilmStockSelector(print_info, sort_keys=sort_keys_print, group_keys=group_keys_print,
+                                                list_keys=list_keys_print, sidebar_keys=sidebar_keys_print,
+                                                default_group="Manufacturer")
         self.print_selector.setMinimumWidth(100)
         add_option(self.print_selector, "Print stock:", self.dflt_prf_params["print_film"],
                    self.print_selector.setCurrentText, tool_tip="""Which print material to emulate.
@@ -986,9 +1012,9 @@ Affects only colors.""")
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
-        processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        processing_args["negative_film"] = self.filmstocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
-            processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
+            processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
         if value_changed or self.full_preview.isChecked():
@@ -1297,10 +1323,7 @@ Affects only colors.""")
 
 
 def gui_main():
-    app = QApplication(sys.argv)
-    w = MainWindow()
-    w.show()
-    app.exec()
+    load_ui(MainWindow)
 
 
 if __name__ == '__main__':
