@@ -78,7 +78,9 @@ class MainWindow(QMainWindow):
                               'Granularity': f"{filmstocks[x].rms} rms" if filmstocks[x].rms is not None else None,
                               'Decade': f"{filmstocks[x].year // 10 * 10}s" if filmstocks[x].year is not None else None,
                               'stage': filmstocks[x].stage,
-                              'Chromaticity': 'BW' if filmstocks[x].density_measure == 'bw' else 'Color'} for x in
+                              'Chromaticity': 'BW' if filmstocks[x].density_measure == 'bw' else 'Color',
+                              'image': QImage(np.require(filmstocks[x].color_checker, np.uint8, 'C'), 6, 4, 18, QImage.Format.Format_RGB888),
+                              'Gamma': round(filmstocks[x].gamma, 3)} for x in
                           filmstocks}
 
         self.settings = QSettings("JanLohse", "Raw2Film")
@@ -391,9 +393,9 @@ resulting from reflections on the film backing.""")
         group_keys_negative = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "Chromaticity"]
         sidebar_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity", "Medium",
-                                 "Chromaticity"]
+                                 "Chromaticity", "Gamma"]
         self.filmstocks["None"] = None
-        self.negative_selector = FilmStockSelector(negative_info, sort_keys=sort_keys_negative,
+        self.negative_selector = FilmStockSelector(negative_info, sort_keys=sort_keys_negative, image_key="image",
                                                    group_keys=group_keys_negative, list_keys=list_keys_negative,
                                                    sidebar_keys=sidebar_keys_negative, default_group="Manufacturer")
         self.negative_selector.setMinimumWidth(100)
@@ -428,10 +430,10 @@ Decreases how blue the print is.""")
         sort_keys_print = ["Name", "Year"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
-        sidebar_keys_print = ["Manufacturer", "Type", "Year", "Medium", "Chromaticity"]
+        sidebar_keys_print = ["Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma"]
         self.print_selector = FilmStockSelector(print_info, sort_keys=sort_keys_print, group_keys=group_keys_print,
                                                 list_keys=list_keys_print, sidebar_keys=sidebar_keys_print,
-                                                default_group="Manufacturer")
+                                                default_group="Manufacturer", image_key="image")
         self.print_selector.setMinimumWidth(100)
         add_option(self.print_selector, "Print stock:", self.dflt_prf_params["print_film"],
                    self.print_selector.setCurrentText, tool_tip="""Which print material to emulate.
@@ -1323,7 +1325,7 @@ Affects only colors.""")
 
 
 def gui_main():
-    load_ui(MainWindow)
+    load_ui(MainWindow, "Raw2Film")
 
 
 if __name__ == '__main__':
