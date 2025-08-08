@@ -25,7 +25,6 @@ dependencies = [
     "rawpy",
     "scipy",
     "pillow",
-    "configargparse",
     "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
 ]
 
@@ -33,7 +32,7 @@ dependencies = [
 Homepage = "https://github.com/JanLohse/raw2film"
 Issues = "https://github.com/JanLohse/raw2film/issues"
 
-[project.scripts]
-raw2film = "raw2film:main"
+[project.gui-scripts]
+raw2film_gui = "raw2film:gui_main"
 
 [tool.setuptools_scm]

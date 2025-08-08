@@ -1,1 +1,1 @@
-from raw2film.processing import main
+from raw2film.gui import gui_main
