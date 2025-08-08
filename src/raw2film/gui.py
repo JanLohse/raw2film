@@ -389,7 +389,7 @@ Halation is a warm glow around highlights,
 resulting from reflections on the film backing.""")
 
         negative_info = {x: y for x, y in filmstock_info.items() if y['stage'] == 'camera'}
-        sort_keys_negative = ["Name", "Year", "Resolution", "Granularity", "sensitivity"]
+        sort_keys_negative = ["Name", "Year", "Resolution", "Granularity", "sensitivity", "Gamma"]
         group_keys_negative = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "Chromaticity"]
         sidebar_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity", "Medium",
@@ -427,7 +427,7 @@ Decreases how blue the print is.""")
 
         print_info = {x: y for x, y in filmstock_info.items() if y['stage'] == 'print'}
         print_info["None"] = {}
-        sort_keys_print = ["Name", "Year"]
+        sort_keys_print = ["Name", "Year", "Gamma"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
         sidebar_keys_print = ["Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma"]
