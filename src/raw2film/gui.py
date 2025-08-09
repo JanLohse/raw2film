@@ -1025,6 +1025,7 @@ Affects only colors.""")
         image = QImage(np.require(image, np.uint8, 'C'), width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
         self.image.setPixmap(self.pixmap)
+        self.image.setToolTip(src)
         self.scale_pixmap()
 
     def setup_image_params(self, src):
