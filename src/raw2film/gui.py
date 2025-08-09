@@ -11,7 +11,7 @@ import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea
+    QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea, QSplitter
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
@@ -85,23 +85,19 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
-        page_layout = QVBoxLayout()
-        top_layout = QHBoxLayout()
-        top_widget = QWidget()
-        top_widget.setLayout(top_layout)
+        page_splitter = QSplitter(Qt.Orientation.Vertical)
+        top_splitter = QSplitter()
         sidebar = QWidget()
         side_layout = QGridLayout()
         sidebar.setLayout(side_layout)
         side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        top_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setWidget(sidebar)
-        scroll_area.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        scroll_area.setFixedWidth(320)
+        scroll_area.setMinimumWidth(280)
 
         self.image = QLabel("Select a reference image for the preview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -110,15 +106,18 @@ class MainWindow(QMainWindow):
         self.pixmap = QPixmap()
 
         self.image_bar = ImageBar()
-        page_layout.addWidget(top_widget)
-        page_layout.addWidget(self.image_bar)
-        page_layout.setSpacing(5)
-        top_layout.setSpacing(5)
-        page_layout.setContentsMargins(8, 8, 8, 8)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        page_splitter.addWidget(top_splitter)
+        page_splitter.addWidget(self.image_bar)
+        page_splitter.setContentsMargins(8, 8, 8, 8)
+        top_splitter.setContentsMargins(0, 0, 0, 0)
 
-        top_layout.addWidget(self.image)
-        top_layout.addWidget(scroll_area)
+        page_splitter.setStretchFactor(0, 1)
+        page_splitter.setStretchFactor(1, 0)
+
+        top_splitter.addWidget(self.image)
+        top_splitter.addWidget(scroll_area)
+        top_splitter.setStretchFactor(0, 1)
+        top_splitter.setStretchFactor(1, 0)
 
         self.side_counter = -1
 
@@ -576,9 +575,7 @@ Affects only colors.""")
         self.black_offset.valueChanged.connect(lambda x: self.profile_changed(x, "black_offset"))
         self.ui_update.connect(self.load_image_params_to_ui)
 
-        widget = QWidget()
-        widget.setLayout(page_layout)
-        self.setCentralWidget(widget)
+        self.setCentralWidget(page_splitter)
 
         self.resize(QSize(1080, 720))
 

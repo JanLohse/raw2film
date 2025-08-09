@@ -1,35 +1,55 @@
 import rawpy
-from PyQt6.QtCore import QThreadPool
+from PyQt6.QtCore import QThreadPool, QSize
 from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
 
 
 class Thumbnail(QLabel):
-    def __init__(self, image_path, thumbnail_size, parent=None):
+    def __init__(self, image_path, parent=None):
         super().__init__(parent)
         self.image_path = image_path
-        self.thumbnail_size = thumbnail_size
+        self.setToolTip(image_path)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("border: 1px solid gray; border-radius: 7px;")
-        self.setFixedSize(self.thumbnail_size, self.thumbnail_size)
+        self.setStyleSheet("border: 1px solid gray; border-radius: 10px;")
+        self._pixmap = None
         self.loaded = False
 
     def load(self):
         with rawpy.imread(self.image_path) as raw:
             thumb = raw.extract_thumb()
         pixmap = QPixmap()
-        pixmap.loadFromData(thumb.data, "JPEG", )
-        pixmap = pixmap.scaled(self.thumbnail_size, self.thumbnail_size, Qt.AspectRatioMode.KeepAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
+        pixmap.loadFromData(thumb.data, "JPEG")
         self.setPixmap(pixmap)
         self.loaded = True
+
+    def resizeEvent(self, event):
+        """Ensure the label is always a square and the image scales."""
+        size = min(self.width(), self.height())
+        self.resize(size, size)
+        if self._pixmap:
+            super().setPixmap(
+                self._pixmap.scaled(
+                    self.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio
+                )
+            )
+
+    def setPixmap(self, pixmap: QPixmap):
+        if pixmap:
+            self._pixmap = pixmap
+            super().setPixmap(
+                self._pixmap.scaled(
+                    self.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio
+                )
+            )
 
     def set_state(self, state):
         match state:
             case "selected":
-                self.setStyleSheet("border: 3px solid darkgray; background-color: gray; border-radius: 10px;")
+                self.setStyleSheet("border: 1px solid darkgray; background-color: gray; border-radius: 10px;")
             case "highlighted":
                 self.setStyleSheet("border: 1px solid darkgray; background-color: lightgray; border-radius: 10px;")
             case "default":
@@ -40,10 +60,8 @@ class ImageBar(QScrollArea):
     image_changed = pyqtSignal(str)
     copy_settings = pyqtSignal(str)
 
-    def __init__(self, thumbnail_size=100, padding=15):
+    def __init__(self):
         super().__init__()
-        self.thumbnail_size = thumbnail_size
-        self.bar_height = self.thumbnail_size + padding * 2
         self.selected_label = None
         self.highlighted_labels = set()
         self.image_labels = []
@@ -51,11 +69,13 @@ class ImageBar(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(self.bar_height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.container = QWidget()
-        self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(100)
+        self.setMaximumHeight(250)
+        self.height_hint = 130
 
         self.image_layout = QHBoxLayout(self.container)
         self.image_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -69,9 +89,12 @@ class ImageBar(QScrollArea):
         QShortcut(QKeySequence('Left'), self).activated.connect(lambda: self.arrow_pressed('left'))
         QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
 
+    def sizeHint(self):
+        return QSize(super().sizeHint().width(), self.height_hint)
+
     def load_images(self, image_paths):
         for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
-            label = Thumbnail(img_path, self.thumbnail_size, self)
+            label = Thumbnail(img_path, self)
             label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
