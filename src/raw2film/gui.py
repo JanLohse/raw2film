@@ -1017,12 +1017,17 @@ Affects only colors.""")
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
         if value_changed or self.full_preview.isChecked():
+            # start = time.time()
             image = self.xyz_image(src)
+            processing_args["resolution"] = max(self.image.height(), self.image.width())
+            if not self.full_preview.isChecked():
+                processing_args["resolution"] = min(processing_args["resolution"], 1080)
             self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
                                                metadata=self.load_metadata(src), **processing_args)
+            # print(f"{time.time() - start:.4f}s {self.preview_image.shape}")
         image = self.preview_image
         height, width, _ = image.shape
-        image = QImage(np.require(image, np.uint8, 'C'), width, height, 3 * width, QImage.Format.Format_RGB888)
+        image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
         self.image.setPixmap(self.pixmap)
         self.image.setToolTip(src)
@@ -1042,13 +1047,13 @@ Affects only colors.""")
             image_args = self.dflt_img_params
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
-        processing_args["negative_film"] = self.negative_stocks[processing_args["negative_film"]]
+        processing_args["negative_film"] = self.filmstocks[processing_args["negative_film"]]
         if semaphore is not None:
             processing_args["semaphore"] = semaphore
         if resolution is not None:
             processing_args["resolution"] = resolution
         if "print_film" in processing_args and processing_args["print_film"] is not None:
-            processing_args["print_film"] = self.print_stocks[processing_args["print_film"]]
+            processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
         metadata = self.load_metadata(src)
         if processing_args["lens_correction"]:
