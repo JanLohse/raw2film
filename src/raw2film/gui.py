@@ -213,7 +213,8 @@ class MainWindow(QMainWindow):
         self.histogram.setScaledContents(True)
         self.histogram.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.histogram.setMinimumSize(0, 0)
-        add_option(self.histogram)
+        side_layout.addWidget(self.histogram, 0, 0, 1, 2)
+        self.side_counter += 1
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -1042,7 +1043,6 @@ Affects only colors.""")
         histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],
                                              QImage.Format.Format_RGB888))
         self.histogram.setPixmap(histogram)
-        self.histogram.setMinimumSize(0, 0)
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
         self.image.setPixmap(self.pixmap)
