@@ -33,7 +33,7 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
                   halation=True, sharpness=True, grain=2, resolution=None, metadata=None, measure_time=False,
-                  full_cuda=False, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
+                  semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -55,7 +55,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                               interpolation=cv.INTER_LANCZOS4)
 
     if fast_mode:
-        if image.dtype != xp.uint16 and not (cuda_available and full_cuda):
+        if image.dtype != xp.uint16:
             image = xp.array(image, xp.float32)
             image_max = image.max()
             factor = 65535
@@ -68,8 +68,6 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                     kwargs["exp_comp"] = xp.log2(adjustment)
             image = xp.round(xp.sqrt(image / factor) * 65535).astype(xp.uint16)
             kwargs["gamma"] = 2
-        elif cuda_available:
-            image = image.astype(xp.float32) / 65535
         mode = 'full'
     else:
         image = image.astype(xp.float32) / 65535
@@ -104,47 +102,28 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            if highlight_burn:
+            if highlight_burn and (print_film is not None or negative_film.density_measure in ["status_m", "bw"]):
                 start_sub = time.time()
                 image = effects.burn(image, negative_film, highlight_burn, burn_scale, d_factor)
                 if measure_time:
                     print(f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            if not cuda_available or not full_cuda:
-                image = xp.clip(image, 0, 1)
-                image *= 2 ** 16 - 1
-                image = image.astype(xp.uint16)
+            image = xp.clip(image, 0, 1)
+            image *= 2 ** 16 - 1
+            image = image.astype(xp.uint16)
 
     start_sub = time.time()
-    if cuda_available and full_cuda:
-        if "output_colourspace" in kwargs and kwargs["output_colourspace"] == "Display P3":
-            output_transform = xyz_to_displayP3
-        else:
-            output_transform = xyz_to_srgb
+    lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None,
+                     cube=False, **kwargs)
+    lut = (lut * (2 ** 16 - 1)).astype(xp.uint16)
+    if image.shape[-1] == 1:
+        image = image.repeat(3, -1)
 
-        if highlight_burn and fast_mode:
-            transform, d_factor = FilmSpectral.generate_conversion(negative_film, print_film, mode="negative",
-                                                                   input_colourspace=None,**kwargs)
-            image = transform(image)
-            image = effects.burn(image, negative_film, highlight_burn, burn_scale, d_factor)
-            mode = "print"
-
-        transform, d_factor = FilmSpectral.generate_conversion(negative_film, print_film, mode=mode,
-                                                               input_colourspace=None,
-                                                               output_transform=output_transform, **kwargs)
-        image = transform(image)
+    height, width, _ = image.shape
+    if cuda_available:
+        image = to_numpy(run_lut_cuda(xp.asarray(image), xp.asarray(lut)))
     else:
-        lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None,
-                         cube=False, **kwargs)
-        lut = (lut * (2 ** 16 - 1)).astype(np.uint16)
-        if image.shape[-1] == 1:
-            image = image.repeat(3, -1)
-
-        height, width, _ = image.shape
-        if cuda_available:
-            image = to_numpy(run_lut_cuda(xp.asarray(image), xp.asarray(lut)))
-        else:
-            image = apply_lut_tetrahedral_int(image, lut)
+        image = apply_lut_tetrahedral_int(image, lut)
     if measure_time:
         print(f"{'lut':28} {time.time() - start_sub:.4f}s")
         print(f"{'total':28} {time.time() - start:.4f}s")

@@ -1017,14 +1017,18 @@ Affects only colors.""")
         if self.p3_preview.isChecked():
             processing_args["output_colourspace"] = "Display P3"
         if value_changed or self.full_preview.isChecked():
-            # start = time.time()
             image = self.xyz_image(src)
             processing_args["resolution"] = max(self.image.height(), self.image.width())
             if not self.full_preview.isChecked():
                 processing_args["resolution"] = min(processing_args["resolution"], 1080)
-            self.preview_image = process_image(image, fast_mode=not self.full_preview.isChecked(),
-                                               metadata=self.load_metadata(src), **processing_args)
-            # print(f"{time.time() - start:.4f}s {self.preview_image.shape}")
+                if processing_args["highlight_burn"]:
+                    processing_args["sharpness"] = False
+                    processing_args["grain"] = False
+                    processing_args["halation"] = False
+                else:
+                    processing_args["fast_mode"] = True
+
+            self.preview_image = process_image(image, metadata=self.load_metadata(src), **processing_args)
         image = self.preview_image
         height, width, _ = image.shape
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
@@ -1065,7 +1069,7 @@ Affects only colors.""")
             if "cam" in processing_args and "lens" in processing_args:
                 image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                                 self.lenses[processing_args["lens"]])
-        image = process_image(image, fast_mode=False, full_cuda=False, **processing_args)
+        image = process_image(image, fast_mode=False, **processing_args)
         path = "/".join(filename.split("/")[:-1])
         if path:
             path += "/"
@@ -1081,7 +1085,7 @@ Affects only colors.""")
         if move_raw:
             if not os.path.exists(path + 'RAW'):
                 os.makedirs(path + 'RAW')
-            self.save_settings_directory(path + 'RAW', src=src_short)
+            # self.save_settings_directory(path + 'RAW', src=src_short)
             if move_raw == 2:
                 os.replace(src, path + 'RAW/' + src.split('/')[-1])
             elif move_raw == 1 and not os.path.isfile(path + 'RAW/' + src.split('/')[-1]):
