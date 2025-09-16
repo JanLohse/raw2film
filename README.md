@@ -1,44 +1,50 @@
 # raw2film
-Automatic raw image development with built-in film emulation.
+
+raw2film is full raw image editor with a focus on realisitic film emulation.
+
+The looks are based on published film datasheets and use the image processing pipeline from [Spectral Film LUT](https://github.com/JanLohse/spectral_film_lut).
+
+The film emulation includes:
+- Both negative and print material emulation for a huge variety of emulsions.
+- Grain with varying intensity based on brightness and hue.
+- Halation to add natural glow to highlights (no data available, so intensity should be adjusted to taste).
+- Resolution and micro-contrast matches mtf chart for each filmstock.
+- Set the simulated frame size to match resolution, grain intensity, and aspect ratio.
 
 ## Installation
-Install required packages as follows:
-- [`ffmpeg-python`](https://pypi.org/project/ffmpeg-python/)
-- [`imageio`](https://pypi.org/project/imageio/)
-- [`numpy`](https://pypi.org/project/numpy/)
-- [`rawpy`](https://pypi.org/project/rawpy/)
-- [`PyExifTool`](https://pypi.org/project/PyExifTool/)
-- [`SciPy`](https://pypi.org/project/SciPy/)
-- [`lensfunpy`](https://pypi.org/project/lensfunpy/)
-- [`opencv-python`](https://pypi.org/project/opencv-python/)
-- [`pillow`](https://pypi.org/project/pillow/)
 
-Optional:
-- [`cupy`](https://pypi.org/project/cupy/)
+### Windows
+The easiest way to run raw2film is to download the latest `.exe` from the [releases](../../releases) section.  
+(There might be issues with Windows Defender, in which case it is recommended to use the python package.)
+
+### Python Package
+You can also install the program using pip:  
+
+```bash
+pip install git+https://github.com/JanLohse/raw2film
+```
+Then run with `raw2film`.
+
+This should also work on other operating systems, even if it has not yet been tested.
+
+If CuPy has been installed, CUDA is used to display the preview, which results in a more responsive UI.
+This might result in slower exports though, as there might be a lack of VRAM.
 
 ## Usage
-Put `processing.py` and the `.cube` files in the same folder as the raw images and run `processing.py`.
-With a working `cupy` installation `processing_cuda.py` can be used instead to make use of gpu acceleration.
 
-Get a list of parameters with the argument `--help`.
+The interface is designed to be familiar for anyone who has used a raw editor before.
 
-### Lens correction
-For cameras which can easily be matched from their metadata it is applied automatically.
-Otherwise they can be added to `CAMERA_DB` and `LENS_DB` manually to ensure they are found by `lensfunpy`.
-For this find an identifying tag in the metadata of the file for each (e.g. using [ExifTool](https://exiftool.org/)) and find their tag for `lensfunpy` by running the options `--list_cameras` and `--list_lenses`.
-Then add the identifier and `lensfunpy` tag to the databases in `processing.py`.
+- The image bar on the bottom lets you select one or multiple images to edit at once. (Select multiple with Shift or Ctrl.)
+- Copy settings from one image to the selected ones by clicking on the thumbnail with the middle mouse button.
+- Double click on a settings label to reset to the default value.
+- Many shortcuts are available. Hover over a setting to see its description and shortcut.
+- By default a simplified render is activated for preview to make the software more responsive. Activate the full preview under view to see the full film characterisitcs.
 
-## Features
-- Develop raw images into `.jpg` files and organize the output by date.
-- Apply basic film emulation including _halation_, _grain_, and _resolution_.
-- Automatic _exposure adjustment_ based solely on scene brightness regardless of exposure.
-- White balance tries to adhere to daylight balance, but will adjust slightly.
-- Support for ARRI LogC3 LUTs, including output under multiple LUTs to generate alternative versions.
-- Emulate various _film formats_ by matching resolution and aspect ratio.
-- Optionally add a _canvas_ with a fixed output aspect-ratio, e.g. to get a uniform output for Instagram posts.
-- Lens correction using `lensfunpy`.
-- Film emulation LUTs based on [Filmbox](https://videovillage.com/filmbox/):
-  - Natural/Standard/Vibrant: Variants with different saturation and black levels.
-  - Kodak: Kodak Vision3 250D with Kodak 2383 print film.
-  - Fuji: Fuji Eterna Vivid 160T 8543 with Fuji 3513 print film.
-  - BW: Kodak Double-X black and white film.
+### Main GUI
+
+<img width="1082" height="752" alt="main gui" src="https://github.com/user-attachments/assets/03ac09d2-c48c-4acb-8e6b-7527343971cf" />
+
+### Filmstock Selector
+When clicking on the magnifying glass a window opens to search and browse through the available film stocks.
+
+<img width="866" height="585" alt="filmstock selector" src="https://github.com/user-attachments/assets/1a651ba2-cd53-4484-92ef-ed4cbcc0971b" /> 
