@@ -12,13 +12,14 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSetti
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea, QSplitter
+from spectral_film_lut import REVERSAL_FILM
+from spectral_film_lut.film_loader import load_ui
+from spectral_film_lut.filmstock_selector import FilmStockSelector
+
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
-from raw2film.utils import add_metadata
-from spectral_film_lut import NEGATIVE_FILM, REVERSAL_FILM, PRINT_FILM
-from spectral_film_lut.film_loader import load_ui
-from spectral_film_lut.filmstock_selector import FilmStockSelector
+from raw2film.utils import add_metadata, generate_histogram
 
 
 class MultiWorker(QObject):
@@ -207,6 +208,12 @@ class MainWindow(QMainWindow):
                                 "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
                                 "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
                                 "burn_scale": 50, "flip": False, "tint": 0}
+
+        self.histogram = QLabel()
+        self.histogram.setScaledContents(True)
+        self.histogram.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.histogram.setMinimumSize(0, 0)
+        add_option(self.histogram)
 
         self.profile_selector = QComboBox()
         self.profile_selector.addItem("Default")
@@ -1031,6 +1038,11 @@ Affects only colors.""")
             self.preview_image = process_image(image, metadata=self.load_metadata(src), **processing_args)
         image = self.preview_image
         height, width, _ = image.shape
+        histogram = generate_histogram(image, 80)
+        histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],
+                                             QImage.Format.Format_RGB888))
+        self.histogram.setPixmap(histogram)
+        self.histogram.setMinimumSize(0, 0)
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         self.pixmap = QPixmap.fromImage(image)
         self.image.setPixmap(self.pixmap)

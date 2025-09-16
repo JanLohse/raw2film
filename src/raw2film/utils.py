@@ -6,7 +6,7 @@ from shutil import copy
 import exiftool
 
 from raw2film import data
-
+import numpy as np
 
 def find_data(metadata, db):
     """Search for camera and lens name in metadata"""
@@ -165,3 +165,67 @@ def add_metadata(src, metadata, exp_comp):
     with exiftool.ExifToolHelper() as et:
         et.set_tags([src], metadata, '-overwrite_original')
 
+
+import numpy as np
+from numba import njit
+
+
+@njit
+def generate_histogram(image, height=100):
+    """
+    Generate an RGB histogram as an image-like numpy array.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Input RGB image (H x W x 3), dtype should be uint8 (0-255).
+    height : int
+        Height of the histogram image.
+
+    Returns
+    -------
+    hist_img : np.ndarray
+        Histogram as a numpy array of shape (height, 256, 3).
+    """
+    # Initialize bins
+    hist_r = np.zeros(256, dtype=np.int64)
+    hist_g = np.zeros(256, dtype=np.int64)
+    hist_b = np.zeros(256, dtype=np.int64)
+
+    h, w, _ = image.shape
+
+    # Count frequencies
+    for i in range(h):
+        for j in range(w):
+            r = image[i, j, 0]
+            g = image[i, j, 1]
+            b = image[i, j, 2]
+            hist_r[r] += 1
+            hist_g[g] += 1
+            hist_b[b] += 1
+
+    # Normalize histograms to fit in 'height'
+    max_val = max(hist_r.max(), hist_g.max(), hist_b.max())
+    if max_val == 0:
+        max_val = 1  # avoid division by zero
+
+    hist_r = (hist_r * height) // max_val
+    hist_g = (hist_g * height) // max_val
+    hist_b = (hist_b * height) // max_val
+
+    # Create histogram image
+    hist_img = np.zeros((height, 256, 3), dtype=np.uint8)
+
+    for x in range(256):
+        r_val = hist_r[x]
+        g_val = hist_g[x]
+        b_val = hist_b[x]
+
+        for y in range(height - r_val, height):
+            hist_img[y, x, 0] = 255
+        for y in range(height - g_val, height):
+            hist_img[y, x, 1] = 255
+        for y in range(height - b_val, height):
+            hist_img[y, x, 2] = 255
+
+    return hist_img
