@@ -79,9 +79,9 @@ class MainWindow(QMainWindow):
                               'Decade': f"{filmstocks[x].year // 10 * 10}s" if filmstocks[x].year is not None else None,
                               'stage': filmstocks[x].stage,
                               'Chromaticity': 'BW' if filmstocks[x].density_measure == 'bw' else 'Color',
-                              'image': QImage(np.require(filmstocks[x].color_checker, np.uint8, 'C'), 6, 4, 18, QImage.Format.Format_RGB888),
-                              'Gamma': round(filmstocks[x].gamma, 3)} for x in
-                          filmstocks}
+                              'image': QImage(np.require(filmstocks[x].color_checker, np.uint8, 'C'), 6, 4, 18,
+                                              QImage.Format.Format_RGB888), 'Gamma': round(filmstocks[x].gamma, 3),
+                              'Alias': filmstocks[x].alias, 'Comment': filmstocks[x].comment} for x in filmstocks}
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
@@ -391,8 +391,8 @@ resulting from reflections on the film backing.""")
         sort_keys_negative = ["Name", "Year", "Resolution", "Granularity", "sensitivity", "Gamma"]
         group_keys_negative = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "Chromaticity"]
-        sidebar_keys_negative = ["Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity", "Medium",
-                                 "Chromaticity", "Gamma"]
+        sidebar_keys_negative = ["Alias", "Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity",
+                                 "Medium", "Chromaticity", "Gamma", "Comment"]
         self.filmstocks["None"] = None
         self.negative_selector = FilmStockSelector(negative_info, sort_keys=sort_keys_negative, image_key="image",
                                                    group_keys=group_keys_negative, list_keys=list_keys_negative,
@@ -429,7 +429,7 @@ Decreases how blue the print is.""")
         sort_keys_print = ["Name", "Year", "Gamma"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
-        sidebar_keys_print = ["Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma"]
+        sidebar_keys_print = ["Alias", "Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma", "Comment"]
         self.print_selector = FilmStockSelector(print_info, sort_keys=sort_keys_print, group_keys=group_keys_print,
                                                 list_keys=list_keys_print, sidebar_keys=sidebar_keys_print,
                                                 default_group="Manufacturer", image_key="image")
