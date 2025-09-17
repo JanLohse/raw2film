@@ -203,11 +203,11 @@ class MainWindow(QMainWindow):
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
                                 "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
                                 "grain_size": 0.0025, "halation_size": 1, "halation_green_factor": 0.4,
-                                "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0}
+                                "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0,
+                                "pre_flash_neg": -4, "pre_flash_print": -4}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
-                                "profile": "Default", "lens_correction": True, "pre_flash_neg": -4, "canvas_mode": "No",
-                                "canvas_scale": 1, "canvas_ratio": 0.8, "pre_flash_print": -4, "highlight_burn": 0,
-                                "burn_scale": 50, "flip": False, "tint": 0}
+                                "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
+                                "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
 
         self.histogram = QLabel()
         self.histogram.setScaledContents(True)
@@ -296,14 +296,14 @@ class MainWindow(QMainWindow):
 
         self.pre_flash_neg = Slider()
         self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10)
-        add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_img_params["pre_flash_neg"],
+        add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_prf_params["pre_flash_neg"],
                    self.pre_flash_neg.setValue, tool_tip="""Simulate the effect of exposing the negative with uniform light.
 Helps to reduce contrast by lifting the shadows.
 Set in how many stops below middle gray the uniform exposure is.
 -4 will turn off the effect completely.""")
         self.pre_flash_print = Slider()
         self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10)
-        add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_img_params["pre_flash_print"],
+        add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_prf_params["pre_flash_print"],
                    self.pre_flash_print.setValue, tool_tip="""Simulate the effect of exposing the print film with uniform light.
 Helps to reduce contrast by lowering the highlights.
 Set in how many stops below middle gray the uniform exposure is.
@@ -560,8 +560,8 @@ Affects only colors.""")
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
         self.delete_all_profiles_button.triggered.connect(self.delete_all_profiles)
-        self.pre_flash_neg.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_neg"))
-        self.pre_flash_print.valueChanged.connect(lambda x: self.setting_changed(x, "pre_flash_print"))
+        self.pre_flash_neg.valueChanged.connect(lambda x: self.profile_changed(x, "pre_flash_neg"))
+        self.pre_flash_print.valueChanged.connect(lambda x: self.profile_changed(x, "pre_flash_print"))
         self.highlight_burn.valueChanged.connect(lambda x: self.setting_changed(x, "highlight_burn"))
         self.burn_scale.valueChanged.connect(lambda x: self.setting_changed(x, "burn_scale"))
         self.quick_save_button.triggered.connect(self.quick_save)
@@ -917,8 +917,6 @@ Affects only colors.""")
         set_safely(self.camera_selector, "setCurrentText", "cam")
         set_safely(self.lens_selector, "setCurrentText", "lens")
 
-        set_safely(self.pre_flash_neg, "setValue", "pre_flash_neg")
-        set_safely(self.pre_flash_print, "setValue", "pre_flash_print")
         set_safely(self.highlight_burn, "setValue", "highlight_burn")
         set_safely(self.burn_scale, "setValue", "burn_scale")
 
@@ -940,6 +938,8 @@ Affects only colors.""")
         self.halation_green.setValue(profile_params["halation_green_factor"])
         self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
+        self.pre_flash_neg.setValue(profile_params["pre_flash_neg"])
+        self.pre_flash_print.setValue(profile_params["pre_flash_print"])
         self.grain.setCheckState(Qt.CheckState(profile_params["grain"]))
         if "frame_width" in profile_params:
             self.frame_width.setText(str(profile_params["frame_width"]))
