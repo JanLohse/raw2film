@@ -13,6 +13,13 @@ The film emulation includes:
 
 ## Installation
 
+### Requirements
+To run raw2film it is required to have installed [exiftool](https://exiftool.org/) on your system.
+On Linux this can be done easily with
+```bash
+sudo apt install exiftool
+```
+
 ### Windows
 The easiest way to run raw2film is to download the latest `.exe` from the [releases](../../releases) section.  
 (There might be issues with Windows Defender, in which case it is recommended to use the python package.)
@@ -25,10 +32,10 @@ pip install git+https://github.com/JanLohse/raw2film
 ```
 Then run with `raw2film`.
 
-This should also work on other operating systems, even if it has not yet been tested.
-
-If CuPy has been installed, CUDA is used to display the preview, which results in a more responsive UI.
-This might result in slower exports though, as there might be a lack of VRAM.
+### GPU acceleration
+To make use of your GPUs CUDA cores you need to install the python package CuPy and run the program from the python package.
+CUDA is used to display the preview, which results in a more responsive UI.
+It can result in slower exports though, as there might be a lack of VRAM.
 
 ## Usage
 
