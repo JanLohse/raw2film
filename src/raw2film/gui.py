@@ -8,7 +8,7 @@ from functools import lru_cache
 import exiftool
 import imageio
 import lensfunpy
-from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings
+from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea, QSplitter
@@ -610,6 +610,23 @@ Affects only colors.""")
 
         self.load_profile_params()
 
+        QTimer.singleShot(0, self.test_exiftool)
+
+    def test_exiftool(self):
+        print("rujnning")
+        try:
+            exiftool.ExifToolHelper()
+        except FileNotFoundError:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Error")
+            msg.setText("ExifTool not found.\nPlease install ExifTool first.")
+            msg.setStandardButtons(QMessageBox.StandardButton.Close)
+
+            # When Close is clicked, quit the app
+            if msg.exec() == QMessageBox.StandardButton.Close:
+                QApplication.quit()
+
     def reset_image(self):
         for src in self.image_bar.get_highlighted():
             src_short = src.split("/")[-1]
@@ -1092,8 +1109,11 @@ Affects only colors.""")
         filename = filename.split("/")[-1]
         if '.' not in filename:
             filename += '.jpg'
-        if not os.path.exists(path):
-            os.makedirs(path)
+        try:
+            if not os.path.exists(path):
+                os.makedirs(path)
+        except FileExistsError:
+            pass
         if move_raw:
             if not os.path.exists(path + 'RAW'):
                 os.makedirs(path + 'RAW')
