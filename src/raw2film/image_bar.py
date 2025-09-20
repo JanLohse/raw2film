@@ -3,6 +3,7 @@ from PyQt6.QtCore import QThreadPool, QSize
 from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy
 from spectral_film_lut.utils import *
+import gc
 
 
 class Thumbnail(QLabel):
@@ -66,6 +67,8 @@ class ImageBar(QScrollArea):
         self.highlighted_labels = set()
         self.image_labels = []
 
+        self.threadpool = QThreadPool()
+
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -99,13 +102,14 @@ class ImageBar(QScrollArea):
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
 
-        threadpool = QThreadPool()
-        worker = Worker(self.lazy_load_images)
-        threadpool.start(worker)
+        self.start_lazy_loading()
 
     def clear_images(self):
         for i in reversed(range(self.image_layout.count())):
-            self.image_layout.itemAt(i).widget().setParent(None)
+            widget = self.image_layout.takeAt(i).widget()
+            widget.clear()
+            widget.deleteLater()
+        gc.collect()
         self.image_labels = []
         self.selected_label = None
 
