@@ -613,7 +613,6 @@ Affects only colors.""")
         QTimer.singleShot(0, self.test_exiftool)
 
     def test_exiftool(self):
-        print("rujnning")
         try:
             exiftool.ExifToolHelper()
         except FileNotFoundError:
@@ -650,9 +649,9 @@ Affects only colors.""")
             for image in self.image_bar.get_highlighted():
                 image_short = image.split("/")[-1]
                 lens, cam = None, None
-                if "lens" in self.image_params[image_short]:
+                if image_short in self.image_params and "lens" in self.image_params[image_short]:
                     lens = self.image_params[image_short]["lens"]
-                if "cam" in self.image_params[image_short]:
+                if image_short in self.image_params and "cam" in self.image_params[image_short]:
                     cam = self.image_params[image_short]["cam"]
                 self.image_params[image_short] = self.image_params[src_short].copy()
                 if lens is not None:
