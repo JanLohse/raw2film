@@ -758,7 +758,6 @@ Affects only colors.""")
         if ok:
             for folder in set(["/".join(filename.split("/")[:-1]) for filename in filenames]):
                 self.load_settings_directory(folder)
-            self.image_bar.clear_images()
             self.image_bar.load_images(filenames)
 
     def load_folder(self):
@@ -767,7 +766,6 @@ Affects only colors.""")
             self.load_settings_directory(folder)
             filenames = [folder + "/" + filename for filename in os.listdir(folder) if
                          filename.lower().endswith(data.EXTENSION_LIST)]
-            self.image_bar.clear_images()
             self.image_bar.load_images(filenames)
 
     def load_image(self, src, **kwargs):

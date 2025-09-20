@@ -22,6 +22,7 @@ class Thumbnail(QLabel):
             thumb = raw.extract_thumb()
         pixmap = QPixmap()
         pixmap.loadFromData(thumb.data, "JPEG")
+        pixmap = pixmap.scaledToWidth(128)
         self.setPixmap(pixmap)
         self.loaded = True
 
@@ -95,23 +96,23 @@ class ImageBar(QScrollArea):
     def sizeHint(self):
         return QSize(super().sizeHint().width(), self.height_hint)
 
-    def load_images(self, image_paths):
-        for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
-            label = Thumbnail(img_path, self)
-            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
-            self.image_layout.addWidget(label)
-            self.image_labels.append(label)
-
-        self.start_lazy_loading()
-
     def clear_images(self):
         for i in reversed(range(self.image_layout.count())):
             widget = self.image_layout.takeAt(i).widget()
             widget.clear()
             widget.deleteLater()
-        gc.collect()
         self.image_labels = []
         self.selected_label = None
+        gc.collect()
+
+    def load_images(self, image_paths):
+        self.clear_images()
+        for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
+            label = Thumbnail(img_path, self)
+            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
+            self.image_layout.addWidget(label)
+            self.image_labels.append(label)
+        self.start_lazy_loading()
 
     def start_lazy_loading(self):
         worker = Worker(self.lazy_load_images)
