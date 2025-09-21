@@ -1,9 +1,10 @@
+import gc
+
 import rawpy
-from PyQt6.QtCore import QThreadPool, QSize, QTimer
+from PyQt6.QtCore import QThreadPool, QSize, QRect, QTimer
 from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy, QApplication
 from spectral_film_lut.utils import *
-import gc
 
 
 class Thumbnail(QLabel):
@@ -15,14 +16,17 @@ class Thumbnail(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("border: 1px solid gray; border-radius: 10px;")
         self._pixmap = None
+        self.loaded = False
 
     def load(self):
-        with rawpy.imread(self.image_path) as raw:
-            thumb = raw.extract_thumb()
-        pixmap = QPixmap()
-        pixmap.loadFromData(thumb.data, "JPEG")
-        pixmap = pixmap.scaledToWidth(128)
-        self.setPixmap(pixmap)
+        if not self.loaded:
+            self.loaded = True
+            with rawpy.imread(self.image_path) as raw:
+                thumb = raw.extract_thumb()
+            pixmap = QPixmap()
+            pixmap.loadFromData(thumb.data, "JPEG")
+            pixmap = pixmap.scaledToWidth(128)
+            self.setPixmap(pixmap)
 
     def resizeEvent(self, event):
         """Ensure the label is always a square and the image scales."""
@@ -91,6 +95,8 @@ class ImageBar(QScrollArea):
         QShortcut(QKeySequence('Left'), self).activated.connect(lambda: self.arrow_pressed('left'))
         QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
 
+        self.horizontalScrollBar().valueChanged.connect(self.check_visible)
+
     def sizeHint(self):
         return QSize(super().sizeHint().width(), self.height_hint)
 
@@ -111,15 +117,7 @@ class ImageBar(QScrollArea):
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
         QApplication.processEvents()
-        QTimer.singleShot(0, self.start_lazy_loading)
-
-    def start_lazy_loading(self):
-        worker = Worker(self.lazy_load_images)
-        self.threadpool.start(worker)
-
-    def lazy_load_images(self, **kwargs):
-        for label in self.image_labels:
-            label.load()
+        QTimer.singleShot(0, self.check_visible)
 
     def label_mouse_event(self, event, label):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -282,3 +280,12 @@ class ImageBar(QScrollArea):
                 if new_selected is not None and self.image_labels:
                     self.select_image(self.image_labels[new_selected])
                 return
+
+    def check_visible(self):
+        viewport = self.viewport().rect()
+        for lbl in self.image_labels:
+            # Map label's geometry to viewport coordinates
+            rect = self.viewport().mapFromGlobal(lbl.mapToGlobal(lbl.rect().topLeft()))
+            label_rect = QRect(rect, lbl.size())
+            if viewport.intersects(label_rect):
+                lbl.load()
