@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from pathlib import Path
@@ -173,7 +174,7 @@ from numba import njit
 @njit
 def generate_histogram(image, height=100):
     """
-    Generate an RGB histogram as an image-like numpy array.
+    Generate an RGB histogram as an image-like numpy array with logarithmic y-scaling.
 
     Parameters
     ----------
@@ -188,9 +189,9 @@ def generate_histogram(image, height=100):
         Histogram as a numpy array of shape (height, 256, 3).
     """
     # Initialize bins
-    hist_r = np.zeros(256, dtype=np.int64)
-    hist_g = np.zeros(256, dtype=np.int64)
-    hist_b = np.zeros(256, dtype=np.int64)
+    hist_r = np.zeros(256, dtype=np.float32)
+    hist_g = np.zeros(256, dtype=np.float32)
+    hist_b = np.zeros(256, dtype=np.float32)
 
     h, w, _ = image.shape
 
@@ -204,14 +205,43 @@ def generate_histogram(image, height=100):
             hist_g[g] += 1
             hist_b[b] += 1
 
-    # Normalize histograms to fit in 'height'
+    # Normalize histograms to 1
     max_val = max(hist_r.max(), hist_g.max(), hist_b.max())
     if max_val == 0:
         max_val = 1  # avoid division by zero
 
-    hist_r = (hist_r * height) // max_val
-    hist_g = (hist_g * height) // max_val
-    hist_b = (hist_b * height) // max_val
+    hist_r /= max_val
+    hist_g /= max_val
+    hist_b /= max_val
+
+    # Apply log transform (avoid log(0))
+    for i in range(256):
+        hist_r[i] = np.log1p(hist_r[i])
+        hist_g[i] = np.log1p(hist_g[i])
+        hist_b[i] = np.log1p(hist_b[i])
+
+    # Smooth with a 1-pixel kernel (moving average over neighbors)
+    smoothed_r = np.empty_like(hist_r)
+    smoothed_g = np.empty_like(hist_g)
+    smoothed_b = np.empty_like(hist_b)
+
+    for i in range(256):
+        left = i - 1 if i > 0 else i
+        right = i + 1 if i < 255 else i
+        smoothed_r[i] = (hist_r[left] + hist_r[i] + hist_r[right]) / 3
+        smoothed_g[i] = (hist_g[left] + hist_g[i] + hist_g[right]) / 3
+        smoothed_b[i] = (hist_b[left] + hist_b[i] + hist_b[right]) / 3
+
+    hist_r, hist_g, hist_b = smoothed_r, smoothed_g, smoothed_b
+
+    # normalize to fit in height
+    max_val = max(hist_r.max(), hist_g.max(), hist_b.max())
+    if max_val == 0:
+        max_val = 1  # avoid division by zero
+
+    hist_r = (hist_r * height) / max_val
+    hist_g = (hist_g * height) / max_val
+    hist_b = (hist_b * height) / max_val
 
     # Create histogram image
     hist_img = np.zeros((height, 256, 3), dtype=np.uint8)

@@ -635,7 +635,8 @@ Affects only colors.""")
 
     def reset_all_images(self):
         self.image_params = {}
-        self.load_image(self.image_bar.selected_label.image_path)
+        if self.image_bar.selected_label is not None:
+            self.load_image(self.image_bar.selected_label.image_path)
 
     def reset_profile(self):
         profile = self.profile_selector.currentText()
