@@ -1,7 +1,7 @@
 import rawpy
-from PyQt6.QtCore import QThreadPool, QSize
+from PyQt6.QtCore import QThreadPool, QSize, QTimer
 from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
-from PyQt6.QtWidgets import QScrollArea, QSizePolicy
+from PyQt6.QtWidgets import QScrollArea, QSizePolicy, QApplication
 from spectral_film_lut.utils import *
 import gc
 
@@ -15,7 +15,6 @@ class Thumbnail(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("border: 1px solid gray; border-radius: 10px;")
         self._pixmap = None
-        self.loaded = False
 
     def load(self):
         with rawpy.imread(self.image_path) as raw:
@@ -24,12 +23,11 @@ class Thumbnail(QLabel):
         pixmap.loadFromData(thumb.data, "JPEG")
         pixmap = pixmap.scaledToWidth(128)
         self.setPixmap(pixmap)
-        self.loaded = True
 
     def resizeEvent(self, event):
         """Ensure the label is always a square and the image scales."""
-        size = min(self.width(), self.height())
-        self.resize(size, size)
+        size = event.size().height()
+        self.setFixedWidth(size)
         if self._pixmap:
             super().setPixmap(
                 self._pixmap.scaled(
@@ -112,7 +110,8 @@ class ImageBar(QScrollArea):
             label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
-        self.start_lazy_loading()
+        QApplication.processEvents()
+        QTimer.singleShot(0, self.start_lazy_loading)
 
     def start_lazy_loading(self):
         worker = Worker(self.lazy_load_images)
