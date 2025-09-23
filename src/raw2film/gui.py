@@ -788,6 +788,8 @@ Affects only colors.""")
                 self.image_params[src_short]["lens"] = "None"
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = self.profile_selector.currentText()
+        if "exposure_kelvin" not in self.image_params[src_short]:
+            self.image_params[src_short]["exposure_kelvin"] = self.exp_wb.getValue()
         self.load_image_params(src_short)
         if self.active:
             self.update_preview(src)
@@ -881,6 +883,10 @@ Affects only colors.""")
             src_short = src.split("/")[-1]
             if src_short not in self.image_params:
                 self.image_params[src_short] = {}
+                if "profile" not in self.image_params[src_short]:
+                    self.image_params[src_short]["profile"] = self.profile_selector.currentText()
+                if "exposure_kelvin" not in self.image_params[src_short]:
+                    self.image_params[src_short]["exposure_kelvin"] = self.exp_wb.getValue()
             self.image_params[src_short][key] = value
         if key == "exposure_kelvin":
             self.update_wb_mode(value)

@@ -96,6 +96,7 @@ class ImageBar(QScrollArea):
         QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
 
         self.horizontalScrollBar().valueChanged.connect(self.check_visible)
+        self.horizontalScrollBar().rangeChanged.connect(self.check_visible)
 
     def sizeHint(self):
         return QSize(super().sizeHint().width(), self.height_hint)
@@ -256,6 +257,7 @@ class ImageBar(QScrollArea):
                     new_selected -= 1
                 if new_selected >= len(self.image_labels) - 1:
                     new_selected = len(self.image_labels) - 1
+        QTimer.singleShot(0, self.check_visible)
         return new_selected
 
     def close_highlighted(self):
