@@ -107,3 +107,11 @@ def xyz_to_displayP3(XYZ, **kwargs):
         [0.03584583024378447, -0.07617238926804182, 0.9568845240076872]], dtype=XYZ.dtype)
 
     return xyz_to_srgb(XYZ, M, **kwargs)
+
+
+def rec709_to_displayP3(rgb):
+    M = xp.array([[0.822462, 0.177538, 0.000000],
+                  [0.033194, 0.966806, 0.000000],
+                  [0.017083, 0.072397, 0.910520]], dtype=xp.float32)
+    rgb = xp.clip(rgb @ M.T, 0, 255).astype(xp.uint8)
+    return rgb

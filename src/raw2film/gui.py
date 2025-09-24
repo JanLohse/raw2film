@@ -12,6 +12,7 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSetti
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
     QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea, QSplitter
+from raw2film.color_processing import rec709_to_displayP3
 from spectral_film_lut import REVERSAL_FILM
 from spectral_film_lut.film_loader import load_ui
 from spectral_film_lut.filmstock_selector import FilmStockSelector
@@ -1061,6 +1062,8 @@ Affects only colors.""")
         image = self.preview_image
         height, width, _ = image.shape
         histogram = generate_histogram(image, 80)
+        if self.p3_preview.isChecked():
+            histogram = rec709_to_displayP3(histogram)
         histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],
                                              QImage.Format.Format_RGB888))
         self.histogram.setPixmap(histogram)
