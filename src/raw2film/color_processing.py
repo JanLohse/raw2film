@@ -102,7 +102,7 @@ def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
 
 
 def xyz_to_displayP3(XYZ, **kwargs):
-    M = xp.array([[2.493496911941425, -0.9313836179191239, -0.40271078445071684],
+    M = np.array([[2.493496911941425, -0.9313836179191239, -0.40271078445071684],
         [-0.8294889695615747, 1.7626640603183463, 0.023624685841943577],
         [0.03584583024378447, -0.07617238926804182, 0.9568845240076872]], dtype=XYZ.dtype)
 
@@ -110,8 +110,8 @@ def xyz_to_displayP3(XYZ, **kwargs):
 
 
 def rec709_to_displayP3(rgb):
-    M = xp.array([[0.822462, 0.177538, 0.000000],
+    M = np.array([[0.822462, 0.177538, 0.000000],
                   [0.033194, 0.966806, 0.000000],
                   [0.017083, 0.072397, 0.910520]], dtype=xp.float32)
-    rgb = xp.clip(rgb @ M.T, 0, 255).astype(xp.uint8)
+    rgb = np.clip(rgb @ M.T, 0, 255).astype(xp.uint8)
     return rgb

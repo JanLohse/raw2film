@@ -205,7 +205,7 @@ class MainWindow(QMainWindow):
                                 "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
                                 "grain_size": 0.0025, "halation_size": 1, "halation_green_factor": 0.4,
                                 "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0,
-                                "pre_flash_neg": -4, "pre_flash_print": -4}
+                                "pre_flash_neg": -4, "pre_flash_print": -4, "sat_adjust": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
                                 "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
@@ -453,6 +453,12 @@ Affects only colors.""")
                    self.projector_kelvin.setValue, hideable=True,
                    tool_tip="Under what light temperature to view the print or slide.")
 
+        self.saturation_slider = Slider()
+        self.saturation_slider.setMinMaxTicks(0, 2, 1, 100)
+        add_option(self.saturation_slider, "Saturation:", self.dflt_prf_params["sat_adjust"],
+                   self.saturation_slider.setValue, hideable=True,
+                   tool_tip="Adjust the saturation in the display color space.")
+
         self.canvas_mode = QComboBox()
         self.canvas_mode.addItems(
             ["No", "Proportional white", "Proportional black", "Uniform white", "Uniform black", "Fixed white",
@@ -565,6 +571,7 @@ Affects only colors.""")
         self.pre_flash_print.valueChanged.connect(lambda x: self.profile_changed(x, "pre_flash_print"))
         self.highlight_burn.valueChanged.connect(lambda x: self.setting_changed(x, "highlight_burn"))
         self.burn_scale.valueChanged.connect(lambda x: self.setting_changed(x, "burn_scale"))
+        self.saturation_slider.valueChanged.connect(lambda x: self.profile_changed(x, "sat_adjust"))
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
@@ -976,6 +983,7 @@ Affects only colors.""")
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.black_offset.setValue(profile_params["black_offset"])
+        self.saturation_slider.setValue(profile_params["sat_adjust"])
 
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
