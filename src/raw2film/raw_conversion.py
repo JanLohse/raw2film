@@ -1,4 +1,6 @@
+import math
 from contextlib import nullcontext
+from functools import cache
 
 import cv2 as cv
 import rawpy
@@ -28,6 +30,11 @@ def crop_rotate_zoom(image, frame_width=36, frame_height=24, rotation=0, zoom=1,
     image = np.rot90(image, k=rotate_times)
 
     return image
+
+@cache
+def create_lut_cached(*args, **kwargs):
+    return create_lut(*args, **kwargs)
+
 
 
 def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
@@ -62,9 +69,9 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
                 adjustment = 65535. / image_max
                 factor /= adjustment
                 if "exp_comp" in kwargs:
-                    kwargs["exp_comp"] -= xp.log2(adjustment)
+                    kwargs["exp_comp"] -= math.log2(adjustment)
                 else:
-                    kwargs["exp_comp"] = xp.log2(adjustment)
+                    kwargs["exp_comp"] = math.log2(adjustment)
             image = xp.round(xp.sqrt(image / factor) * 65535).astype(xp.uint16)
             kwargs["gamma"] = 2
         mode = 'full'
@@ -111,10 +118,16 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
             image *= 2 ** 16 - 1
             image = image.astype(xp.uint16)
 
-    start_sub = time.time()
-    lut = create_lut(negative_film, print_film, name=str(time.time()), mode=mode, input_colourspace=None,
+    if measure_time:
+        start_sub = time.time()
+    if "exp_comp" in kwargs:
+        kwargs["exp_comp"]  = round(kwargs["exp_comp"], ndigits=1)
+    lut = create_lut_cached(negative_film, print_film, mode=mode, input_colourspace=None,
                      cube=False, **kwargs)
     lut = (lut * (2 ** 16 - 1)).astype(xp.uint16)
+    if measure_time:
+        print(f"{'create lut':28} {time.time() - start_sub:.4f}s")
+        start_sub = time.time()
     if image.shape[-1] == 1:
         image = image.repeat(3, -1)
 
@@ -124,7 +137,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
     else:
         image = apply_lut_tetrahedral_int(image, lut)
     if measure_time:
-        print(f"{'lut':28} {time.time() - start_sub:.4f}s")
+        print(f"{'apply lut':28} {time.time() - start_sub:.4f}s")
         print(f"{'total':28} {time.time() - start:.4f}s")
 
     if canvas_mode and canvas_mode is not None and canvas_mode != "No":
