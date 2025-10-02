@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
                                 "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
-                                "grain_size": 0.0025, "halation_size": 1, "halation_green_factor": 0.4,
+                                "grain_size": 0.001, "halation_size": 1, "halation_green_factor": 0.4,
                                 "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0,
                                 "pre_flash_neg": -4, "pre_flash_print": -4, "sat_adjust": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
@@ -374,8 +374,8 @@ Adjusts scale of film characteristics (halation, resolution, grain)
 and changes aspect ratio.""")
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(1, 5, 1, 10)
-        add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 1000,
+        self.grain_size.setMinMaxTicks(0.5, 4, 1, 10)
+        add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"] * 2000,
                    self.grain_size.setValue, hideable=True, tool_tip="Size of simulated film grains.")
 
         self.halation_size = Slider()
@@ -547,7 +547,7 @@ Affects only colors.""")
         self.zoom.valueChanged.connect(lambda x: self.setting_changed(x, "zoom"))
         self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.triggered.connect(self.hide_controls)
-        self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 1000, "grain_size"))
+        self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x / 2000, "grain_size"))
         self.halation_size.valueChanged.connect(lambda x: self.profile_changed(x, "halation_size"))
         self.halation_intensity.valueChanged.connect(lambda x: self.profile_changed(x, "halation_intensity"))
         self.halation_green.valueChanged.connect(lambda x: self.profile_changed(x, "halation_green_factor"))
@@ -978,7 +978,7 @@ Affects only colors.""")
             if dimensions in data.FORMATS.values():
                 format_name = list(data.FORMATS.keys())[list(data.FORMATS.values()).index(dimensions)]
                 self.format_selector.setCurrentText(format_name)
-        self.grain_size.setValue(profile_params["grain_size"] * 1000)
+        self.grain_size.setValue(profile_params["grain_size"] * 2000)
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.black_offset.setValue(profile_params["black_offset"])
@@ -1075,10 +1075,19 @@ Affects only colors.""")
                                              QImage.Format.Format_RGB888))
         self.histogram.setPixmap(histogram)
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
-        self.pixmap = QPixmap.fromImage(image)
-        self.image.setPixmap(self.pixmap)
+        pixmap = QPixmap.fromImage(image)
+
+        scaled_pixmap = pixmap.scaled(
+            self.image.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+        self.image.setPixmap(scaled_pixmap)
         self.image.setToolTip(src)
-        self.scale_pixmap()
+
+        # keep the original if you want for later rescaling
+        self.pixmap = pixmap
 
     def setup_image_params(self, src):
         image_params = {**self.dflt_img_params, **self.image_params[src]}

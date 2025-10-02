@@ -192,7 +192,45 @@ def gaussian_noise(shape):
     return noise
 
 
-def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, bw_grain=False, **kwargs):
+def grain_kernel(pixel_size_mm, dye_size1_mm=0.0065, dye_size2_mm=0.015):
+    # based on the paper:
+    # Simulating Film Grain using the Noise-Power Spectrum by Ian Stephenson and Arthur Saunders
+    kernel_size_mm = 4.24 * max(dye_size1_mm, dye_size2_mm)
+    kernel_size = round(kernel_size_mm / pixel_size_mm)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    if kernel_size < 3:
+        return None
+
+    # Frequency grid (cycles per mm)
+    fx = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
+    fy = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
+    FX, FY = xp.meshgrid(fx, fy)
+    f = xp.sqrt(FX ** 2 + FY ** 2)  # radial frequency
+
+    # Gaussian model for dye NPS: exp(-(pi*f*D)^2)
+    nps1 = xp.exp(-(np.pi * f * dye_size1_mm) ** 2)
+    nps2 = xp.exp(-(np.pi * f * dye_size2_mm) ** 2)
+
+    # Total NPS (weighted sum)
+    nps = (nps1 + nps2)
+    # generate convolution kernel
+    kernel = xp.zeros((kernel_size, kernel_size))
+    kernel[kernel_size // 2, kernel_size // 2] = 1
+    kernel = xp.fft.fft2(kernel)
+    kernel = kernel * np.sqrt(nps)
+    kernel = xp.fft.ifft2(kernel)
+    kernel = kernel.real.astype(xp.float32)
+
+    # normalize kernel
+    expected_var = xp.mean(nps)
+    expected_std = xp.sqrt(expected_var / 2)
+    kernel /= xp.sum(kernel) * xp.sqrt(expected_std)
+
+    return kernel
+
+
+def grain(rgb, stock, scale, grain_size=0.001, d_factor=6, bw_grain=False, **kwargs):
     # compute scaling factor of exposure rms in regard to measuring device size
     std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
     shape = rgb.shape
@@ -202,14 +240,12 @@ def grain(rgb, stock, scale, grain_size=0.002, d_factor=6, bw_grain=False, **kwa
     xps = [(rms_density + 0.25) / d_factor for rms_density in stock.rms_density]
     fps = [rms * std_factor for rms in stock.rms_curve]
     noise_factors = multi_channel_interp(rgb, xps, fps)
-    grain_size = grain_size * scale
-    factor = grain_size * 2 * math.sqrt(math.pi)
-    if factor > 1:
-        noise = gaussian_blur(noise * noise_factors, grain_size)
-        if len(noise.shape) == 2:
-            noise = noise[..., xp.newaxis]
-    else:
-        noise = noise * noise_factors
+    noise = noise * noise_factors
+    kernel = grain_kernel(1 / scale, 6.5 * grain_size, 15 * grain_size)
+    if kernel is not None:
+        noise = convolution_filter(noise, kernel)
+    if len(noise.shape) == 2:
+        noise = noise[..., xp.newaxis]
     if bw_grain:
         noise /= 1.5
     rgb += noise
