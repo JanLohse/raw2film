@@ -1,4 +1,4 @@
-from functools import cache
+from functools import cache, lru_cache
 
 import cv2
 import cv2 as cv
@@ -99,53 +99,41 @@ def gaussian_blur(rgb, sigma=1.):
         return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
 
 
-def mtf_curve(mtf_data, lowest=1, highest=200):
-    mtf_data = {k: v for k, v in mtf_data.items() if k >= lowest}
-    if lowest not in mtf_data:
-        mtf_data[lowest] = 1
-    mtf_data = {k: v for k, v in sorted(mtf_data.items(), key=lambda item: item[0])}
-    frequencies = np.array(list(mtf_data.keys()), dtype=np.float32)
-    values = np.array(list(mtf_data.values()), dtype=np.float32)
-    if max(frequencies) < highest:
-        ax, bx = frequencies[-2:]
-        ay, by = values[-2:]
-        extrapolation = lambda x: ay * np.e ** (np.log(by / ay) / (bx - ax) * (x - ax))
-        number = math.ceil((highest - max(frequencies)) / 30)
-        extrapol_freq = (np.array(list(range(number))) + 1) / number * (highest - max(frequencies)) + max(frequencies)
-        extrapol_val = np.vectorize(extrapolation)(extrapol_freq)
-        frequencies = np.hstack((frequencies, extrapol_freq))
-        values = np.hstack((values, extrapol_val))
-    frequencies = np.log10(frequencies)
-    values = np.log10(values)
-    return lambda x: 10 ** np.interp(np.log10(x + 0.00001), frequencies, values, right=-1000000000000000)
+def mtf_curve(logf, vals):
+    return lambda x: xp.interp(xp.log1p(x), logf, vals, left=1, right=0)
 
 
-def mtf_kernel(mtf_data, frequency, f_shift):
-    highest = frequency.max()
-    mtf = mtf_curve(mtf_data, highest=highest)
-    factors = mtf(frequency)
-    shift = f_shift * factors
-    kernel = np.fft.ifft2(np.fft.ifftshift(shift)).real
-    kernel /= np.sum(kernel)
-    return xp.asarray(kernel)
+def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
+    kernel_size = round(kernel_size_mm / pixel_size_mm)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
 
+    # Frequency grid
+    fx = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
+    fy = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
+    FX, FY = xp.meshgrid(fx, fy)
+    f = xp.sqrt(FX ** 2 + FY ** 2)  # radial frequency magnitude
+
+    # Apply transfer function in frequency domain
+    H = func(f)
+
+    # Get spatial kernel by inverse FFT
+    kernel = xp.fft.ifft2(H)
+    kernel = xp.fft.fftshift(xp.abs(kernel))  # center it
+    kernel /= xp.sum(kernel)
+
+    return kernel
+
+
+@lru_cache(maxsize=50)
+def mtf_kernel(logf, vals, scale):
+    mtf_func = mtf_curve(xp.asarray(logf), xp.asarray(vals))
+    kernel = compute_kernel_from_function(mtf_func, 1., 1 / scale)
+    return kernel
 
 def film_sharpness(rgb, stock, scale):
-    size = int(scale // 2)
-    if not size % 2:
-        size += 1
-
-    kernel = np.zeros((size, size))
-    kernel[size // 2, size // 2] = 1
-    f = np.fft.fft2(kernel)
-    f_shift = np.fft.fftshift(f)
-
-    frequency = np.abs(np.fft.fftfreq(size, 1 / scale)[:, None])
-    frequency_x, frequency_y = np.meshgrid(frequency.reshape(-1), frequency.reshape(-1))
-    frequency = np.fft.fftshift(np.sqrt(frequency_x ** 2 + frequency_y ** 2))
-
-    kernel = xp.stack([mtf_kernel(mtf, frequency, f_shift) for mtf in stock.mtf], axis=-1, dtype=xp.float32)
-
+    kernel = xp.stack([mtf_kernel(logf, vals, scale) for logf, vals in stock.mtf], axis=-1, dtype=xp.float32)
+    size = kernel.shape[0]
     if len(kernel.shape) == 2 or size >= 13 or cuda_available:
         rgb = convolution_filter(rgb, kernel, padding=True)
     elif len(kernel.shape) == 3:
@@ -215,12 +203,9 @@ def grain_kernel(pixel_size_mm, dye_size1_mm=0.0065, dye_size2_mm=0.015):
     # Total NPS (weighted sum)
     nps = (nps1 + nps2)
     # generate convolution kernel
-    kernel = xp.zeros((kernel_size, kernel_size))
-    kernel[kernel_size // 2, kernel_size // 2] = 1
-    kernel = xp.fft.fft2(kernel)
-    kernel = kernel * np.sqrt(nps)
-    kernel = xp.fft.ifft2(kernel)
-    kernel = kernel.real.astype(xp.float32)
+    # Get spatial kernel by inverse FFT
+    kernel = xp.fft.ifft2(xp.sqrt(nps))
+    kernel = xp.fft.fftshift(kernel.real)  # center it
 
     # normalize kernel
     expected_var = xp.mean(nps)
