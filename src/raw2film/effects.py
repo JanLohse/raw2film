@@ -208,9 +208,7 @@ def grain_kernel(pixel_size_mm, dye_size1_mm=0.0065, dye_size2_mm=0.015):
     kernel = xp.fft.fftshift(kernel.real)  # center it
 
     # normalize kernel
-    expected_var = xp.mean(nps)
-    expected_std = xp.sqrt(expected_var / 2)
-    kernel /= xp.sum(kernel) * xp.sqrt(expected_std)
+    kernel /= xp.sqrt(xp.sum(kernel))
 
     return kernel
 
