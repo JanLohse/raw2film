@@ -1,63 +1,109 @@
 import gc
+import io
 
 import rawpy
+from PIL import Image, ImageOps
 from PyQt6.QtCore import QThreadPool, QSize, QRect, QTimer
-from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence
+from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence, QImage, QPainter, QPen
 from PyQt6.QtWidgets import QScrollArea, QSizePolicy, QApplication
 from spectral_film_lut.utils import *
 
 
-class Thumbnail(QLabel):
+from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QSizePolicy
+from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtCore import Qt
+from PIL import Image, ImageOps
+import rawpy, io
+
+
+class Thumbnail(QFrame):
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
         self.image_path = image_path
         self.setToolTip(image_path)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("border: 1px solid gray; border-radius: 10px;")
+
+        # Use QFrame for border handling
+        self.setFrameShape(QFrame.Shape.Box)
+        self.setLineWidth(0)
+
+        # Inner QLabel for image
+        self.label = QLabel()
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+
+        # Layout to hold the QLabel
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.label)
+        self.setStyleSheet("")
+
         self._pixmap = None
         self.loaded = False
 
     def load(self):
-        if not self.loaded:
-            self.loaded = True
-            with rawpy.imread(self.image_path) as raw:
-                thumb = raw.extract_thumb()
-            pixmap = QPixmap()
-            pixmap.loadFromData(thumb.data, "JPEG")
-            pixmap = pixmap.scaledToWidth(128)
-            self.setPixmap(pixmap)
+        if self.loaded:
+            return
+        self.loaded = True
+
+        with rawpy.imread(self.image_path) as raw:
+            thumb = raw.extract_thumb()
+            img = Image.open(io.BytesIO(thumb.data))
+            img = ImageOps.exif_transpose(img)
+
+        img = img.convert("RGBA")
+        data = img.tobytes("raw", "RGBA")
+        qimage = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimage)
+
+        pixmap = pixmap.scaledToHeight(256, Qt.TransformationMode.SmoothTransformation)
+        self.setPixmap(pixmap)
 
     def resizeEvent(self, event):
         """Ensure the label is always a square and the image scales."""
-        size = event.size().height()
-        self.setFixedWidth(size)
+        height = event.size().height()
         if self._pixmap:
-            super().setPixmap(
-                self._pixmap.scaled(
-                    self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio
+            self.label.setPixmap(
+                self._pixmap.scaledToHeight(
+                    height, Qt.TransformationMode.SmoothTransformation
                 )
             )
 
     def setPixmap(self, pixmap: QPixmap):
         if pixmap:
             self._pixmap = pixmap
-            super().setPixmap(
-                self._pixmap.scaled(
-                    self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio
+            self.label.setPixmap(
+                self._pixmap.scaledToHeight(
+                    self.height(), Qt.TransformationMode.SmoothTransformation
                 )
             )
 
     def set_state(self, state):
         match state:
             case "selected":
-                self.setStyleSheet("border: 1px solid darkgray; background-color: gray; border-radius: 10px;")
+                self.setLineWidth(3)
             case "highlighted":
-                self.setStyleSheet("border: 1px solid darkgray; background-color: lightgray; border-radius: 10px;")
+                self.setLineWidth(2)
             case "default":
-                self.setStyleSheet("border: 1px solid gray; background-color: transparent; border-radius: 10px;")
+                self.setLineWidth(0)
+
+    def sizeHint(self):
+        if self.loaded:
+            return self.label.sizeHint()
+        else:
+            return QSize(self.width(), self.width())
+
+    def minimumSizeHint(self):
+        if self.loaded:
+            return self.label.minimumSizeHint()
+        else:
+            return QSize(self.width(), self.width())
+
+    def size(self):
+        if self.loaded:
+            return self.label.minimumSizeHint()
+        else:
+            return QSize(self.width(), self.width())
 
 
 class ImageBar(QScrollArea):
@@ -98,13 +144,16 @@ class ImageBar(QScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self.check_visible)
         self.horizontalScrollBar().rangeChanged.connect(self.check_visible)
 
+    def resizeEvent(self, event):
+        self.container.resize(event.size())
+        super().resizeEvent(event)
+
     def sizeHint(self):
         return QSize(super().sizeHint().width(), self.height_hint)
 
     def clear_images(self):
         for i in reversed(range(self.image_layout.count())):
             widget = self.image_layout.takeAt(i).widget()
-            widget.clear()
             widget.deleteLater()
         self.image_labels = []
         self.selected_label = None

@@ -1,13 +1,22 @@
-import math
 import os
 import time
+from functools import cache
 from pathlib import Path
 from shutil import copy
 
 import exiftool
 
-from raw2film import data
 import numpy as np
+from numba import njit
+from raw2film import data
+
+
+@cache
+def load_metadata(src):
+    with exiftool.ExifToolHelper() as et:
+        metadata = et.get_metadata(src)[0]
+    return metadata
+
 
 def find_data(metadata, db):
     """Search for camera and lens name in metadata"""
@@ -165,10 +174,6 @@ def add_metadata(src, metadata, exp_comp):
     metadata['EXIF:ExposureCompensation'] = exp_comp
     with exiftool.ExifToolHelper() as et:
         et.set_tags([src], metadata, '-overwrite_original')
-
-
-import numpy as np
-from numba import njit
 
 
 @njit

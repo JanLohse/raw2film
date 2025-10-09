@@ -19,7 +19,7 @@ from spectral_film_lut.filmstock_selector import FilmStockSelector
 from raw2film import data, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
-from raw2film.utils import add_metadata, generate_histogram
+from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
 
 class MultiWorker(QObject):
@@ -783,7 +783,7 @@ Affects only colors.""")
         src_short = src.split("/")[-1]
         if src_short not in self.image_params:
             self.image_params[src_short] = {}
-            metadata = self.load_metadata(src)
+            metadata = load_metadata(src)
             cam, lens = utils.find_data(metadata, self.lensfunpy_db)
             if cam is not None:
                 self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
@@ -801,19 +801,13 @@ Affects only colors.""")
         if self.active:
             self.update_preview(src)
 
-    @cache
-    def load_metadata(self, src):
-        with exiftool.ExifToolHelper() as et:
-            metadata = et.get_metadata(src)[0]
-        return metadata
-
     @lru_cache
     def load_raw_image(self, src, cam=None, lens=None):
         if cam is not None and lens is not None:
             cam = self.cameras[cam]
             lens = self.lenses[lens]
 
-            return effects.lens_correction(raw_to_linear(src), self.load_metadata(src), cam, lens)
+            return effects.lens_correction(raw_to_linear(src), load_metadata(src), cam, lens)
         else:
             return raw_to_linear(src)
 
@@ -1065,7 +1059,7 @@ Affects only colors.""")
                 else:
                     processing_args["fast_mode"] = True
 
-            self.preview_image = process_image(image, metadata=self.load_metadata(src), **processing_args)
+            self.preview_image = process_image(image, metadata=load_metadata(src), **processing_args)
         image = self.preview_image
         height, width, _ = image.shape
         histogram = generate_histogram(image, 80)
@@ -1111,7 +1105,7 @@ Affects only colors.""")
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
         image = raw_to_linear(src, half_size=False)
-        metadata = self.load_metadata(src)
+        metadata = load_metadata(src)
         if processing_args["lens_correction"]:
             if "cam" not in processing_args or "lens" not in processing_args:
                 cam, lens = utils.find_data(metadata, self.lensfunpy_db)
