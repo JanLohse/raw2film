@@ -1,10 +1,11 @@
-from functools import cache, lru_cache
+from functools import lru_cache
 
 import cv2
 import cv2 as cv
 import lensfunpy
 from lensfunpy import util as lensfunpy_util
 from spectral_film_lut.utils import *
+from spectral_film_lut.grain_generation import *
 
 if cuda_available:
     try:
@@ -163,75 +164,11 @@ def exponential_blur_kernel(size):
     return kernel
 
 
-@cache
-def gaussian_noise_cache(shape):
-    return xp.random.default_rng().standard_normal(shape, dtype=np.float32)
-
-
-def gaussian_noise(shape):
-    noise_size = ((max(shape[:2]) + 100) // 1024 + 1) * 1024
-    noise_map = gaussian_noise_cache((noise_size, noise_size))
-    if cuda_available:
-        offsets = xp.stack(
-            [xp.random.randint(0, x, size=shape[2]) for x in [noise_size - shape[0] + 1, noise_size - shape[1] + 1]]).T
-    else:
-        offsets = xp.random.randint([0, 0], [noise_size - shape[0] + 1, noise_size - shape[1] + 1], size=(shape[2], 2))
-    noise = xp.stack([noise_map[x:shape[0] + x, y:shape[1] + y] for x, y in offsets], axis=-1)
-    return noise
-
-
-def grain_kernel(pixel_size_mm, dye_size1_mm=0.0065, dye_size2_mm=0.015):
-    # based on the paper:
-    # Simulating Film Grain using the Noise-Power Spectrum by Ian Stephenson and Arthur Saunders
-    kernel_size_mm = 4.24 * max(dye_size1_mm, dye_size2_mm)
-    kernel_size = round(kernel_size_mm / pixel_size_mm)
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    if kernel_size < 3:
-        return None
-
-    # Frequency grid (cycles per mm)
-    fx = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
-    fy = xp.fft.fftfreq(kernel_size, d=pixel_size_mm)
-    FX, FY = xp.meshgrid(fx, fy)
-    f = xp.sqrt(FX ** 2 + FY ** 2)  # radial frequency
-
-    # Gaussian model for dye NPS: exp(-(pi*f*D)^2)
-    nps1 = xp.exp(-(np.pi * f * dye_size1_mm) ** 2)
-    nps2 = xp.exp(-(np.pi * f * dye_size2_mm) ** 2)
-
-    # Total NPS (weighted sum)
-    nps = (nps1 + nps2)
-    # generate convolution kernel
-    # Get spatial kernel by inverse FFT
-    kernel = xp.fft.ifft2(xp.sqrt(nps))
-    kernel = xp.fft.fftshift(kernel.real)  # center it
-
-    # normalize kernel
-    kernel /= xp.sqrt(xp.sum(kernel))
-
-    return kernel
-
-
-def grain(rgb, stock, scale, grain_size=0.001, d_factor=6, bw_grain=False, **kwargs):
-    # compute scaling factor of exposure rms in regard to measuring device size
-    std_factor = math.sqrt(math.pi) * 0.024 * scale / d_factor
-    shape = rgb.shape
-    if bw_grain:
-        shape = (shape[0], shape[1], 1)
-    noise = gaussian_noise(shape)
-    xps = [(rms_density + 0.25) / d_factor for rms_density in stock.rms_density]
-    fps = [rms * std_factor for rms in stock.rms_curve]
-    noise_factors = multi_channel_interp(rgb, xps, fps)
-    noise = noise * noise_factors
-    kernel = grain_kernel(1 / scale, 6.5 * grain_size, 15 * grain_size)
-    if kernel is not None:
-        noise = convolution_filter(noise, kernel)
-    if len(noise.shape) == 2:
-        noise = noise[..., xp.newaxis]
-    if bw_grain:
-        noise /= 1.5
-    rgb += noise
+def apply_grain(rgb, stock, scale, grain_size=1., density_scale=6, bw_grain=False, **kwargs):
+    grain = generate_grain(rgb.shape, scale, grain_size, bw_grain, cached=True)
+    grain_factors = stock.grain_transform(rgb, density_scale, scale)
+    grain = grain * grain_factors
+    rgb += grain
     return rgb
 
 
@@ -250,21 +187,6 @@ def apply_halation_bw(rgb, blured, intensity):
         for j in range(rgb.shape[1]):
             rgb[i, j] += blured[i, j] * intensity
             rgb[i, j] /= (intensity + 1.0)
-
-
-def convolution_filter(rgb, kernel, padding=False):
-    if not cuda_available:
-        return cv2.filter2D(rgb, -1, kernel)
-    else:
-        if len(kernel.shape) == 2:
-            kernel = kernel[..., xp.newaxis]
-        if padding:
-            pad_h = kernel.shape[0] // 2
-            pad_w = kernel.shape[1] // 2
-            rgb = xp.pad(rgb, ((pad_h, pad_h), (pad_w, pad_w), (0, 0)), 'reflect')
-            return signal.oaconvolve(rgb, kernel, mode='valid', axes=(0, 1))
-        else:
-            return signal.oaconvolve(rgb, kernel, mode='same', axes=(0, 1))
 
 
 def halation(rgb, scale, halation_size=1, halation_red_factor=1., halation_green_factor=0.4, halation_blue_factor=0.,
@@ -295,6 +217,7 @@ def add_canvas(image, canvas_ratio, canvas_scale, canvas_color, **kwargs):
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
     return canvas.astype(dtype='uint8')
+
 
 def add_canvas_uniform(image, canvas_scale, canvas_color, **kwargs):
     """Adds background canvas to image."""

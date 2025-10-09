@@ -104,7 +104,7 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
 
             if grain and negative_film.rms_density is not None:
                 start_sub = time.time()
-                image = effects.grain(image, negative_film, scale, grain_size=grain_size, d_factor=d_factor, bw_grain=grain==1)
+                image = effects.apply_grain(image, negative_film, scale, grain_size=grain_size, density_scale=d_factor, bw_grain=grain == 1)
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
@@ -133,7 +133,8 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
 
     height, width, _ = image.shape
     if cuda_available:
-        image = to_numpy(run_lut_cuda(xp.asarray(image), xp.asarray(lut)))
+        image = apply_lut_tetrahedral_int(to_numpy(image), lut)
+        # TODO fix image = to_numpy(run_lut_cuda(xp.asarray(image), xp.asarray(lut)))
     else:
         image = apply_lut_tetrahedral_int(image, lut)
     if measure_time:
