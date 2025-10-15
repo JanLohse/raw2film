@@ -12,28 +12,30 @@ from spectral_film_lut.utils import *
 
 
 class RoundedLabel(QLabel):
-    def __init__(self, radius=None, *args, **kwargs):
+    def __init__(self, radius=12, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if radius is None:
-            radius = BORDER_RADIUS
         self.radius = radius
-        self.setStyleSheet(f"""
-                QLabel {{
-                    border-radius: {self.radius}px;
-                }}
-            """)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.applyRoundedMask()
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-    def applyRoundedMask(self):
-        r = self.radius
-        rect = QRectF(self.rect())  # ✅ Convert QRect -> QRectF
+        rect = QRectF(self.rect())
         path = QPainterPath()
-        path.addRoundedRect(rect, r, r)
-        region = QRegion(path.toFillPolygon().toPolygon())
-        self.setMask(region)
+        path.addRoundedRect(rect, self.radius, self.radius)
+        painter.setClipPath(path)
+
+        # draw the pixmap (if present)
+        if self.pixmap() is not None:
+            pix = self.pixmap()
+            scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap(self.rect(), scaled)
+        else:
+            # fallback: draw normal background & text
+            super().paintEvent(event)
 
 
 _thumbnail_color = {"default": "transparent", "highlighted": "#808080", "selected": "#dedede"}
