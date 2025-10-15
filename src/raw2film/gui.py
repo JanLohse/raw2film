@@ -2,24 +2,23 @@ import json
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import cache, partial, lru_cache
+from functools import partial, lru_cache
 
 import exiftool
 import imageio
 import lensfunpy
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
-from PyQt6.QtWidgets import QApplication, QMainWindow, QComboBox, QGridLayout, QSizePolicy, QCheckBox, QVBoxLayout, \
-    QInputDialog, QMessageBox, QDialog, QProgressDialog, QScrollArea, QSplitter
-from raw2film.color_processing import rec709_to_displayP3
-from spectral_film_lut import REVERSAL_FILM
-from spectral_film_lut.film_loader import load_ui
-from spectral_film_lut.filmstock_selector import FilmStockSelector
-
+from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
+    QProgressDialog, QSplitter
 from raw2film import data, utils
+from raw2film.color_processing import rec709_to_displayP3
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
+from spectral_film_lut import REVERSAL_FILM
+from spectral_film_lut.film_loader import *
+from spectral_film_lut.filmstock_selector import FilmStockSelector
 
 
 class MultiWorker(QObject):
@@ -93,12 +92,18 @@ class MainWindow(QMainWindow):
         sidebar.setLayout(side_layout)
         side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        scroll_area = QScrollArea()
+        scroll_area = RoundedScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setWidget(sidebar)
         scroll_area.setMinimumWidth(280)
+        scroll_area.setStyleSheet(f"""
+QFrame {{
+    background-color: {BASE_COLOR};
+    border-radius: {BORDER_RADIUS}px;
+}}
+""")
 
         self.image = QLabel("Select a reference image for the preview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -107,6 +112,12 @@ class MainWindow(QMainWindow):
         self.pixmap = QPixmap()
 
         self.image_bar = ImageBar()
+        self.image_bar.setStyleSheet(f"""
+QFrame {{
+    background-color: {BASE_COLOR};
+    border-radius: {BORDER_RADIUS}px;
+}}
+        """)
         page_splitter.addWidget(top_splitter)
         page_splitter.addWidget(self.image_bar)
         page_splitter.setContentsMargins(8, 8, 8, 8)
@@ -216,7 +227,8 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(self.histogram, 0, 0, 1, 2)
         self.side_counter += 1
 
-        self.profile_selector = QComboBox()
+        self.profile_selector = WideComboBox()
+
         self.profile_selector.addItem("Default")
         self.add_profile = QPushButton("+")
         self.add_profile.setFixedWidth(25)
@@ -239,12 +251,13 @@ class MainWindow(QMainWindow):
         self.lens_correction = QCheckBox()
         add_option(self.lens_correction, "Lens correction:", self.dflt_img_params["lens_correction"],
                    self.lens_correction.setChecked, hideable=True, tool_tip="Correct lens distortion and vignetting.")
-        self.camera_selector = QComboBox()
+        self.camera_selector = WideComboBox()
+
         self.camera_selector.setMinimumWidth(100)
         self.camera_selector.addItems(self.cameras.keys())
         add_option(self.camera_selector, "Camera model:", "None", self.camera_selector.setCurrentText, hideable=True,
                    tool_tip="Select camera model for lens correction.")
-        self.lens_selector = QComboBox()
+        self.lens_selector = WideComboBox()
         self.lens_selector.setMinimumWidth(100)
         self.lens_selector.addItems(self.lenses.keys())
         add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText, hideable=True,
@@ -268,14 +281,14 @@ class MainWindow(QMainWindow):
 """)
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-3, 3, 1, 10)
+        self.exp_comp.setMinMaxTicks(-3, 3, 1, 10, self.dflt_img_params["exp_comp"])
         add_option(self.exp_comp, "Exposure:", self.dflt_img_params["exp_comp"], self.exp_comp.setValue, tool_tip="""Adjust exposure in stops.
 (Up: increase exposure)
 (Down: decrease exposure)""")
 
         self.wb_modes = {"Default": 6000, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800,
                          "Fluorescent": 3800, "Custom": None}
-        self.wb_mode = QComboBox()
+        self.wb_mode = WideComboBox()
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText, tool_tip="""Select preset white balance.
 (Shift+D: daylight)
@@ -285,33 +298,37 @@ class MainWindow(QMainWindow):
 (Shift+T: Tungsten)""")
 
         self.exp_wb = Slider()
-        self.exp_wb.setMinMaxTicks(2000, 12000, 100)
+        self.exp_wb.setMinMaxTicks(2000, 12000, 100, default=self.dflt_img_params["exposure_kelvin"])
+        self.exp_wb.set_color_gradient(np.array([2 / 3, 0.14, 0.65277]), np.array([2 / 3, 0.14, 0.15277]))
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue,
                    tool_tip="Adjust white balance in kelvin.")
 
         self.tint = Slider()
-        self.tint.setMinMaxTicks(-1, 1, 1, 100)
+        self.tint.setMinMaxTicks(-1, 1, 1, 100, default=self.dflt_img_params["tint"])
+        self.tint.set_color_gradient(np.array([2 / 3, 0.14, 0.90277]), np.array([2 / 3, 0.14, 0.40277]))
         add_option(self.tint, "Tint:", self.dflt_img_params["tint"], self.tint.setValue,
                    tool_tip="Change tint on green-magenta axis.")
 
         self.pre_flash_neg = Slider()
-        self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10)
+        self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_neg"])
         add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_prf_params["pre_flash_neg"],
-                   self.pre_flash_neg.setValue, tool_tip="""Simulate the effect of exposing the negative with uniform light.
+                   self.pre_flash_neg.setValue, hideable=True,
+                   tool_tip="""Simulate the effect of exposing the negative with uniform light.
 Helps to reduce contrast by lifting the shadows.
 Set in how many stops below middle gray the uniform exposure is.
 -4 will turn off the effect completely.""")
         self.pre_flash_print = Slider()
-        self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10)
+        self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_print"])
         add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_prf_params["pre_flash_print"],
-                   self.pre_flash_print.setValue, tool_tip="""Simulate the effect of exposing the print film with uniform light.
+                   self.pre_flash_print.setValue, hideable=True,
+                   tool_tip="""Simulate the effect of exposing the print film with uniform light.
 Helps to reduce contrast by lowering the highlights.
 Set in how many stops below middle gray the uniform exposure is.
 -4 will turn off the effect completely.
 (Ctrl+Up: increase)
 (Ctrl+Down: decrease)""")
         self.highlight_burn = Slider()
-        self.highlight_burn.setMinMaxTicks(0, 1, 1, 20)
+        self.highlight_burn.setMinMaxTicks(0, 1, 1, 20, default=self.dflt_img_params["highlight_burn"])
         add_option(self.highlight_burn, "Highlight burn:", self.dflt_img_params["highlight_burn"],
                    self.highlight_burn.setValue, tool_tip="""Lower the brightness of bright areas on the print film.
 Only visible in preview if GPU acceleration is enabled
@@ -319,7 +336,7 @@ or full-preview is enabled.
 (Shift+Up: increase)
 (Shift+Down: decrease)""")
         self.burn_scale = Slider()
-        self.burn_scale.setMinMaxTicks(1, 200)
+        self.burn_scale.setMinMaxTicks(1, 200, default=self.dflt_img_params["burn_scale"])
         add_option(self.burn_scale, "Burn scale:", self.dflt_img_params["burn_scale"], self.burn_scale.setValue,
                    hideable=True, tool_tip="How much blur is applied to the highlight burn.")
 
@@ -339,18 +356,18 @@ or full-preview is enabled.
 (Ctrl+R: rotate right)""")
 
         self.rotation = Slider()
-        self.rotation.setMinMaxTicks(-90, 90, 1, 4)
+        self.rotation.setMinMaxTicks(-90, 90, 1, 4, default=self.dflt_img_params["rotation"])
         add_option(self.rotation, "Rotation angle:", self.dflt_img_params["rotation"], self.rotation.setValue, tool_tip="""Rotate by an angle in degrees.
 (Ctrl+Right: rotate right)
 (Ctrl+Left: rotate left)""")
 
         self.zoom = Slider()
-        self.zoom.setMinMaxTicks(1, 2, 1, 100)
+        self.zoom.setMinMaxTicks(1, 2, 1, 100, default=self.dflt_img_params["zoom"])
         add_option(self.zoom, "Zoom:", self.dflt_img_params["zoom"], self.zoom.setValue, tool_tip="""Crop into the image.
 (Ctrl+Plus: zoom in)
 (Ctrl+Minus: zoom out)""")
 
-        self.format_selector = QComboBox()
+        self.format_selector = WideComboBox()
         self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
         add_option(self.format_selector, "Format:", self.dflt_prf_params["format"], self.format_selector.setCurrentText,
                    tool_tip="""Select a preset film format.
@@ -374,22 +391,22 @@ Adjusts scale of film characteristics (halation, resolution, grain)
 and changes aspect ratio.""")
 
         self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(0.5, 2, 1, 10)
+        self.grain_size.setMinMaxTicks(0.5, 2, 1, 10, self.dflt_prf_params["grain_size"])
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"],
                    self.grain_size.setValue, hideable=True, tool_tip="Size of simulated film grains.")
 
         self.halation_size = Slider()
-        self.halation_size.setMinMaxTicks(0.5, 8, 1, 4)
+        self.halation_size.setMinMaxTicks(0.5, 2, 1, 4, self.dflt_prf_params["halation_size"])
         add_option(self.halation_size, "Halation size:", self.dflt_prf_params["halation_size"],
                    self.halation_size.setValue, hideable=True, tool_tip="""How far the halation spreads.
 Halation is a warm glow around highlights,\nresulting from reflections on the film backing.""")
         self.halation_green = Slider()
-        self.halation_green.setMinMaxTicks(0, 1, 1, 20)
+        self.halation_green.setMinMaxTicks(0, 1, 1, 20, self.dflt_prf_params["halation_green_factor"])
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
                    self.halation_green.setValue, hideable=True, tool_tip="""How red or yellow the halation is.
 Specifies how strongly the halation reaches into the green sensitive layer.""")
         self.halation_intensity = Slider()
-        self.halation_intensity.setMinMaxTicks(0.5, 4, 1, 4)
+        self.halation_intensity.setMinMaxTicks(0.5, 4, 1, 4, self.dflt_prf_params["halation_intensity"])
         add_option(self.halation_intensity, "Halation intensity:", self.dflt_prf_params["halation_intensity"],
                    self.halation_intensity.setValue, hideable=True, tool_tip="""How intense the halation is.
 Halation is a warm glow around highlights,
@@ -410,18 +427,28 @@ resulting from reflections on the film backing.""")
                    self.negative_selector.setCurrentText, tool_tip="""Which negative film stock to emulate.
 Affects colors, resolution, and graininess""")
 
+        luma_bright = 0.8
+        luma_dark = 0.4
+        chroma = 0.2
+        hue_offset = 0.06111111
         self.red_light = Slider()
         self.red_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
+        self.red_light.set_color_gradient(np.array([luma_bright, chroma, hue_offset + 0 / 6]),
+                                          np.array([luma_dark, chroma, hue_offset + 3 / 6]))
         add_option(self.red_light, "Red printer light:", self.dflt_prf_params["red_light"], self.red_light.setValue,
                    hideable=True, tool_tip="""How strong the simulated red light is during printing.
 Decreases how red the print is.""")
         self.green_light = Slider()
         self.green_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
+        self.green_light.set_color_gradient(np.array([luma_bright, chroma, hue_offset + 2 / 6]),
+                                            np.array([luma_dark, chroma, hue_offset + 5 / 6]))
         add_option(self.green_light, "Green printer light:", self.dflt_prf_params["green_light"],
                    self.green_light.setValue, hideable=True, tool_tip="""How strong the simulated green light is during printing.
 Decreases how green the print is.""")
         self.blue_light = Slider()
         self.blue_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
+        self.blue_light.set_color_gradient(np.array([luma_bright, chroma, hue_offset + 4 / 6]),
+                                           np.array([luma_dark, chroma, hue_offset + 1 / 6]))
         add_option(self.blue_light, "Blue printer light:", self.dflt_prf_params["blue_light"], self.blue_light.setValue,
                    hideable=True, tool_tip="""How strong the simulated blue light is during printing.
 Decreases how blue the print is.""")
@@ -447,18 +474,20 @@ Decreases how blue the print is.""")
 Affects only colors.""")
 
         self.projector_kelvin = Slider()
-        self.projector_kelvin.setMinMaxTicks(2700, 10000, 100)
+        self.projector_kelvin.setMinMaxTicks(2700, 10000, 100, default=self.dflt_prf_params["projector_kelvin"])
+        self.projector_kelvin.set_color_gradient(np.array([2 / 3, 0.14, 0.15277]), np.array([2 / 3, 0.14, 0.65277]))
         add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"],
                    self.projector_kelvin.setValue, hideable=True,
                    tool_tip="Under what light temperature to view the print or slide.")
 
         self.saturation_slider = Slider()
-        self.saturation_slider.setMinMaxTicks(0, 2, 1, 100)
+        self.saturation_slider.setMinMaxTicks(0, 2, 1, 100, default=self.dflt_prf_params["sat_adjust"])
+        self.saturation_slider.set_color_gradient(np.array([0.666, 0., 0., ]), np.array([0.666, 0.25, 2.]), 20, False)
         add_option(self.saturation_slider, "Saturation:", self.dflt_prf_params["sat_adjust"],
                    self.saturation_slider.setValue, hideable=True,
                    tool_tip="Adjust the saturation in the display color space.")
 
-        self.canvas_mode = QComboBox()
+        self.canvas_mode = WideComboBox()
         self.canvas_mode.addItems(
             ["No", "Proportional white", "Proportional black", "Uniform white", "Uniform black", "Fixed white",
              "Fixed black"])
@@ -466,7 +495,7 @@ Affects only colors.""")
                    hideable=True, tool_tip="What type of border to add to the image.")
 
         self.canvas_scale = Slider()
-        self.canvas_scale.setMinMaxTicks(1, 2, 1, 40)
+        self.canvas_scale.setMinMaxTicks(1, 2, 1, 40, default=self.dflt_img_params["canvas_scale"])
         add_option(self.canvas_scale, "Canvas scale:", self.dflt_img_params["canvas_scale"], self.canvas_scale.setValue,
                    hideable=True, tool_tip="How big the canvas is.")
 
@@ -485,7 +514,7 @@ Affects only colors.""")
                    tool_tip="""Aspect ratio of added canvas.""")
 
         self.black_offset = Slider()
-        self.black_offset.setMinMaxTicks(-2, 2, 1, 10)
+        self.black_offset.setMinMaxTicks(-2, 2, 1, 50)
         add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
                    hideable=True, tool_tip="Change the black value without affecting other areas.")
 
@@ -1062,7 +1091,7 @@ Affects only colors.""")
             self.preview_image = process_image(image, metadata=load_metadata(src), **processing_args)
         image = self.preview_image
         height, width, _ = image.shape
-        histogram = generate_histogram(image, 80)
+        histogram = generate_histogram(image, height=80)
         if self.p3_preview.isChecked():
             histogram = rec709_to_displayP3(histogram)
         histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],

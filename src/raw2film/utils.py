@@ -177,7 +177,7 @@ def add_metadata(src, metadata, exp_comp):
 
 
 @njit
-def generate_histogram(image, height=100):
+def generate_histogram(image, black_value=25, white_value=222, height=100):
     """
     Generate an RGB histogram as an image-like numpy array with logarithmic y-scaling.
 
@@ -249,7 +249,7 @@ def generate_histogram(image, height=100):
     hist_b = (hist_b * height) / max_val
 
     # Create histogram image
-    hist_img = np.zeros((height, 256, 3), dtype=np.uint8)
+    hist_img = np.full((height, 256, 3), black_value, dtype=np.uint8)
 
     for x in range(256):
         r_val = hist_r[x]
@@ -257,10 +257,10 @@ def generate_histogram(image, height=100):
         b_val = hist_b[x]
 
         for y in range(height - r_val, height):
-            hist_img[y, x, 0] = 255
+            hist_img[y, x, 0] = white_value
         for y in range(height - g_val, height):
-            hist_img[y, x, 1] = 255
+            hist_img[y, x, 1] = white_value
         for y in range(height - b_val, height):
-            hist_img[y, x, 2] = 255
+            hist_img[y, x, 2] = white_value
 
     return hist_img

@@ -3,17 +3,12 @@ import io
 
 import rawpy
 from PIL import Image, ImageOps
-from PyQt6.QtCore import QThreadPool, QSize, QRect, QTimer
-from PyQt6.QtGui import QPixmap, QShortcut, QKeySequence, QImage, QPainter, QPen
-from PyQt6.QtWidgets import QScrollArea, QSizePolicy, QApplication
-from spectral_film_lut.utils import *
-
-
-from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QSizePolicy
+from PyQt6.QtCore import QThreadPool, QSize, QTimer
 from PyQt6.QtGui import QPixmap, QImage
-from PyQt6.QtCore import Qt
-from PIL import Image, ImageOps
-import rawpy, io
+from PyQt6.QtGui import QShortcut, QKeySequence
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
+from spectral_film_lut.utils import *
 
 
 class Thumbnail(QFrame):
@@ -22,10 +17,6 @@ class Thumbnail(QFrame):
         self.image_path = image_path
         self.setToolTip(image_path)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        # Use QFrame for border handling
-        self.setFrameShape(QFrame.Shape.Box)
-        self.setLineWidth(0)
 
         # Inner QLabel for image
         self.label = QLabel()
@@ -36,7 +27,8 @@ class Thumbnail(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
-        self.setStyleSheet("")
+        self.setObjectName('Thumbnail')
+        self.set_state()
 
         self._pixmap = None
         self.loaded = False
@@ -78,14 +70,19 @@ class Thumbnail(QFrame):
                 )
             )
 
-    def set_state(self, state):
-        match state:
-            case "selected":
-                self.setLineWidth(3)
-            case "highlighted":
-                self.setLineWidth(2)
-            case "default":
-                self.setLineWidth(0)
+    def set_state(self, state="default"):
+        bq_color = {"default": "transparent", "highlighted": "#636363", "selected": "#dedede"}[state]
+        self.setStyleSheet(f"""
+#Thumbnail {{
+    border-radius: {BUTTON_RADIUS}px;
+    border: 1px solid {bq_color};
+    background-color: solid {bq_color};
+}}
+
+QLabel {{
+    border-radius: {BUTTON_RADIUS}px;
+}}
+""")
 
     def sizeHint(self):
         if self.loaded:
@@ -106,7 +103,7 @@ class Thumbnail(QFrame):
             return QSize(self.width(), self.width())
 
 
-class ImageBar(QScrollArea):
+class ImageBar(RoundedScrollArea):
     image_changed = pyqtSignal(str)
     copy_settings = pyqtSignal(str)
 
