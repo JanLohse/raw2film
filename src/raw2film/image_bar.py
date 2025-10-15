@@ -11,6 +11,34 @@ from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
 from spectral_film_lut.utils import *
 
 
+class RoundedLabel(QLabel):
+    def __init__(self, radius=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if radius is None:
+            radius = BORDER_RADIUS
+        self.radius = radius
+        self.setStyleSheet(f"""
+                QLabel {{
+                    border-radius: {self.radius}px;
+                }}
+            """)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.applyRoundedMask()
+
+    def applyRoundedMask(self):
+        r = self.radius
+        rect = QRectF(self.rect())  # ✅ Convert QRect -> QRectF
+        path = QPainterPath()
+        path.addRoundedRect(rect, r, r)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        self.setMask(region)
+
+
+_thumbnail_color = {"default": "transparent", "highlighted": "#808080", "selected": "#dedede"}
+
+
 class Thumbnail(QFrame):
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
@@ -18,16 +46,17 @@ class Thumbnail(QFrame):
         self.setToolTip(image_path)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Inner QLabel for image
-        self.label = QLabel()
+        # QLabel for image
+        self.label = RoundedLabel(BUTTON_RADIUS)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
 
-        # Layout to hold the QLabel
+        # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
-        self.setObjectName('Thumbnail')
+
+        self.setObjectName("Thumbnail")
         self.set_state()
 
         self._pixmap = None
@@ -71,16 +100,13 @@ class Thumbnail(QFrame):
             )
 
     def set_state(self, state="default"):
-        bq_color = {"default": "transparent", "highlighted": "#636363", "selected": "#dedede"}[state]
+        bq_color = _thumbnail_color[state]
+        outline_thickness = 3
         self.setStyleSheet(f"""
 #Thumbnail {{
-    border-radius: {BUTTON_RADIUS}px;
-    border: 1px solid {bq_color};
-    background-color: solid {bq_color};
-}}
-
-QLabel {{
-    border-radius: {BUTTON_RADIUS}px;
+    border-radius: {BUTTON_RADIUS + outline_thickness}px;
+    border: {outline_thickness}px solid {bq_color};
+    background-color: {bq_color};
 }}
 """)
 
@@ -127,6 +153,7 @@ class ImageBar(RoundedScrollArea):
         self.height_hint = 130
 
         self.image_layout = QHBoxLayout(self.container)
+        self.image_layout.setSpacing(3)
         self.image_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.container.setLayout(self.image_layout)
 
