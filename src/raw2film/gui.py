@@ -230,7 +230,8 @@ QFrame {{
         self.profile_selector = WideComboBox()
 
         self.profile_selector.addItem("Default")
-        self.add_profile = QPushButton("+")
+        self.add_profile = QPushButton()
+        self.add_profile.setObjectName("plus")
         self.add_profile.setFixedWidth(25)
         profile_widget = QWidget()
         profile_widget_layout = QHBoxLayout()
@@ -342,9 +343,12 @@ or full-preview is enabled.
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
-        self.rotate_left = QPushButton("Left")
-        self.rotate_right = QPushButton("Right")
-        self.flip_button = QPushButton("Flip")
+        self.rotate_left = QPushButton()
+        self.rotate_left.setObjectName("left")
+        self.rotate_right = QPushButton()
+        self.rotate_right.setObjectName("right")
+        self.flip_button = QPushButton()
+        self.flip_button.setObjectName("flip")
         for btn in (self.rotate_left, self.rotate_right, self.flip_button):
             btn.setMinimumWidth(10)
             btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
