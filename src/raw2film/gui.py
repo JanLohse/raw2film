@@ -405,6 +405,7 @@ and changes aspect ratio.""")
                    self.halation_size.setValue, hideable=True, tool_tip="""How far the halation spreads.
 Halation is a warm glow around highlights,\nresulting from reflections on the film backing.""")
         self.halation_green = Slider()
+        self.halation_green.set_color_gradient(np.array([0.6, 0.21, 29.23/360]), np.array([0.9, 0.18, 109.77/360]))
         self.halation_green.setMinMaxTicks(0, 1, 1, 20, self.dflt_prf_params["halation_green_factor"])
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
                    self.halation_green.setValue, hideable=True, tool_tip="""How red or yellow the halation is.

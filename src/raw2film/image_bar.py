@@ -182,6 +182,7 @@ class ImageBar(RoundedScrollArea):
             widget = self.image_layout.takeAt(i).widget()
             widget.deleteLater()
         self.image_labels = []
+        self.highlighted_labels = set()
         self.selected_label = None
         gc.collect()
 
