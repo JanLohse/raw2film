@@ -88,7 +88,7 @@ class Thumbnail(QFrame):
         if self._pixmap:
             self.label.setPixmap(
                 self._pixmap.scaledToHeight(
-                    height, Qt.TransformationMode.SmoothTransformation
+                    height, Qt.TransformationMode.FastTransformation
                 )
             )
 
@@ -97,7 +97,7 @@ class Thumbnail(QFrame):
             self._pixmap = pixmap
             self.label.setPixmap(
                 self._pixmap.scaledToHeight(
-                    self.height(), Qt.TransformationMode.SmoothTransformation
+                    self.height(), Qt.TransformationMode.FastTransformation
                 )
             )
 
