@@ -4,7 +4,7 @@ import io
 import rawpy
 from PIL import Image, ImageOps
 from PyQt6.QtCore import QThreadPool, QSize, QTimer
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QPainterPath
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy

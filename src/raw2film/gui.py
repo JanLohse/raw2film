@@ -484,7 +484,7 @@ Affects only colors.""")
         self.saturation_slider.setMinMaxTicks(0, 2, 1, 100, default=self.dflt_prf_params["sat_adjust"])
         self.saturation_slider.set_color_gradient(np.array([0.666, 0., 0., ]), np.array([0.666, 0.25, 2.]), 20, False)
         add_option(self.saturation_slider, "Saturation:", self.dflt_prf_params["sat_adjust"],
-                   self.saturation_slider.setValue, hideable=True,
+                   self.saturation_slider.setValue,
                    tool_tip="Adjust the saturation in the display color space.")
 
         self.canvas_mode = WideComboBox()
@@ -766,7 +766,9 @@ Affects only colors.""")
     def add_profile_prompt(self):
         text, ok = QInputDialog.getText(self, "Add profile", "Profile name:")
         if ok:
+            self.profile_params[text] = self.profile_params[self.profile_selector.currentText()].copy()
             self.profile_selector.addItem(text)
+            self.profile_selector.setCurrentText(text)
 
     def format_changed(self, format):
         if format != "Custom" and not self.loading:
