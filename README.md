@@ -48,9 +48,8 @@ The interface is designed to be familiar for anyone who has used a raw editor be
 - By default a simplified render is activated for preview to make the software more responsive. Activate the full preview under view to see the full film characterisitcs.
 
 ### Main GUI
-<img width="1082" height="752" alt="main gui" src="https://github.com/user-attachments/assets/399684de-9b04-473e-ad66-275ce4822347" />
+<img width="1121" height="817" alt="main gui" src="https://github.com/user-attachments/assets/d78bcb17-7f96-402e-aee7-36c04b9fac03" />
 
 ### Filmstock Selector
 When clicking on the magnifying glass a window opens to search and browse through the available film stocks.
-
-<img width="866" height="585" alt="filmstock selector" src="https://github.com/user-attachments/assets/1a651ba2-cd53-4484-92ef-ed4cbcc0971b" /> 
+<img width="854" height="604" alt="filmstock selector" src="https://github.com/user-attachments/assets/c10af392-a531-40e4-8f4c-8a564807a9d3" />
