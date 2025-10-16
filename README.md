@@ -11,6 +11,9 @@ The film emulation includes:
 - Resolution and micro-contrast matches mtf chart for each filmstock.
 - Set the simulated frame size to match resolution, grain intensity, and aspect ratio.
 
+<img width="1087" height="837" alt="main gui" src="https://github.com/user-attachments/assets/13915205-b34f-4184-9c08-2d6a68b90706#gh-light-mode-only" />
+<img width="1072" height="823" alt="main gui" src="https://github.com/user-attachments/assets/f5aa60a0-c4df-4d1f-b298-0b8dfd271af4#gh-dark-mode-only" />
+
 ## Installation
 
 ### Requirements
@@ -47,9 +50,7 @@ The interface is designed to be familiar for anyone who has used a raw editor be
 - Many shortcuts are available. Hover over a setting to see its description and shortcut.
 - By default a simplified render is activated for preview to make the software more responsive. Activate the full preview under view to see the full film characterisitcs.
 
-### Main GUI
-<img width="1121" height="817" alt="main gui" src="https://github.com/user-attachments/assets/d78bcb17-7f96-402e-aee7-36c04b9fac03" />
-
 ### Filmstock Selector
 When clicking on the magnifying glass a window opens to search and browse through the available film stocks.
-<img width="854" height="604" alt="filmstock selector" src="https://github.com/user-attachments/assets/c10af392-a531-40e4-8f4c-8a564807a9d3" />
+<img width="848" height="597" alt="filmstock selector" src="https://github.com/user-attachments/assets/3886eea0-f21f-43de-a319-f84105daae50#gh-dark-mode-only" />
+<img width="833" height="595" alt="filmstock selector" src="https://github.com/user-attachments/assets/54b82d41-9386-49e6-9d3e-b389e8f1585c#gh-light-mode-only" />
