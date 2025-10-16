@@ -85,18 +85,29 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
+        self.histogram = QLabel()
+        self.histogram.setScaledContents(True)
+        self.histogram.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.histogram.setMinimumSize(0, 80)
+
         page_splitter = QSplitter(Qt.Orientation.Vertical)
         top_splitter = QSplitter()
-        sidebar = QWidget()
+        sidebar_widget = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.addWidget(self.histogram)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        self.histogram.setContentsMargins(BORDER_RADIUS - 1, 0, BORDER_RADIUS - 1, 0)
+        sidebar_layout.setSpacing(0)
+        sidebar_settings = QWidget()
         side_layout = QGridLayout()
-        sidebar.setLayout(side_layout)
+        sidebar_settings.setLayout(side_layout)
         side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         scroll_area = RoundedScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setWidget(sidebar)
+        scroll_area.setWidget(sidebar_settings)
         scroll_area.setMinimumWidth(280)
         scroll_area.setStyleSheet(f"""
 QFrame {{
@@ -127,7 +138,8 @@ QFrame {{
         page_splitter.setStretchFactor(1, 0)
 
         top_splitter.addWidget(self.image)
-        top_splitter.addWidget(scroll_area)
+        sidebar_layout.addWidget(scroll_area)
+        top_splitter.addWidget(sidebar_widget)
         top_splitter.setStretchFactor(0, 1)
         top_splitter.setStretchFactor(1, 0)
 
@@ -219,13 +231,6 @@ QFrame {{
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
                                 "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
-
-        self.histogram = QLabel()
-        self.histogram.setScaledContents(True)
-        self.histogram.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.histogram.setMinimumSize(0, 0)
-        side_layout.addWidget(self.histogram, 0, 0, 1, 2)
-        self.side_counter += 1
 
         self.profile_selector = WideComboBox()
 

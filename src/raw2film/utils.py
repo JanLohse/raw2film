@@ -5,7 +5,6 @@ from pathlib import Path
 from shutil import copy
 
 import exiftool
-
 import numpy as np
 from numba import njit
 from raw2film import data
@@ -177,7 +176,7 @@ def add_metadata(src, metadata, exp_comp):
 
 
 @njit
-def generate_histogram(image, black_value=25, white_value=222, height=100):
+def generate_histogram(image, black_value=39, white_value=222, height=100):
     """
     Generate an RGB histogram as an image-like numpy array with logarithmic y-scaling.
 
