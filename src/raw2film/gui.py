@@ -225,7 +225,7 @@ QFrame {{
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
                                 "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
-                                "grain_size": 1., "halation_size": 1, "halation_green_factor": 0.4,
+                                "grain_size": 1., "halation_size": 1., "halation_green_factor": 0.4,
                                 "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0,
                                 "pre_flash_neg": -4, "pre_flash_print": -4, "sat_adjust": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
@@ -303,8 +303,8 @@ QFrame {{
 (Shift+F: fluorescent)
 (Shift+T: Tungsten)""")
 
-        self.exp_wb = Slider()
-        self.exp_wb.setMinMaxTicks(2000, 12000, 100, default=self.dflt_img_params["exposure_kelvin"])
+        self.exp_wb = SliderLog()
+        self.exp_wb.setMinMaxSteps(2700, 16000, 120, self.dflt_img_params["exposure_kelvin"], -2)
         self.exp_wb.set_color_gradient(np.array([2 / 3, 0.14, 0.65277]), np.array([2 / 3, 0.14, 0.15277]))
         add_option(self.exp_wb, "Kelvin:", self.dflt_img_params["exposure_kelvin"], self.exp_wb.setValue,
                    tool_tip="Adjust white balance in kelvin.")
@@ -399,13 +399,13 @@ and changes aspect ratio.""")
 Adjusts scale of film characteristics (halation, resolution, grain)
 and changes aspect ratio.""")
 
-        self.grain_size = Slider()
-        self.grain_size.setMinMaxTicks(0.5, 2, 1, 10, self.dflt_prf_params["grain_size"])
+        self.grain_size = SliderLog()
+        self.grain_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["grain_size"])
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"],
                    self.grain_size.setValue, hideable=True, tool_tip="Size of simulated film grains.")
 
-        self.halation_size = Slider()
-        self.halation_size.setMinMaxTicks(0.5, 2, 1, 4, self.dflt_prf_params["halation_size"])
+        self.halation_size = SliderLog()
+        self.halation_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["halation_size"])
         add_option(self.halation_size, "Halation size:", self.dflt_prf_params["halation_size"],
                    self.halation_size.setValue, hideable=True, tool_tip="""How far the halation spreads.
 Halation is a warm glow around highlights,\nresulting from reflections on the film backing.""")
@@ -415,8 +415,8 @@ Halation is a warm glow around highlights,\nresulting from reflections on the fi
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
                    self.halation_green.setValue, hideable=True, tool_tip="""How red or yellow the halation is.
 Specifies how strongly the halation reaches into the green sensitive layer.""")
-        self.halation_intensity = Slider()
-        self.halation_intensity.setMinMaxTicks(0.5, 4, 1, 4, self.dflt_prf_params["halation_intensity"])
+        self.halation_intensity = SliderLog()
+        self.halation_intensity.setMinMaxSteps(0.5, 4, 50, self.dflt_prf_params["halation_intensity"], 1)
         add_option(self.halation_intensity, "Halation intensity:", self.dflt_prf_params["halation_intensity"],
                    self.halation_intensity.setValue, hideable=True, tool_tip="""How intense the halation is.
 Halation is a warm glow around highlights,
@@ -483,8 +483,8 @@ Decreases how blue the print is.""")
                    self.print_selector.setCurrentText, tool_tip="""Which print material to emulate.
 Affects only colors.""")
 
-        self.projector_kelvin = Slider()
-        self.projector_kelvin.setMinMaxTicks(2700, 10000, 100, default=self.dflt_prf_params["projector_kelvin"])
+        self.projector_kelvin = SliderLog()
+        self.projector_kelvin.setMinMaxSteps(2700, 16000, 120, self.dflt_prf_params["projector_kelvin"], -2)
         self.projector_kelvin.set_color_gradient(np.array([2 / 3, 0.14, 0.15277]), np.array([2 / 3, 0.14, 0.65277]))
         add_option(self.projector_kelvin, "Projector wb:", self.dflt_prf_params["projector_kelvin"],
                    self.projector_kelvin.setValue, hideable=True,
@@ -935,6 +935,7 @@ Affects only colors.""")
         self.parameter_changed()
 
     def update_wb_mode(self, value):
+        value = round(value, -2)
         if value in self.wb_modes.values():
             self.wb_mode.setCurrentText(list(self.wb_modes.keys())[list(self.wb_modes.values()).index(value)])
         else:
