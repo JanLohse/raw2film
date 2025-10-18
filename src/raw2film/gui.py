@@ -11,14 +11,16 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSetti
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
     QProgressDialog, QSplitter
+from spectral_film_lut import REVERSAL_FILM
+from spectral_film_lut.film_loader import *
+from spectral_film_lut.filmstock_selector import FilmStockSelector
+from spectral_film_lut.gui_objects import *
+
 from raw2film import data, utils
 from raw2film.color_processing import rec709_to_displayP3
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
-from spectral_film_lut import REVERSAL_FILM
-from spectral_film_lut.film_loader import *
-from spectral_film_lut.filmstock_selector import FilmStockSelector
 
 
 class MultiWorker(QObject):
@@ -64,6 +66,7 @@ class MainWindow(QMainWindow):
     def __init__(self, filmstocks):
         super().__init__()
 
+        self.flip = False
         self.setWindowTitle("Raw2Film")
 
         self.filmstocks = filmstocks
@@ -224,10 +227,10 @@ QFrame {{
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
-                                "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24,
-                                "grain_size": 1., "halation_size": 1., "halation_green_factor": 0.4,
-                                "projector_kelvin": 6500, "halation_intensity": 1, "black_offset": 0,
-                                "pre_flash_neg": -4, "pre_flash_print": -4, "sat_adjust": 1}
+                                "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24, "grain_size": 1.,
+                                "halation_size": 1., "halation_green_factor": 0.4, "projector_kelvin": 6500,
+                                "halation_intensity": 1, "black_offset": 0, "pre_flash_neg": -4, "pre_flash_print": -4,
+                                "sat_adjust": 1}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
                                 "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
@@ -235,7 +238,7 @@ QFrame {{
         self.profile_selector = WideComboBox()
 
         self.profile_selector.addItem("Default")
-        self.add_profile = QPushButton()
+        self.add_profile = AnimatedButton()
         self.add_profile.setObjectName("plus")
         self.add_profile.setFixedWidth(25)
         profile_widget = QWidget()
@@ -318,16 +321,14 @@ QFrame {{
         self.pre_flash_neg = Slider()
         self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_neg"])
         add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_prf_params["pre_flash_neg"],
-                   self.pre_flash_neg.setValue, hideable=True,
-                   tool_tip="""Simulate the effect of exposing the negative with uniform light.
+                   self.pre_flash_neg.setValue, hideable=True, tool_tip="""Simulate the effect of exposing the negative with uniform light.
 Helps to reduce contrast by lifting the shadows.
 Set in how many stops below middle gray the uniform exposure is.
 -4 will turn off the effect completely.""")
         self.pre_flash_print = Slider()
         self.pre_flash_print.setMinMaxTicks(-4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_print"])
         add_option(self.pre_flash_print, "Pre-flash print:", self.dflt_prf_params["pre_flash_print"],
-                   self.pre_flash_print.setValue, hideable=True,
-                   tool_tip="""Simulate the effect of exposing the print film with uniform light.
+                   self.pre_flash_print.setValue, hideable=True, tool_tip="""Simulate the effect of exposing the print film with uniform light.
 Helps to reduce contrast by lowering the highlights.
 Set in how many stops below middle gray the uniform exposure is.
 -4 will turn off the effect completely.
@@ -348,11 +349,11 @@ or full-preview is enabled.
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
-        self.rotate_left = QPushButton()
+        self.rotate_left = AnimatedButton()
         self.rotate_left.setObjectName("left")
-        self.rotate_right = QPushButton()
+        self.rotate_right = AnimatedButton()
         self.rotate_right.setObjectName("right")
-        self.flip_button = QPushButton()
+        self.flip_button = AnimatedButton()
         self.flip_button.setObjectName("flip")
         for btn in (self.rotate_left, self.rotate_right, self.flip_button):
             btn.setMinimumWidth(10)
@@ -385,10 +386,10 @@ and changes aspect ratio.""")
 
         self.frame_size = QWidget()
         frame_layout = QHBoxLayout()
-        self.frame_width = QLineEdit()
+        self.frame_width = HoverLineEdit()
         regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
         self.frame_width.setValidator(QRegularExpressionValidator(regex))
-        self.frame_height = QLineEdit()
+        self.frame_height = HoverLineEdit()
         self.frame_height.setValidator(QRegularExpressionValidator(regex))
         frame_layout.addWidget(self.frame_width)
         frame_layout.addWidget(self.frame_height)
@@ -410,7 +411,7 @@ and changes aspect ratio.""")
                    self.halation_size.setValue, hideable=True, tool_tip="""How far the halation spreads.
 Halation is a warm glow around highlights,\nresulting from reflections on the film backing.""")
         self.halation_green = Slider()
-        self.halation_green.set_color_gradient(np.array([0.6, 0.21, 29.23/360]), np.array([0.9, 0.18, 109.77/360]))
+        self.halation_green.set_color_gradient(np.array([0.6, 0.21, 29.23 / 360]), np.array([0.9, 0.18, 109.77 / 360]))
         self.halation_green.setMinMaxTicks(0, 1, 1, 20, self.dflt_prf_params["halation_green_factor"])
         add_option(self.halation_green, "Halation color:", self.dflt_prf_params["halation_green_factor"],
                    self.halation_green.setValue, hideable=True, tool_tip="""How red or yellow the halation is.
@@ -494,8 +495,7 @@ Affects only colors.""")
         self.saturation_slider.setMinMaxTicks(0, 2, 1, 100, default=self.dflt_prf_params["sat_adjust"])
         self.saturation_slider.set_color_gradient(np.array([0.666, 0., 0., ]), np.array([0.666, 0.25, 2.]), 20, False)
         add_option(self.saturation_slider, "Saturation:", self.dflt_prf_params["sat_adjust"],
-                   self.saturation_slider.setValue,
-                   tool_tip="Adjust the saturation in the display color space.")
+                   self.saturation_slider.setValue, tool_tip="Adjust the saturation in the display color space.")
 
         self.canvas_mode = WideComboBox()
         self.canvas_mode.addItems(
@@ -511,9 +511,9 @@ Affects only colors.""")
 
         self.canvas_size = QWidget()
         canvas_layout = QHBoxLayout()
-        self.canvas_width = QLineEdit()
+        self.canvas_width = HoverLineEdit()
         self.canvas_width.setValidator(QRegularExpressionValidator(regex))
-        self.canvas_height = QLineEdit()
+        self.canvas_height = HoverLineEdit()
         self.canvas_height.setValidator(QRegularExpressionValidator(regex))
         canvas_layout.addWidget(self.canvas_width)
         canvas_layout.addWidget(self.canvas_height)
@@ -1113,11 +1113,8 @@ Affects only colors.""")
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
 
-        scaled_pixmap = pixmap.scaled(
-            self.image.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
+        scaled_pixmap = pixmap.scaled(self.image.size(), Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
 
         self.image.setPixmap(scaled_pixmap)
         self.image.setToolTip(src)
@@ -1272,7 +1269,7 @@ Affects only colors.""")
         close_checkbox.setChecked(True)
         layout.addWidget(close_checkbox)
 
-        resolution_field = QLineEdit()
+        resolution_field = HoverLineEdit()
         resolution_field.setValidator(QIntValidator())
         layout.addWidget(QLabel("Resolution:"))
         layout.addWidget(resolution_field)
@@ -1286,8 +1283,8 @@ Affects only colors.""")
 
         # Buttons
         button_layout = QHBoxLayout()
-        ok_button = QPushButton("OK")
-        cancel_button = QPushButton("Cancel")
+        ok_button = AnimatedButton("OK")
+        cancel_button = AnimatedButton("Cancel")
         button_layout.addWidget(ok_button)
         button_layout.addWidget(cancel_button)
 

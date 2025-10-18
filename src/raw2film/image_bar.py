@@ -8,6 +8,7 @@ from PyQt6.QtGui import QPixmap, QImage, QPainterPath
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
+from spectral_film_lut.gui_objects import *
 from spectral_film_lut.utils import *
 
 
@@ -86,20 +87,12 @@ class Thumbnail(QFrame):
         """Ensure the label is always a square and the image scales."""
         height = event.size().height()
         if self._pixmap:
-            self.label.setPixmap(
-                self._pixmap.scaledToHeight(
-                    height, Qt.TransformationMode.FastTransformation
-                )
-            )
+            self.label.setPixmap(self._pixmap.scaledToHeight(height, Qt.TransformationMode.FastTransformation))
 
     def setPixmap(self, pixmap: QPixmap):
         if pixmap:
             self._pixmap = pixmap
-            self.label.setPixmap(
-                self._pixmap.scaledToHeight(
-                    self.height(), Qt.TransformationMode.FastTransformation
-                )
-            )
+            self.label.setPixmap(self._pixmap.scaledToHeight(self.height(), Qt.TransformationMode.FastTransformation))
 
     def set_state(self, state="default"):
         bq_color = _thumbnail_color[state]
@@ -354,7 +347,7 @@ class ImageBar(RoundedScrollArea):
     def close_single_image(self, src):
         for label in self.image_labels:
             if label.image_path == src:
-                new_selected = self.close_labels([label,])
+                new_selected = self.close_labels([label, ])
                 if new_selected is not None and self.image_labels:
                     self.select_image(self.image_labels[new_selected])
                 return
