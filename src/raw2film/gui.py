@@ -1206,6 +1206,26 @@ Affects only colors.""")
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
+        self.progress_dialog.setStyleSheet(f"""
+QProgressDialog {{
+    background-color: {BASE_COLOR}; color: {TEXT_PRIMARY};
+}}
+QWidget {{
+    background-color: {BASE_COLOR};
+    border-radius: {BUTTON_RADIUS}px;
+}}
+QProgressBar {{
+    border-radius: {BUTTON_RADIUS}px;
+    text-align: center;
+    background-color: {PRESSED_COLOR};
+    height: 16px;  /* thicker bar */
+    color: {TEXT_PRIMARY};
+}}
+QProgressBar::chunk {{
+    background-color: {OUTLINE_COLOR};
+    border-radius: {BUTTON_RADIUS}px;
+}}
+""")
         QApplication.processEvents()
 
         self.thread = QThread()
@@ -1241,6 +1261,25 @@ Affects only colors.""")
     def save_image_setting_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Export settings")
+
+        dialog.setStyleSheet(f"""
+        QWidget {{
+            border-radius: {BUTTON_RADIUS}px; 
+            background-color: {BASE_COLOR};
+        }}
+
+        HoverLineEdit {{
+            background-color: {SCROLLBAR_HOVER_COLOR};
+        }}
+
+        AnimatedButton, QComboBox, QToolButton {{
+            padding: 3px;
+        }}
+
+        AnimatedButton::hover, QComboBox::hover, HoverLineEdit::hover {{
+            background-color: {HOVER_COLOR};
+        }}
+        """)
 
         layout = QVBoxLayout()
 
