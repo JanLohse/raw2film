@@ -1,10 +1,8 @@
 from functools import lru_cache
 
-import cv2
 import cv2 as cv
 import lensfunpy
 from lensfunpy import util as lensfunpy_util
-from spectral_film_lut.utils import *
 from spectral_film_lut.grain_generation import *
 
 if cuda_available:
@@ -164,8 +162,8 @@ def exponential_blur_kernel(size):
     return kernel
 
 
-def apply_grain(rgb, stock, scale, grain_size=1., density_scale=6, bw_grain=False, **kwargs):
-    grain = generate_grain(rgb.shape, scale, grain_size, bw_grain, cached=True)
+def apply_grain(rgb, stock, scale, grain_size_mm=0.01, grain_sigma=0.4, density_scale=6, bw_grain=False, **kwargs):
+    grain = generate_grain(rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma)
     grain_factors = stock.grain_transform(rgb, density_scale, scale)
     grain = grain * grain_factors
     rgb += grain

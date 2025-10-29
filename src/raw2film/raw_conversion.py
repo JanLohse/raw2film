@@ -4,11 +4,12 @@ from functools import cache
 
 import cv2 as cv
 import rawpy
+from spectral_film_lut.film_spectral import FilmSpectral
+from spectral_film_lut.utils import *
+
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform
-from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.utils import *
 
 
 def raw_to_linear(src, half_size=True):
@@ -36,8 +37,8 @@ def create_lut_cached(*args, **kwargs):
     return create_lut(*args, **kwargs)
 
 
-
-def process_image(image, negative_film, grain_size, frame_width=36, frame_height=24, fast_mode=False, print_film=None,
+def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36, frame_height=24, fast_mode=False,
+                  print_film=None,
                   halation=True, sharpness=True, grain=2, resolution=None, metadata=None, measure_time=False,
                   semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
     if measure_time:
@@ -104,7 +105,8 @@ def process_image(image, negative_film, grain_size, frame_width=36, frame_height
 
             if grain and negative_film.rms_density is not None:
                 start_sub = time.time()
-                image = effects.apply_grain(image, negative_film, scale, grain_size=grain_size, density_scale=d_factor, bw_grain=grain == 1)
+                image = effects.apply_grain(image, negative_film, scale, grain_size_mm=grain_size / 1000,
+                                            grain_sigma=grain_sigma, density_scale=d_factor, bw_grain=grain == 1)
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 

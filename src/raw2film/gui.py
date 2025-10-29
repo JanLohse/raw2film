@@ -227,10 +227,10 @@ QFrame {{
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
-                                "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24, "grain_size": 1.,
-                                "halation_size": 1., "halation_green_factor": 0.4, "projector_kelvin": 6500,
+                                "grain": 2, "format": "135", "frame_width": 36, "frame_height": 24, "grain_size": 6,
+                                "halation_size": 1., "halation_green_factor": 0.3, "projector_kelvin": 6500,
                                 "halation_intensity": 1, "black_offset": 0, "pre_flash_neg": -4, "pre_flash_print": -4,
-                                "sat_adjust": 1}
+                                "sat_adjust": 1, "grain_sigma": 0.4}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
                                 "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
@@ -401,9 +401,15 @@ Adjusts scale of film characteristics (halation, resolution, grain)
 and changes aspect ratio.""")
 
         self.grain_size = SliderLog()
-        self.grain_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["grain_size"])
+        self.grain_size.setMinMaxSteps(3, 12, 30, self.dflt_prf_params["grain_size"])
         add_option(self.grain_size, "Grain size (microns):", self.dflt_prf_params["grain_size"],
                    self.grain_size.setValue, hideable=True, tool_tip="Size of simulated film grains.")
+
+        self.grain_sigma = Slider()
+        self.grain_sigma.setMinMaxTicks(0., 1., 1, 50, self.dflt_prf_params["grain_sigma"])
+        add_option(self.grain_sigma, "Grain variance:", self.dflt_prf_params["grain_sigma"],
+                   self.grain_sigma.setValue, hideable=True,
+                   tool_tip="Variance of simulated film grains. Effects perceived uniformity.")
 
         self.halation_size = SliderLog()
         self.halation_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["halation_size"])
@@ -587,6 +593,7 @@ Affects only colors.""")
         self.format_selector.currentTextChanged.connect(self.format_changed)
         self.advanced_controls.triggered.connect(self.hide_controls)
         self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x, "grain_size"))
+        self.grain_sigma.valueChanged.connect(lambda x: self.profile_changed(x, "grain_sigma"))
         self.halation_size.valueChanged.connect(lambda x: self.profile_changed(x, "halation_size"))
         self.halation_intensity.valueChanged.connect(lambda x: self.profile_changed(x, "halation_intensity"))
         self.halation_green.valueChanged.connect(lambda x: self.profile_changed(x, "halation_green_factor"))
@@ -1015,6 +1022,7 @@ Affects only colors.""")
                 format_name = list(data.FORMATS.keys())[list(data.FORMATS.values()).index(dimensions)]
                 self.format_selector.setCurrentText(format_name)
         self.grain_size.setValue(profile_params["grain_size"])
+        self.grain_sigma.setValue(profile_params["grain_sigma"])
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.black_offset.setValue(profile_params["black_offset"])
