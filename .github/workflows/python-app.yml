@@ -2,19 +2,21 @@ on:
   release:
     types: [published]
 
-name: Release Python Package and Windows Executable
+name: Release Python Package, Windows Executable, and Linux AppImage
 
 jobs:
-  build:
+  build-windows:
     permissions: write-all
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
@@ -32,15 +34,97 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"rawtoaces={path}\n")
 
-      - name: Build executable
-        run: py -m PyInstaller --noconfirm --onefile --noconsole --name="Raw2Film" --add-data "${{ steps.paths.outputs.rawtoaces }};colour/characterisation/datasets/rawtoaces" src\raw2film\gui.py
+      - name: Find resources folder
+        id: paths
+        shell: python
+        run: |
+          import os
+          import spectral_film_lut.resources as r
+          path = r.__path__[0]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"resources={path}\n")
 
+      - name: Set version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
-      - name: Upload package and exe to release
+      - name: Build Windows executable
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onefile --noconsole \
+            --name="Raw2Film" \
+            --add-data "${{ steps.paths.outputs.rawtoaces }};colour/characterisation/datasets/rawtoaces" \
+            --add-data "${{ steps.paths.outputs.resources }};resources" \
+            src/raw2film/gui.py
+
+      - name: Rename Windows EXE with version
+        shell: bash
+        run: mv dist/Raw2Film.exe dist/Raw2Film-${VERSION}.exe
+
+      - name: Upload Windows executable to release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/raw2film-*.tar.gz
-            dist/Raw2Film.exe
+          files: dist/Raw2Film-${{ env.VERSION }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    permissions: write-all
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build pyinstaller
+          pip install -e .
+
+      - name: Find rawtoaces folder
+        id: paths
+        shell: python
+        run: |
+          import os
+          import colour.characterisation.datasets.rawtoaces as r
+          path = r.__path__[0]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"rawtoaces={path}\n")
+
+      - name: Find resources folder
+        id: paths
+        shell: python
+        run: |
+          import os
+          import spectral_film_lut.resources as r
+          path = r.__path__[0]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"resources={path}\n")
+
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Build Linux AppImage
+        run: |
+          pyinstaller --noconfirm --onefile --noconsole \
+            --name="Raw2Film" \
+            --add-data "${{ steps.paths.outputs.rawtoaces }}:colour/characterisation/datasets/rawtoaces" \
+            --add-data "${{ steps.paths.outputs.resources }}:resources" \
+            src/raw2film/gui.py
+          chmod +x dist/Raw2Film
+          mv dist/Raw2Film dist/Raw2Film-${VERSION}.AppImage
+        shell: bash
+
+      - name: Upload Linux AppImage to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Raw2Film-${{ env.VERSION }}.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
