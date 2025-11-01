@@ -27,6 +27,9 @@ sudo apt install exiftool
 The easiest way to run raw2film is to download the latest `.exe` from the [releases](../../releases) section.  
 (There might be issues with Windows Defender, in which case it is recommended to use the python package.)
 
+### Linux
+Download the `.AppImage` from the [releases](../../releases) section or install the python package.
+
 ### Python Package
 You can also install the program using pip:  
 
