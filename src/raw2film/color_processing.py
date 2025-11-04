@@ -1,3 +1,5 @@
+import math
+
 from spectral_film_lut.utils import *
 
 
@@ -48,13 +50,13 @@ def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
             factor = metadata['EXIF:FNumber'] ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
         else:
             factor = 4 ** 2 / metadata['EXIF:ISO'] / metadata['EXIF:ExposureTime']
-        factor = np.sqrt(factor) + 1
+        factor = math.sqrt(factor) + 1
 
     log_lum = lum_mat ** (1 / factor)
     average_exposure = log_lum.mean() ** factor
 
     ref_exposure *= 65535
-    exp_comp = np.log2(ref_exposure / average_exposure)
+    exp_comp = math.log2(ref_exposure / average_exposure)
 
     return exp_comp
 

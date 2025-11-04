@@ -92,9 +92,8 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
             else:
                 halation_func = None
 
-            transform, d_factor = FilmSpectral.generate_conversion(negative_film, mode='negative',
-                                                                   input_colourspace=None,
-                                                                   halation_func=halation_func, **kwargs)
+            transform = FilmSpectral.generate_conversion(negative_film, mode='negative', adx=False,
+                                                         input_colourspace=None, halation_func=halation_func, **kwargs)
             image = transform(image)
 
             if sharpness and negative_film.mtf is not None:
@@ -106,17 +105,17 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
             if grain and negative_film.rms_density is not None:
                 start_sub = time.time()
                 image = effects.apply_grain(image, negative_film, scale, grain_size_mm=grain_size / 1000,
-                                            grain_sigma=grain_sigma, density_scale=d_factor, bw_grain=grain == 1)
+                                            grain_sigma=grain_sigma, bw_grain=grain == 1)
                 if measure_time:
                     print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
             if highlight_burn and (print_film is not None or negative_film.density_measure in ["status_m", "bw"]):
                 start_sub = time.time()
-                image = effects.burn(image, negative_film, highlight_burn, burn_scale, d_factor)
+                image = effects.burn(image, negative_film, highlight_burn, burn_scale)
                 if measure_time:
                     print(f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            image = xp.clip(image, 0, 1)
+            image = xp.clip(image * 2, 0, 1)
             image *= 2 ** 16 - 1
             image = image.astype(xp.uint16)
 
@@ -124,8 +123,8 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
         start_sub = time.time()
     if "exp_comp" in kwargs:
         kwargs["exp_comp"]  = round(kwargs["exp_comp"], ndigits=1)
-    lut = create_lut_cached(negative_film, print_film, mode=mode, input_colourspace=None,
-                     cube=False, **kwargs)
+    lut = create_lut_cached(negative_film, print_film, mode=mode, input_colourspace=None, adx=False,
+                     cube=False, adx_scaling=2, **kwargs)
     lut = (lut * (2 ** 16 - 1)).astype(xp.uint16)
     if measure_time:
         print(f"{'create lut':28} {time.time() - start_sub:.4f}s")

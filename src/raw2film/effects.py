@@ -3,6 +3,7 @@ from functools import lru_cache
 import cv2 as cv
 import lensfunpy
 from lensfunpy import util as lensfunpy_util
+from spectral_film_lut import adx16_decode
 from spectral_film_lut.grain_generation import *
 
 if cuda_available:
@@ -162,9 +163,9 @@ def exponential_blur_kernel(size):
     return kernel
 
 
-def apply_grain(rgb, stock, scale, grain_size_mm=0.01, grain_sigma=0.4, density_scale=6, bw_grain=False, **kwargs):
+def apply_grain(rgb, stock, scale, grain_size_mm=0.01, grain_sigma=0.4, bw_grain=False, **kwargs):
     grain = generate_grain(rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma)
-    grain_factors = stock.grain_transform(rgb, density_scale, scale)
+    grain_factors = stock.grain_transform(rgb, scale)
     grain = grain * grain_factors
     rgb += grain
     return rgb
@@ -267,13 +268,12 @@ def cupy_area_downsample(image, factor):
     return xp.fromDlpack(torch.utils.dlpack.to_dlpack(downsampled))[0, 0]
 
 
-def burn(image, negative_film, highlight_burn, burn_scale, d_factor):
-    func = lambda x: xp.clip(x * d_factor - 0.25 - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0], 0,
-        None)
+def burn(image, negative_film, highlight_burn, burn_scale):
+    highlight_burn *= 8000. / 65535.
+    func = lambda x: xp.clip(adx16_decode(x) - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0], 0, None)
     if image.shape[-1] == 3:
-        image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func) / d_factor
+        image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func)
     else:
-        image = image - highlight_burn * down_up_blur(image, burn_scale, func) / d_factor
-
+        image = image - highlight_burn * down_up_blur(image, burn_scale, func)
 
     return image
