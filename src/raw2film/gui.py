@@ -1467,7 +1467,7 @@ QProgressBar::chunk {{
 
 
 def gui_main():
-    load_ui(MainWindow, "Raw2Film")
+    load_ui(MainWindow, "Raw2Film", 0.16)
 
 
 if __name__ == '__main__':
