@@ -14,7 +14,7 @@ METADATA_KEYS = ['GPSDateStamp', 'ModifyDate', 'FocalLengthIn35mmFormat', 'Shutt
                  'FocalPlaneResolutionUnit', 'MeteringMode', 'GPSLongitudeRef', 'SensorTopBorder', 'SceneCaptureType',
                  'FNumber', 'LightValue', 'BrightnessValue', 'SensorWidth', 'SensorHeight', 'SensorBottomBorder',
                  'SensorRightBorder', 'ProcessingSoftware']
-EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx')
+EXTENSION_LIST = ('.rw2', '.dng', '.crw', '.cr2', '.cr3', '.nef', '.orf', '.ori', '.raf', '.rwl', '.pef', '.ptx', '.arw')
 FORMATS = {'110': (17, 13),
            '135-half': (24, 18), '135': (36, 24),
            'xpan': (65, 24),

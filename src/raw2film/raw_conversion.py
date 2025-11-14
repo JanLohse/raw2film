@@ -38,9 +38,8 @@ def create_lut_cached(*args, **kwargs):
 
 
 def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36, frame_height=24, fast_mode=False,
-                  print_film=None,
-                  halation=True, sharpness=True, grain=2, resolution=None, metadata=None, measure_time=False,
-                  semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
+                  print_film=None, halation=True, sharpness=True, grain=2, resolution=None, metadata=None,
+                  measure_time=False, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
