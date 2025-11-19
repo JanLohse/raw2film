@@ -1,63 +1,68 @@
-on:
-  release:
-    types: [published]
+# raw2film.spec
 
-name: Build Release Artifacts
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+import colour.characterisation.datasets.rawtoaces as rawtoaces
+import spectral_film_lut.resources as sfl_resources  # needed only to locate resources
+import os
 
-jobs:
-  build:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+block_cipher = None
 
-    runs-on: ${{ matrix.os }}
+# ---- metadata ----
+datas = []
+datas += copy_metadata("imageio")
+datas += copy_metadata("networkx")
+datas += copy_metadata("numpy")
+datas += copy_metadata("colour-science")
+datas += copy_metadata("spectral_film_lut")
 
-    permissions:
-      contents: write
+# ---- spectral_film_lut resources (used by raw2film) ----
+resource_datas = collect_data_files(
+    "spectral_film_lut",
+    includes=["resources/*", "resources/**/*"]
+)
+datas += resource_datas
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+# ---- rawtoaces dataset ----
+rawtoaces_path = rawtoaces.__path__[0]
+datas.append((rawtoaces_path, "colour/characterisation/datasets/rawtoaces"))
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
+# ---- hidden imports ----
+hiddenimports = []
+hiddenimports += collect_submodules("imageio")
+hiddenimports += collect_submodules("networkx")
+hiddenimports += collect_submodules("numpy")
+hiddenimports += collect_submodules("colour")
+hiddenimports += collect_submodules("spectral_film_lut")
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller build
-          pip install -e .
+# ---- entry script ----
+entry_script = "src/raw2film/gui.py"
 
-      - name: Set version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+a = Analysis(
+    [entry_script],
+    pathex=["."],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+)
 
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller raw2film.spec
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-      # Windows artifact
-      - name: Package Windows EXE
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          mv dist/Raw2Film.exe Raw2Film-${VERSION}.exe
-
-      # Linux artifact (AppImage-like single binary)
-      - name: Package Linux binary
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          chmod +x dist/Raw2Film
-          mv dist/Raw2Film Raw2Film-${VERSION}.AppImage
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            Raw2Film-${{ env.VERSION }}.exe
-            Raw2Film-${{ env.VERSION }}.AppImage
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name="Raw2Film",
+    debug=False,
+    strip=False,
+    upx=False,
+    console=False,
+    icon=None,
+)
