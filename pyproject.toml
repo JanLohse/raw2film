@@ -33,6 +33,6 @@ Homepage = "https://github.com/JanLohse/raw2film"
 Issues = "https://github.com/JanLohse/raw2film/issues"
 
 [project.gui-scripts]
-raw2film = "raw2film:gui_main"
+raw2film = "raw2film.gui:gui_main"
 
 [tool.setuptools_scm]
