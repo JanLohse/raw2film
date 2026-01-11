@@ -1,23 +1,73 @@
-on:
-  release:
-    types: [published]
+name: Build and Release Artifacts
 
-name: Build Release Artifacts
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
+  tag-and-release:
+    name: Tag and Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      TAG: ${{ steps.bump.outputs.new_tag }}
+      VERSION: ${{ steps.set_version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # Create initial tag if none exists
+      - name: Create initial tag
+        run: |
+          if [ -z "$(git tag -l 'v*')" ]; then
+            git tag v0.0.0
+            git push origin v0.0.0
+          fi
+
+      # Bump version
+      - name: Bump version
+        id: bump
+        uses: anothrNick/github-tag-action@1.75.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch
+
+      # Strip leading 'v' for artifact filenames
+      - name: Set version output
+        id: set_version
+        run: |
+          TAG=${{ steps.bump.outputs.new_tag }}
+          VERSION=${TAG#v}
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Create GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.new_tag }}
+          name: Version ${{ steps.bump.outputs.new_tag }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    name: Build Artifacts
+    needs: tag-and-release
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
-
     runs-on: ${{ matrix.os }}
-
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -30,34 +80,31 @@ jobs:
           pip install pyinstaller build
           pip install -e .
 
-      - name: Set version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-
       - name: Build with PyInstaller
-        run: |
-          pyinstaller raw2film.spec
+        run: pyinstaller raw2film.spec
 
-      # Windows artifact
+      # Package Windows EXE
       - name: Package Windows EXE
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          mv dist/Raw2Film.exe Raw2Film-${VERSION}.exe
+          mv dist/Raw2Film.exe Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.exe
 
-      # Linux artifact (AppImage-like single binary)
+      # Package Linux AppImage
       - name: Package Linux binary
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           chmod +x dist/Raw2Film
-          mv dist/Raw2Film Raw2Film-${VERSION}.AppImage
+          mv dist/Raw2Film Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.AppImage
 
-      - name: Upload release assets
+      # Upload artifacts to the release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.tag-and-release.outputs.TAG }}
           files: |
-            Raw2Film-${{ env.VERSION }}.exe
-            Raw2Film-${{ env.VERSION }}.AppImage
+            Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.exe
+            Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
