@@ -319,6 +319,11 @@ QFrame {{
         add_option(self.tint, "Tint:", self.dflt_img_params["tint"], self.tint.setValue,
                    tool_tip="Change tint on green-magenta axis.")
 
+        self.chroma_nr = Slider()
+        self.chroma_nr.setMinMaxTicks(0, 10)
+        add_option(self.chroma_nr, "Chroma NR:", self.dflt_img_params["chroma_nr"], self.chroma_nr.setValue,
+                   tool_tip="Strength of chroma noise reduction.", hideable=True)
+
         self.pre_flash_neg = Slider()
         self.pre_flash_neg.setMinMaxTicks(-4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_neg"])
         add_option(self.pre_flash_neg, "Pre-flash neg.:", self.dflt_prf_params["pre_flash_neg"],
@@ -534,10 +539,6 @@ Affects only colors.""")
         add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
                    hideable=True, tool_tip="Change the black value without affecting other areas.")
 
-        self.chroma_nr = Slider()
-        self.chroma_nr.setMinMaxTicks(0, 10)
-        add_option(self.chroma_nr, "Chroma NR:", self.dflt_img_params["chroma_nr"], self.chroma_nr.setValue,
-                   tool_tip="Strength of chroma noise reduction.")
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
@@ -743,6 +744,19 @@ Affects only colors.""")
     def delete_profile(self):
         current_profile = self.profile_selector.currentText()
         reply = QMessageBox()
+        reply.setStyleSheet(f"""
+        QWidget {{
+            background-color: {BASE_COLOR};
+        }}
+        
+        QPushButton::hover {{
+            background-color: {HOVER_COLOR};
+        }}
+        
+        QPushButton::pressed {{
+            background-color: {PRESSED_COLOR};
+        }}
+        """)
         reply.setText(f"Delete profile {current_profile}?")
         reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         x = reply.exec()
@@ -761,6 +775,19 @@ Affects only colors.""")
 
     def delete_all_profiles(self):
         reply = QMessageBox()
+        reply.setStyleSheet(f"""
+        QWidget {{
+            background-color: {BASE_COLOR};
+        }}
+
+        QPushButton::hover {{
+            background-color: {HOVER_COLOR};
+        }}
+
+        QPushButton::pressed {{
+            background-color: {PRESSED_COLOR};
+        }}
+        """)
         profile_count = len(self.profile_params)
         if not profile_count:
             return
@@ -1114,6 +1141,7 @@ Affects only colors.""")
                     processing_args["sharpness"] = False
                     processing_args["grain"] = False
                     processing_args["halation"] = False
+                    processing_args["chroma_nr"] = 0
                 else:
                     processing_args["fast_mode"] = True
 
@@ -1170,6 +1198,7 @@ Affects only colors.""")
             if "cam" in processing_args and "lens" in processing_args:
                 image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                                 self.lenses[processing_args["lens"]])
+        processing_args["chroma_nr"] *= 2
         image = process_image(image, metadata=load_metadata(src), fast_mode=False, lut_size=67, **processing_args)
         path = "/".join(filename.split("/")[:-1])
         if path:

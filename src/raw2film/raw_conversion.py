@@ -53,9 +53,8 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
     image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
 
     if not fast_mode and chroma_nr:
-        start_lol = time.time()
+        # TODO: support cuda
         image = chroma_nr_filter(image, chroma_nr)
-        print(time.time() - start_lol)
 
     if resolution is not None:
         h, w = image.shape[:2]
