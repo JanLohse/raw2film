@@ -233,7 +233,8 @@ QFrame {{
                                 "sat_adjust": 1, "grain_sigma": 0.4}
         self.dflt_img_params = {"exp_comp": 0, "zoom": 1, "rotate_times": 0, "rotation": 0, "exposure_kelvin": 6000,
                                 "profile": "Default", "lens_correction": True, "canvas_mode": "No", "canvas_scale": 1,
-                                "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0}
+                                "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0,
+                                "chroma_nr": 0}
 
         self.profile_selector = WideComboBox()
 
@@ -407,9 +408,8 @@ and changes aspect ratio.""")
 
         self.grain_sigma = Slider()
         self.grain_sigma.setMinMaxTicks(0., 1., 1, 50, self.dflt_prf_params["grain_sigma"])
-        add_option(self.grain_sigma, "Grain variance:", self.dflt_prf_params["grain_sigma"],
-                   self.grain_sigma.setValue, hideable=True,
-                   tool_tip="Variance of simulated film grains. Effects perceived uniformity.")
+        add_option(self.grain_sigma, "Grain variance:", self.dflt_prf_params["grain_sigma"], self.grain_sigma.setValue,
+                   hideable=True, tool_tip="Variance of simulated film grains. Effects perceived uniformity.")
 
         self.halation_size = SliderLog()
         self.halation_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["halation_size"])
@@ -534,6 +534,11 @@ Affects only colors.""")
         add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
                    hideable=True, tool_tip="Change the black value without affecting other areas.")
 
+        self.chroma_nr = Slider()
+        self.chroma_nr.setMinMaxTicks(0, 10)
+        add_option(self.chroma_nr, "Chroma NR:", self.dflt_img_params["chroma_nr"], self.chroma_nr.setValue,
+                   tool_tip="Strength of chroma noise reduction.")
+
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
         QShortcut(QKeySequence('Down'), self).activated.connect(self.exp_comp.decrease)
         QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(self.rotation.increase)
@@ -634,6 +639,7 @@ Affects only colors.""")
             self.canvas_width.text()) if self.canvas_width.text() and self.canvas_height.text() else 0.8,
                                                                             "canvas_ratio"))
         self.black_offset.valueChanged.connect(lambda x: self.profile_changed(x, "black_offset"))
+        self.chroma_nr.valueChanged.connect(lambda x: self.setting_changed(x, "chroma_nr"))
         self.ui_update.connect(self.load_image_params_to_ui)
 
         self.setCentralWidget(page_splitter)
@@ -991,6 +997,8 @@ Affects only colors.""")
         set_safely(self.highlight_burn, "setValue", "highlight_burn")
         set_safely(self.burn_scale, "setValue", "burn_scale")
 
+        set_safely(self.chroma_nr, "setValue", "chroma_nr")
+
         if "profile" in image_params:
             self.profile_selector.setCurrentText(image_params["profile"])
 
@@ -1122,7 +1130,7 @@ Affects only colors.""")
         pixmap = QPixmap.fromImage(image)
 
         scaled_pixmap = pixmap.scaled(self.image.size(), Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
+                                      Qt.TransformationMode.SmoothTransformation)
 
         self.image.setPixmap(scaled_pixmap)
         self.image.setToolTip(src)
@@ -1162,7 +1170,7 @@ Affects only colors.""")
             if "cam" in processing_args and "lens" in processing_args:
                 image = effects.lens_correction(image, metadata, self.cameras[processing_args["cam"]],
                                                 self.lenses[processing_args["lens"]])
-        image = process_image(image, fast_mode=False, lut_size=67, **processing_args)
+        image = process_image(image, metadata=load_metadata(src), fast_mode=False, lut_size=67, **processing_args)
         path = "/".join(filename.split("/")[:-1])
         if path:
             path += "/"

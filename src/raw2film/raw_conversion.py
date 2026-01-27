@@ -9,7 +9,7 @@ from spectral_film_lut.utils import *
 
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
-from raw2film.effects import add_canvas, add_canvas_uniform
+from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
 
 
 def raw_to_linear(src, half_size=True):
@@ -39,7 +39,8 @@ def create_lut_cached(*args, **kwargs):
 
 def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36, frame_height=24, fast_mode=False,
                   print_film=None, halation=True, sharpness=True, grain=2, resolution=None, metadata=None,
-                  measure_time=False, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, **kwargs):
+                  measure_time=False, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, chroma_nr=0,
+                  **kwargs):
     if measure_time:
         kwargs['measure_time'] = True
         start = time.time()
@@ -50,6 +51,11 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
         kwargs["exp_comp"] = exp_comp
 
     image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
+
+    if not fast_mode and chroma_nr:
+        start_lol = time.time()
+        image = chroma_nr_filter(image, chroma_nr)
+        print(time.time() - start_lol)
 
     if resolution is not None:
         h, w = image.shape[:2]

@@ -17,7 +17,6 @@ else:
     torch_available = False
 
 
-
 def lens_correction(rgb, metadata, cam, lens):
     """Apply lens correction using lensfunpy."""
     # noinspection PyUnresolvedReferences
@@ -91,14 +90,6 @@ def crop_image(rgb, zoom=1, aspect=1.5, flip=False):
     return rgb
 
 
-def gaussian_blur(rgb, sigma=1.):
-    """Applies gaussian blur per channel of rgb image."""
-    if cuda_available:
-        return xdimage.gaussian_filter(rgb, sigma=(sigma, sigma, 0), mode='constant')
-    else:
-        return cv.GaussianBlur(rgb, ksize=(0, 0), sigmaX=sigma)
-
-
 def mtf_curve(logf, vals):
     return lambda x: xp.interp(xp.log1p(x), logf, vals, left=1, right=0)
 
@@ -130,6 +121,7 @@ def mtf_kernel(logf, vals, scale):
     mtf_func = mtf_curve(xp.asarray(logf), xp.asarray(vals))
     kernel = compute_kernel_from_function(mtf_func, 1., 1 / scale)
     return kernel
+
 
 def film_sharpness(rgb, stock, scale):
     kernel = xp.stack([mtf_kernel(logf, vals, scale) for logf, vals in stock.mtf], axis=-1, dtype=xp.float32)
@@ -207,11 +199,9 @@ def add_canvas(image, canvas_ratio, canvas_scale, canvas_color, **kwargs):
     """Adds background canvas to image."""
     img_ratio = image.shape[1] / image.shape[0]
     if img_ratio > canvas_ratio:
-        output_resolution = (
-            int(image.shape[1] / canvas_ratio * canvas_scale), int(image.shape[1] * canvas_scale))
+        output_resolution = (int(image.shape[1] / canvas_ratio * canvas_scale), int(image.shape[1] * canvas_scale))
     else:
-        output_resolution = (
-            int(image.shape[0] * canvas_scale), int(image.shape[0] * canvas_ratio * canvas_scale))
+        output_resolution = (int(image.shape[0] * canvas_scale), int(image.shape[0] * canvas_ratio * canvas_scale))
     offset = np.subtract(output_resolution, image.shape[:2]) // 2
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[offset[0]:offset[0] + image.shape[0], offset[1]:offset[1] + image.shape[1]] = image
@@ -241,7 +231,8 @@ def down_up_blur(image, scale=50, func=None):
             else:
                 down = xdimage.zoom(image[:, :, c], 1 / scale, order=1)
         else:
-            down = cv.resize(image[:, :, c], (image.shape[1] // scale, image.shape[0] // scale), interpolation=cv.INTER_AREA)
+            down = cv.resize(image[:, :, c], (image.shape[1] // scale, image.shape[0] // scale),
+                             interpolation=cv.INTER_AREA)
         if func is not None:
             down = func(down)
         # Downsample channel
@@ -250,8 +241,8 @@ def down_up_blur(image, scale=50, func=None):
         # Upsample back
         up = xdimage.zoom(blurred, scale, order=1)
         # Crop or pad to match original shape
-        up_resized = xp.pad(up, [(0, max(x - y, 0)) for x, y in zip(image.shape, up.shape)], mode='edge')[:image.shape[0],
-                     :image.shape[1]]
+        up_resized = xp.pad(up, [(0, max(x - y, 0)) for x, y in zip(image.shape, up.shape)], mode='edge')[
+            :image.shape[0], :image.shape[1]]
         blurred_channels.append(up_resized)
 
     # Stack back into (H, W, 3)
@@ -275,5 +266,136 @@ def burn(image, negative_film, highlight_burn, burn_scale):
         image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func)
     else:
         image = image - highlight_burn * down_up_blur(image, burn_scale, func)
+
+    return image
+
+@njit
+def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
+    assert size % 2 == 1
+    k = size // 2
+
+    kernel = np.zeros(size, dtype=np.float32)
+    s2 = 2.0 * sigma * sigma
+
+    for i in range(size):
+        x = i - k
+        kernel[i] = math.exp(-(x * x) / s2)
+
+    kernel /= kernel.sum()
+    return kernel
+
+
+@njit(parallel=True)
+def blur_horizontal_masked(image, kernel, blur_mask):
+    h, w, c = image.shape
+    k = kernel.shape[0] // 2
+    temp = np.empty_like(image)
+
+    for y in prange(h):
+        for x in range(w):
+            for ch in range(c):
+                if blur_mask[ch]:
+                    acc = 0.0
+                    for i in range(-k, k + 1):
+                        ix = min(max(x + i, 0), w - 1)
+                        acc += image[y, ix, ch] * kernel[i + k]
+                    temp[y, x, ch] = acc
+                else:
+                    # pass-through for unblurred channels
+                    temp[y, x, ch] = image[y, x, ch]
+
+    return temp
+
+
+@njit(parallel=True)
+def blur_vertical_masked(image, kernel, blur_mask):
+    h, w, c = image.shape
+    k = kernel.shape[0] // 2
+    output = np.empty_like(image)
+
+    for y in prange(h):
+        for x in range(w):
+            for ch in range(c):
+                if blur_mask[ch]:
+                    acc = 0.0
+                    for i in range(-k, k + 1):
+                        iy = min(max(y + i, 0), h - 1)
+                        acc += image[iy, x, ch] * kernel[i + k]
+                    output[y, x, ch] = acc
+                else:
+                    output[y, x, ch] = image[y, x, ch]
+
+    return output
+
+@njit
+def gaussian_blur_separable_masked(image, kernel, blur_channels):
+    """
+    image: (H, W, C) float32
+    kernel: 1D Gaussian kernel
+    blur_channels: iterable of booleans, length C
+    """
+    blur_mask = np.asarray(blur_channels, dtype=np.bool_)
+    temp = blur_horizontal_masked(image, kernel, blur_mask)
+    return blur_vertical_masked(temp, kernel, blur_mask)
+
+@njit(parallel=True)
+def XYZ_to_xyY(image, eps=1e-8):
+    h, w, _ = image.shape
+    out = np.empty_like(image)
+
+    for y in prange(h):
+        for x in range(w):
+            X = image[y, x, 0]
+            Y = image[y, x, 1]
+            Z = image[y, x, 2]
+
+            denom = X + Y + Z
+            if denom > eps:
+                out[y, x, 0] = X / denom  # x
+                out[y, x, 1] = Y / denom  # y
+            else:
+                out[y, x, 0] = 0.0
+                out[y, x, 1] = 0.0
+
+            out[y, x, 2] = Y
+
+    return out
+
+
+@njit(parallel=True)
+def xyY_to_XYZ(image, eps=1e-8):
+    h, w, _ = image.shape
+    out = np.empty_like(image)
+
+    for y in prange(h):
+        for x in range(w):
+            cx = image[y, x, 0]
+            cy = image[y, x, 1]
+            Y  = image[y, x, 2]
+
+            if cy > eps:
+                inv = Y / cy
+                out[y, x, 0] = cx * inv                 # X
+                out[y, x, 1] = Y                        # Y
+                out[y, x, 2] = (1.0 - cx - cy) * inv    # Z
+            else:
+                out[y, x, 0] = 0.0
+                out[y, x, 1] = 0.0
+                out[y, x, 2] = 0.0
+
+    return out
+
+@njit
+def chroma_nr_filter(image, size=0):
+
+    image = XYZ_to_xyY(image)
+    size = int(size) * 2 + 1
+    sigma = 0.3 * ((size - 1) * 0.5 - 1) + 0.8
+    kernel = gaussian_kernel_1d(size, sigma)
+
+    # Correct blur
+    image = gaussian_blur_separable_masked(image, kernel, [True, True, False])
+
+    image = xyY_to_XYZ(image)
 
     return image
