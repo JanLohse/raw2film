@@ -4,9 +4,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial, lru_cache
 
+import PIL.ImageCms
 import exiftool
 import imageio
 import lensfunpy
+from PIL import Image, ImageCms
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
@@ -154,6 +156,7 @@ QFrame {{
         file_menu = menu.addMenu("File")
         view_menu = menu.addMenu("View")
         edit_menu = menu.addMenu("Edit")
+        view_menu.setToolTipsVisible(True)
 
         def add_option(widget, name=None, default=None, setter=None, hideable=False, tool_tip=None):
             self.side_counter += 1
@@ -176,40 +179,40 @@ QFrame {{
         self.folder_selector = QAction("Open folder", self)
         self.folder_selector.setShortcut(QKeySequence("Ctrl+Shift+O"))
         file_menu.addAction(self.folder_selector)
-        self.quick_save_button = QAction("Quick save settings")
+        self.quick_save_button = QAction("Quick save settings", self)
         self.quick_save_button.setShortcut("Ctrl+S")
         file_menu.addAction(self.quick_save_button)
-        self.save_image_button = QAction("Quick export jpg")
+        self.save_image_button = QAction("Quick export jpg", self)
         self.save_image_button.triggered.connect(self.save_image_dialog)
         file_menu.addAction(self.save_image_button)
-        self.save_all_button = QAction("Export all images")
+        self.save_all_button = QAction("Export all images", self)
         self.save_all_button.triggered.connect(self.save_all_images)
-        self.save_selected_button = QAction("Export selected images")
+        self.save_selected_button = QAction("Export selected images", self)
         self.save_selected_button.triggered.connect(self.save_selected_images)
         file_menu.addAction(self.save_selected_button)
         file_menu.addAction(self.save_all_button)
-        self.save_settings_button = QAction("Save settings")
+        self.save_settings_button = QAction("Save settings", self)
         file_menu.addAction(self.save_settings_button)
-        self.load_settings_button = QAction("Load settings")
+        self.load_settings_button = QAction("Load settings", self)
         file_menu.addAction(self.load_settings_button)
-        self.close_highlighted_button = QAction("Close selected images")
+        self.close_highlighted_button = QAction("Close selected images", self)
         self.close_highlighted_button.setShortcut("Del")
         file_menu.addAction(self.close_highlighted_button)
-        self.delete_highlighted_button = QAction("Delete selected images")
+        self.delete_highlighted_button = QAction("Delete selected images", self)
         self.delete_highlighted_button.setShortcut("Shift+Del")
         file_menu.addAction(self.delete_highlighted_button)
-        self.deselect_all_button = QAction("Deselect all")
+        self.deselect_all_button = QAction("Deselect all", self)
         self.deselect_all_button.setShortcut("Ctrl+D")
         edit_menu.addAction(self.deselect_all_button)
-        self.reset_image_button = QAction("Reset image")
+        self.reset_image_button = QAction("Reset image", self)
         edit_menu.addAction(self.reset_image_button)
-        self.reset_all_images_button = QAction("Reset all images")
+        self.reset_all_images_button = QAction("Reset all images", self)
         edit_menu.addAction(self.reset_all_images_button)
-        self.reset_profile_button = QAction("Reset profile")
+        self.reset_profile_button = QAction("Reset profile", self)
         edit_menu.addAction(self.reset_profile_button)
-        self.delete_profile_button = QAction("Delete profile")
+        self.delete_profile_button = QAction("Delete profile", self)
         edit_menu.addAction(self.delete_profile_button)
-        self.delete_all_profiles_button = QAction("Delete all profiles")
+        self.delete_all_profiles_button = QAction("Delete all profiles", self)
         edit_menu.addAction(self.delete_all_profiles_button)
 
         self.advanced_controls = QAction("Advanced Controls", self)
@@ -220,10 +223,22 @@ QFrame {{
         self.p3_preview.setShortcut(QKeySequence("Ctrl+Shift+P"))
         self.p3_preview.setCheckable(True)
         view_menu.addAction(self.p3_preview)
-        self.full_preview = QAction("Full preview")
+        self.full_preview = QAction("Full preview", self)
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
+        self.load_display_icc_button = QAction("Load display ICC profile", self)
+        self.load_display_icc_button.setCheckable(True)
+        view_menu.addAction(self.load_display_icc_button)
+        self.reset_display_icc_button = QAction("Reset display ICC profile", self)
+        self.reset_display_icc_button.setVisible(False)
+        view_menu.addAction(self.reset_display_icc_button)
+        self.load_softproof_icc_button = QAction("Load soft proofing ICC profile", self)
+        self.load_softproof_icc_button.setCheckable(True)
+        view_menu.addAction(self.load_softproof_icc_button)
+        self.reset_softproof_icc_button = QAction("Reset soft proofing ICC profile", self)
+        self.reset_softproof_icc_button.setVisible(False)
+        view_menu.addAction(self.reset_softproof_icc_button)
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
@@ -642,6 +657,11 @@ Affects only colors.""")
         self.black_offset.valueChanged.connect(lambda x: self.profile_changed(x, "black_offset"))
         self.chroma_nr.valueChanged.connect(lambda x: self.setting_changed(x, "chroma_nr"))
         self.ui_update.connect(self.load_image_params_to_ui)
+        self.load_display_icc_button.triggered.connect(self.load_display_icc_dialog)
+        self.reset_display_icc_button.triggered.connect(self.reset_display_icc)
+        self.load_softproof_icc_button.triggered.connect(self.load_softproof_icc_dialog)
+        self.reset_softproof_icc_button.triggered.connect(self.reset_softproof_icc)
+        self.srgb_profile = ImageCms.createProfile("sRGB")
 
         self.setCentralWidget(page_splitter)
 
@@ -658,6 +678,9 @@ Affects only colors.""")
         self.flip_image = False
         self.active = True  # prevent from running update_preview by setting inactive
         self.loading = False  # prevent from storing settings while setting widget values
+        self.display_icc_path = None
+        self.softproof_icc_path = None
+        self.icc_transform = None
 
         self.hide_controls()
 
@@ -665,6 +688,7 @@ Affects only colors.""")
         self.profile_params = {}
 
         self.load_settings_system()
+        self.load_icc_setting()
 
         self.save_timer = time.time()
 
@@ -1154,6 +1178,12 @@ Affects only colors.""")
         histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],
                                              QImage.Format.Format_RGB888))
         self.histogram.setPixmap(histogram)
+
+        if self.icc_transform is not None:
+            image = Image.fromarray(image)
+            image = ImageCms.applyTransform(image, self.icc_transform)
+            image = np.array(image, np.uint8)
+
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
 
@@ -1502,6 +1532,125 @@ QProgressBar::chunk {{
         self.flip = not self.flip
         self.setting_changed(self.flip, "flip")
 
+    def load_icc_setting(self):
+        display_icc_path = self.settings.value("display_icc", None)
+        softproof_icc_path = self.settings.value("softproof_icc", None)
+
+        if display_icc_path is not None:
+            self.load_display_icc(display_icc_path)
+        if softproof_icc_path is not None:
+            self.load_softproof_icc(softproof_icc_path)
+
+    def load_display_icc_dialog(self):
+        icc_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select display ICC profile",
+            "",
+            "ICC Profile (*.icc *.icm)",
+        )
+        if icc_path:
+            self.load_display_icc(icc_path)
+
+            self.parameter_changed()
+
+    def load_display_icc(self, icc_path):
+        self.display_icc_path = icc_path
+
+        self.load_display_icc_button.setToolTip(icc_path)
+        self.reset_display_icc_button.setToolTip(icc_path)
+        self.reset_display_icc_button.setVisible(True)
+        self.load_display_icc_button.setChecked(True)
+        self.settings.setValue("display_icc", self.display_icc_path)
+
+        self.build_icc_transform()
+
+    def reset_display_icc(self):
+        self.display_icc_path = None
+
+        self.reset_display_icc_button.setVisible(False)
+        self.load_display_icc_button.setChecked(False)
+        self.load_display_icc_button.setToolTip("")
+        self.reset_display_icc_button.setToolTip("")
+        self.settings.remove("display_icc")
+
+        self.build_icc_transform()
+
+        self.parameter_changed()
+
+    def load_softproof_icc_dialog(self):
+        icc_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select ICC profile for soft proofing",
+            "",
+            "ICC Profile (*.icc *.icm)",
+        )
+        if icc_path:
+            self.load_softproof_icc(icc_path)
+            self.parameter_changed()
+
+    def load_softproof_icc(self, icc_path):
+        self.softproof_icc_path = icc_path
+
+        self.load_softproof_icc_button.setToolTip(icc_path)
+        self.reset_softproof_icc_button.setToolTip(icc_path)
+        self.load_softproof_icc_button.setChecked(True)
+        self.reset_softproof_icc_button.setVisible(True)
+        self.settings.setValue("softproof_icc", self.display_icc_path)
+
+        self.build_icc_transform()
+
+    def reset_softproof_icc(self):
+        self.softproof_icc_path = None
+
+        self.load_softproof_icc_button.setChecked(False)
+        self.reset_softproof_icc_button.setVisible(False)
+        self.load_softproof_icc_button.setToolTip("")
+        self.reset_softproof_icc_button.setToolTip("")
+        self.settings.remove("softproof_icc")
+
+        self.build_icc_transform()
+
+        self.parameter_changed()
+
+    def build_icc_transform(self):
+        try:
+            if self.display_icc_path:
+                if self.softproof_icc_path:
+                    self.icc_transform = ImageCms.buildProofTransform(
+                        self.srgb_profile,
+                        self.display_icc_path,
+                        self.softproof_icc_path,
+                        "RGB",
+                        "RGB",
+                        renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                    )
+                else:
+                    self.icc_transform = ImageCms.buildTransform(
+                        self.srgb_profile,
+                        self.display_icc_path,
+                        "RGB",
+                        "RGB",
+                        ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                    )
+            elif self.softproof_icc_path:
+                self.icc_transform = ImageCms.buildProofTransform(
+                    self.srgb_profile,
+                    self.srgb_profile,
+                    self.softproof_icc_path,
+                    "RGB",
+                    "RGB",
+                    renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                )
+            else:
+                self.icc_transform = None
+        except PIL.ImageCms.PyCMSError:
+            self.reset_display_icc()
+            self.reset_softproof_icc()
+            QTimer.singleShot(0, self.icc_loading_warning)
+
+    def icc_loading_warning(self):
+        QMessageBox.information(self, "ICC loading failed",
+                                "The ICC profiles could not be restored from last session. They have been reset.")
 
 def gui_main():
     load_ui(MainWindow, "Raw2Film", 0.16)
