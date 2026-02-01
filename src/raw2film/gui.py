@@ -12,14 +12,13 @@ from PIL import Image, ImageCms
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
-    QProgressDialog, QSplitter, QMenu
+    QProgressDialog, QSplitter
 from spectral_film_lut import REVERSAL_FILM
 from spectral_film_lut.film_loader import *
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import *
 
 from raw2film import data, utils
-from raw2film.color_processing import rec709_to_displayP3
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
@@ -952,13 +951,16 @@ Affects only colors.""")
 
     @lru_cache
     def load_raw_image(self, src, cam=None, lens=None):
+        image = raw_to_linear(src)
+
         if cam is not None and lens is not None:
             cam = self.cameras[cam]
             lens = self.lenses[lens]
 
-            return effects.lens_correction(raw_to_linear(src), load_metadata(src), cam, lens)
-        else:
-            return raw_to_linear(src)
+            image = effects.lens_correction(image, load_metadata(src), cam, lens)
+
+        image = image.astype(xp.float32) / 65535
+        return image
 
     def xyz_image(self, src=None):
         if src is None:
@@ -1203,13 +1205,10 @@ Affects only colors.""")
             processing_args["resolution"] = max(self.image.height(), self.image.width())
             if not self.full_preview.isChecked():
                 processing_args["resolution"] = min(processing_args["resolution"], 1080)
-                if processing_args["highlight_burn"]:
-                    processing_args["sharpness"] = False
-                    processing_args["grain"] = False
-                    processing_args["halation"] = False
-                    processing_args["chroma_nr"] = 0
-                else:
-                    processing_args["fast_mode"] = True
+                processing_args["sharpness"] = False
+                processing_args["grain"] = False
+                processing_args["halation"] = False
+                processing_args["chroma_nr"] = 0
 
             self.preview_image = process_image(image, metadata=load_metadata(src), **processing_args)
         image = self.preview_image

@@ -1,4 +1,3 @@
-import math
 from contextlib import nullcontext
 from functools import cache
 
@@ -37,7 +36,7 @@ def create_lut_cached(*args, **kwargs):
     return create_lut(*args, **kwargs)
 
 
-def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36, frame_height=24, fast_mode=False,
+def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36, frame_height=24,
                   print_film=None, halation=True, sharpness=True, grain=2, resolution=None, metadata=None,
                   measure_time=False, semaphore=None, canvas_mode="No", highlight_burn=0, burn_scale=50, chroma_nr=0,
                   **kwargs):
@@ -52,7 +51,7 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
 
     image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
 
-    if not fast_mode and chroma_nr:
+    if chroma_nr:
         # TODO: support cuda
         image = chroma_nr_filter(image, chroma_nr)
 
@@ -61,73 +60,52 @@ def process_image(image, negative_film, grain_size, grain_sigma, frame_width=36,
         scaling_factor = resolution / max(w, h)
         if scaling_factor < 1:
             image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)), interpolation=cv.INTER_AREA)
-        elif scaling_factor > 1 and not fast_mode:
+        elif scaling_factor > 1:
             image = cv.resize(image, (int(w * scaling_factor), int(h * scaling_factor)),
                               interpolation=cv.INTER_LANCZOS4)
 
-    if fast_mode:
-        if image.dtype != xp.uint16:
-            image = xp.array(image, xp.float32)
-            image_max = image.max()
-            factor = 65535
-            if image_max > 65535:
-                adjustment = 65535. / image_max
-                factor /= adjustment
-                if "exp_comp" in kwargs:
-                    kwargs["exp_comp"] -= math.log2(adjustment)
-                else:
-                    kwargs["exp_comp"] = math.log2(adjustment)
-            image = xp.round(xp.sqrt(image / factor) * 65535).astype(xp.uint16)
-            kwargs["gamma"] = 2
-        mode = 'full'
-    else:
-        image = image.astype(xp.float32) / 65535
-        mode = 'print'
+    lock = semaphore if semaphore is not None and cuda_available else nullcontext()
+    with lock:
+        image = xp.asarray(image)
+        scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
+        if halation:
+            halation_func = lambda x: effects.halation(x, scale, **kwargs)
+        else:
+            halation_func = None
 
-    if not fast_mode:
-        lock = semaphore if semaphore is not None and cuda_available else nullcontext()
-        with lock:
-            image = xp.asarray(image)
-            scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
+        transform = FilmSpectral.generate_conversion(negative_film, mode='negative', adx=False,
+                                                     input_colourspace=None, halation_func=halation_func, **kwargs)
+        image = transform(image)
 
-            if halation:
-                halation_func = lambda x: effects.halation(x, scale, **kwargs)
-            else:
-                halation_func = None
+        if sharpness and negative_film.mtf is not None:
+            start_sub = time.time()
+            image = effects.film_sharpness(image, negative_film, scale)
+            if measure_time:
+                print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            transform = FilmSpectral.generate_conversion(negative_film, mode='negative', adx=False,
-                                                         input_colourspace=None, halation_func=halation_func, **kwargs)
-            image = transform(image)
+        if grain and negative_film.rms_density is not None:
+            start_sub = time.time()
+            image = effects.apply_grain(image, negative_film, scale, grain_size_mm=grain_size / 1000,
+                                        grain_sigma=grain_sigma, bw_grain=grain == 1)
+            if measure_time:
+                print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            if sharpness and negative_film.mtf is not None:
-                start_sub = time.time()
-                image = effects.film_sharpness(image, negative_film, scale)
-                if measure_time:
-                    print(f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
+        if highlight_burn and (print_film is not None or negative_film.density_measure in ["status_m", "bw"]):
+            start_sub = time.time()
+            image = effects.burn(image, negative_film, highlight_burn, burn_scale)
+            if measure_time:
+                print(f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
 
-            if grain and negative_film.rms_density is not None:
-                start_sub = time.time()
-                image = effects.apply_grain(image, negative_film, scale, grain_size_mm=grain_size / 1000,
-                                            grain_sigma=grain_sigma, bw_grain=grain == 1)
-                if measure_time:
-                    print(f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
-
-            if highlight_burn and (print_film is not None or negative_film.density_measure in ["status_m", "bw"]):
-                start_sub = time.time()
-                image = effects.burn(image, negative_film, highlight_burn, burn_scale)
-                if measure_time:
-                    print(f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} {image.shape} {type(image)}")
-
-            image = xp.clip(image * 2, 0, 1)
-            image *= 2 ** 16 - 1
-            image = image.astype(xp.uint16)
+        image = xp.clip(image * 2, 0, 1)
+        image *= 2 ** 16 - 1
+        image = image.astype(xp.uint16)
 
     if measure_time:
         start_sub = time.time()
     if "exp_comp" in kwargs:
         kwargs["exp_comp"]  = round(kwargs["exp_comp"], ndigits=1)
-    lut = create_lut_cached(negative_film, print_film, mode=mode, input_colourspace=None, adx=False,
+    lut = create_lut_cached(negative_film, print_film, mode="print", input_colourspace=None, adx=False,
                      cube=False, adx_scaling=2, **kwargs)
     lut = (lut * (2 ** 16 - 1)).astype(xp.uint16)
     if measure_time:

@@ -55,7 +55,7 @@ def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
     log_lum = lum_mat ** (1 / factor)
     average_exposure = log_lum.mean() ** factor
 
-    ref_exposure *= 65535
+    # ref_exposure *= 65535
     exp_comp = math.log2(ref_exposure / average_exposure)
 
     return exp_comp
