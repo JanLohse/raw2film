@@ -12,8 +12,7 @@ from PIL import Image, ImageCms
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
-    QProgressDialog, QSplitter
-from spectral_film_lut import REVERSAL_FILM
+    QProgressDialog, QSplitter, QVBoxLayout
 from spectral_film_lut.film_loader import *
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import *
@@ -86,6 +85,8 @@ class MainWindow(QMainWindow):
                               'image': QImage(np.require(filmstocks[x].color_checker, np.uint8, 'C'), 6, 4, 18,
                                               QImage.Format.Format_RGB888), 'Gamma': round(filmstocks[x].gamma, 3),
                               'Alias': filmstocks[x].alias, 'Comment': filmstocks[x].comment} for x in filmstocks}
+        self.reversal_stocks = {name for name, stock in filmstocks.items() if
+                                stock.stage == 'camera' and stock.type == 'positive'}
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
@@ -487,7 +488,7 @@ resulting from reflections on the film backing.""")
         sidebar_keys_negative = ["Alias", "Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity",
                                  "Medium", "Chromaticity", "Gamma", "Comment"]
         self.filmstocks["None"] = None
-        self.negative_selector = FilmStockSelector(negative_info, sort_keys=sort_keys_negative, image_key="image",
+        self.negative_selector = FilmStockSelector(negative_info, self, sort_keys=sort_keys_negative, image_key="image",
                                                    group_keys=group_keys_negative, list_keys=list_keys_negative,
                                                    sidebar_keys=sidebar_keys_negative, default_group="Manufacturer")
         self.negative_selector.setMinimumWidth(100)
@@ -533,7 +534,7 @@ Decreases how blue the print is.""")
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
         sidebar_keys_print = ["Alias", "Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma", "Comment"]
-        self.print_selector = FilmStockSelector(print_info, sort_keys=sort_keys_print, group_keys=group_keys_print,
+        self.print_selector = FilmStockSelector(print_info, self, sort_keys=sort_keys_print, group_keys=group_keys_print,
                                                 list_keys=list_keys_print, sidebar_keys=sidebar_keys_print,
                                                 default_group="Manufacturer", image_key="image")
         self.print_selector.setMinimumWidth(100)
@@ -810,20 +811,7 @@ Affects only colors.""")
 
     def delete_profile(self):
         current_profile = self.profile_selector.currentText()
-        reply = QMessageBox()
-        reply.setStyleSheet(f"""
-        QWidget {{
-            background-color: {BASE_COLOR};
-        }}
-        
-        QPushButton::hover {{
-            background-color: {HOVER_COLOR};
-        }}
-        
-        QPushButton::pressed {{
-            background-color: {PRESSED_COLOR};
-        }}
-        """)
+        reply = QMessageBox(self)
         reply.setText(f"Delete profile {current_profile}?")
         reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         x = reply.exec()
@@ -841,20 +829,7 @@ Affects only colors.""")
             self.load_profile_params()
 
     def delete_all_profiles(self):
-        reply = QMessageBox()
-        reply.setStyleSheet(f"""
-        QWidget {{
-            background-color: {BASE_COLOR};
-        }}
-
-        QPushButton::hover {{
-            background-color: {HOVER_COLOR};
-        }}
-
-        QPushButton::pressed {{
-            background-color: {PRESSED_COLOR};
-        }}
-        """)
+        reply = QMessageBox(self)
         profile_count = len(self.profile_params)
         if not profile_count:
             return
@@ -983,7 +958,7 @@ Affects only colors.""")
 
     def changed_negative(self, negative):
         self.active = False
-        self.print_selector.setEnabled(negative not in REVERSAL_FILM)
+        self.print_selector.setEnabled(negative not in self.reversal_stocks)
         if self.print_selector.isEnabled():
             self.profile_changed(self.print_selector.currentText(), "print_film")
         else:
@@ -1313,33 +1288,13 @@ Affects only colors.""")
             xp.get_default_memory_pool().free_all_blocks()
             xp.get_default_pinned_memory_pool().free_all_blocks()
         self.task_count = len(filenames)
-        self.progress_dialog = QProgressDialog("Starting export...", "Cancel", 0, self.task_count, self)
+        self.progress_dialog = QProgressDialog("Starting export...", "Cancel", 0, self.task_count, parent=self)
         self.progress_dialog.setWindowTitle("Export")
         self.progress_dialog.setAutoClose(False)
         self.progress_dialog.setAutoReset(False)
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
-        self.progress_dialog.setStyleSheet(f"""
-QProgressDialog {{
-    background-color: {BASE_COLOR}; color: {TEXT_PRIMARY};
-}}
-QWidget {{
-    background-color: {BASE_COLOR};
-    border-radius: {BUTTON_RADIUS}px;
-}}
-QProgressBar {{
-    border-radius: {BUTTON_RADIUS}px;
-    text-align: center;
-    background-color: {PRESSED_COLOR};
-    height: 16px;  /* thicker bar */
-    color: {TEXT_PRIMARY};
-}}
-QProgressBar::chunk {{
-    background-color: {OUTLINE_COLOR};
-    border-radius: {BUTTON_RADIUS}px;
-}}
-""")
         QApplication.processEvents()
 
         self.thread = QThread()
@@ -1375,25 +1330,6 @@ QProgressBar::chunk {{
     def save_image_setting_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Export settings")
-
-        dialog.setStyleSheet(f"""
-        QWidget {{
-            border-radius: {BUTTON_RADIUS}px; 
-            background-color: {BASE_COLOR};
-        }}
-
-        HoverLineEdit {{
-            background-color: {SCROLLBAR_HOVER_COLOR};
-        }}
-
-        AnimatedButton, QComboBox, QToolButton {{
-            padding: 3px;
-        }}
-
-        AnimatedButton::hover, QComboBox::hover, HoverLineEdit::hover {{
-            background-color: {HOVER_COLOR};
-        }}
-        """)
 
         layout = QVBoxLayout()
 
@@ -1604,7 +1540,6 @@ QProgressBar::chunk {{
         self.load_display_icc_button.setToolTip(icc_path)
         self.reset_display_icc_button.setVisible(True)
         self.load_display_icc_button.setChecked(True)
-        # self.display_intent_menu.setVisible(True)
         self.settings.setValue("display_icc", self.display_icc_path)
 
         self.build_icc_transform()
@@ -1614,7 +1549,6 @@ QProgressBar::chunk {{
 
         self.reset_display_icc_button.setVisible(False)
         self.load_display_icc_button.setChecked(False)
-        # self.display_intent_menu.setVisible(False)
         self.load_display_icc_button.setToolTip("")
         self.settings.remove("display_icc")
 

@@ -3,7 +3,7 @@ from functools import lru_cache
 import cv2 as cv
 import lensfunpy
 from lensfunpy import util as lensfunpy_util
-from spectral_film_lut import adx16_decode
+from spectral_film_lut.densiometry import adx16_decode
 from spectral_film_lut.grain_generation import *
 
 if cuda_available:
