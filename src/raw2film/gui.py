@@ -12,7 +12,7 @@ from PIL import Image, ImageCms
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
-    QProgressDialog, QSplitter
+    QProgressDialog, QSplitter, QMenu
 from spectral_film_lut import REVERSAL_FILM
 from spectral_film_lut.film_loader import *
 from spectral_film_lut.filmstock_selector import FilmStockSelector
@@ -219,10 +219,6 @@ QFrame {{
         self.advanced_controls.setShortcut(QKeySequence("Ctrl+Shift+A"))
         self.advanced_controls.setCheckable(True)
         view_menu.addAction(self.advanced_controls)
-        self.p3_preview = QAction("Display P3 preview", self)
-        self.p3_preview.setShortcut(QKeySequence("Ctrl+Shift+P"))
-        self.p3_preview.setCheckable(True)
-        view_menu.addAction(self.p3_preview)
         self.full_preview = QAction("Full preview", self)
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
@@ -233,12 +229,48 @@ QFrame {{
         self.reset_display_icc_button = QAction("Reset display ICC profile", self)
         self.reset_display_icc_button.setVisible(False)
         view_menu.addAction(self.reset_display_icc_button)
+
+        display_intent_menu = view_menu.addMenu("Display rendering intent")
+        self.display_absolute_intent = QAction("Absolute colorimetric", self)
+        self.display_absolute_intent.setCheckable(True)
+        display_intent_menu.addAction(self.display_absolute_intent)
+        self.display_relative_intent = QAction("Relative colorimetric", self)
+        self.display_relative_intent.setCheckable(True)
+        self.display_relative_intent.setChecked(True)
+        display_intent_menu.addAction(self.display_relative_intent)
+        self.display_relative_bpc_intent = QAction("Relative w/ black point compensation", self)
+        self.display_relative_bpc_intent.setCheckable(True)
+        self.display_relative_bpc_intent.setChecked(False)
+        display_intent_menu.addAction(self.display_relative_bpc_intent)
+        self.display_perceptual_intent = QAction("Perceptual", self)
+        self.display_perceptual_intent.setCheckable(True)
+        display_intent_menu.addAction(self.display_perceptual_intent)
+        self.display_saturation_intent = QAction("Saturation preserving", self)
+        self.display_saturation_intent.setCheckable(True)
+        display_intent_menu.addAction(self.display_saturation_intent)
+
+
         self.load_softproof_icc_button = QAction("Load soft proofing ICC profile", self)
         self.load_softproof_icc_button.setCheckable(True)
         view_menu.addAction(self.load_softproof_icc_button)
         self.reset_softproof_icc_button = QAction("Reset soft proofing ICC profile", self)
         self.reset_softproof_icc_button.setVisible(False)
         view_menu.addAction(self.reset_softproof_icc_button)
+
+        softproof_intent_menu = view_menu.addMenu("Soft proofing rendering intent")
+        self.softproof_absolute_intent = QAction("Absolute colorimetric", self)
+        self.softproof_absolute_intent.setCheckable(True)
+        softproof_intent_menu.addAction(self.softproof_absolute_intent)
+        self.softproof_relative_intent = QAction("Relative colorimetric", self)
+        self.softproof_relative_intent.setCheckable(True)
+        self.softproof_relative_intent.setChecked(True)
+        softproof_intent_menu.addAction(self.softproof_relative_intent)
+        self.softproof_perceptual_intent = QAction("Perceptual", self)
+        self.softproof_perceptual_intent.setCheckable(True)
+        softproof_intent_menu.addAction(self.softproof_perceptual_intent)
+        self.softproof_saturation_intent = QAction("Saturation preserving", self)
+        self.softproof_saturation_intent.setCheckable(True)
+        softproof_intent_menu.addAction(self.softproof_saturation_intent)
 
         self.dflt_prf_params = {"negative_film": "KodakPortra400", "print_film": "FujiCrystalArchiveMaxima",
                                 "red_light": 0, "green_light": 0, "blue_light": 0, "halation": True, "sharpness": True,
@@ -626,7 +658,6 @@ Affects only colors.""")
         self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width"))
         self.frame_height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height"))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
-        self.p3_preview.triggered.connect(lambda: self.parameter_changed())
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
         self.load_settings_button.triggered.connect(self.load_settings_dialogue)
         self.image_bar.image_changed.connect(self.load_image)
@@ -661,7 +692,16 @@ Affects only colors.""")
         self.reset_display_icc_button.triggered.connect(self.reset_display_icc)
         self.load_softproof_icc_button.triggered.connect(self.load_softproof_icc_dialog)
         self.reset_softproof_icc_button.triggered.connect(self.reset_softproof_icc)
-        self.srgb_profile = ImageCms.createProfile("sRGB")
+        self.display_saturation_intent.triggered.connect(lambda x: self.set_display_intent("saturation"))
+        self.display_relative_intent.triggered.connect(lambda x: self.set_display_intent("relative"))
+        self.display_relative_bpc_intent.triggered.connect(lambda x: self.set_display_intent("relative_bpc"))
+        self.display_absolute_intent.triggered.connect(lambda x: self.set_display_intent("absolute"))
+        self.display_perceptual_intent.triggered.connect(lambda x: self.set_display_intent("perceptual"))
+
+        self.softproof_saturation_intent.triggered.connect(lambda x: self.set_softproof_intent("saturation"))
+        self.softproof_relative_intent.triggered.connect(lambda x: self.set_softproof_intent("relative"))
+        self.softproof_absolute_intent.triggered.connect(lambda x: self.set_softproof_intent("absolute"))
+        self.softproof_perceptual_intent.triggered.connect(lambda x: self.set_softproof_intent("perceptual"))
 
         self.setCentralWidget(page_splitter)
 
@@ -681,6 +721,10 @@ Affects only colors.""")
         self.display_icc_path = None
         self.softproof_icc_path = None
         self.icc_transform = None
+        self.display_intent = ImageCms.Intent.RELATIVE_COLORIMETRIC
+        self.softproof_intent = ImageCms.Intent.ABSOLUTE_COLORIMETRIC
+        self.srgb_profile = ImageCms.createProfile("sRGB")
+        self.icc_bpc = False
 
         self.hide_controls()
 
@@ -1154,8 +1198,6 @@ Affects only colors.""")
         processing_args["negative_film"] = self.filmstocks[processing_args["negative_film"]]
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
-        if self.p3_preview.isChecked():
-            processing_args["output_colourspace"] = "Display P3"
         if value_changed or self.full_preview.isChecked():
             image = self.xyz_image(src)
             processing_args["resolution"] = max(self.image.height(), self.image.width())
@@ -1173,8 +1215,6 @@ Affects only colors.""")
         image = self.preview_image
         height, width, _ = image.shape
         histogram = generate_histogram(image, height=80)
-        if self.p3_preview.isChecked():
-            histogram = rec709_to_displayP3(histogram)
         histogram = QPixmap.fromImage(QImage(histogram, histogram.shape[1], histogram.shape[0], 3 * histogram.shape[1],
                                              QImage.Format.Format_RGB888))
         self.histogram.setPixmap(histogram)
@@ -1535,7 +1575,11 @@ QProgressBar::chunk {{
     def load_icc_setting(self):
         display_icc_path = self.settings.value("display_icc", None)
         softproof_icc_path = self.settings.value("softproof_icc", None)
+        display_intent = self.settings.value("display_rendering_intent", "relative")
+        softproof_intent = self.settings.value("softproof_rendering_intent", "absolute")
 
+        self.set_display_intent(display_intent, False)
+        self.set_softproof_intent(softproof_intent, False)
         if display_icc_path is not None:
             self.load_display_icc(display_icc_path)
         if softproof_icc_path is not None:
@@ -1550,16 +1594,18 @@ QProgressBar::chunk {{
         )
         if icc_path:
             self.load_display_icc(icc_path)
-
             self.parameter_changed()
+        else:
+            self.load_display_icc_button.setChecked(not self.load_display_icc_button.isChecked())
+
 
     def load_display_icc(self, icc_path):
         self.display_icc_path = icc_path
 
         self.load_display_icc_button.setToolTip(icc_path)
-        self.reset_display_icc_button.setToolTip(icc_path)
         self.reset_display_icc_button.setVisible(True)
         self.load_display_icc_button.setChecked(True)
+        # self.display_intent_menu.setVisible(True)
         self.settings.setValue("display_icc", self.display_icc_path)
 
         self.build_icc_transform()
@@ -1569,8 +1615,8 @@ QProgressBar::chunk {{
 
         self.reset_display_icc_button.setVisible(False)
         self.load_display_icc_button.setChecked(False)
+        # self.display_intent_menu.setVisible(False)
         self.load_display_icc_button.setToolTip("")
-        self.reset_display_icc_button.setToolTip("")
         self.settings.remove("display_icc")
 
         self.build_icc_transform()
@@ -1587,12 +1633,13 @@ QProgressBar::chunk {{
         if icc_path:
             self.load_softproof_icc(icc_path)
             self.parameter_changed()
+        else:
+            self.load_softproof_icc_button.setChecked(not self.load_softproof_icc_button.isChecked())
 
     def load_softproof_icc(self, icc_path):
         self.softproof_icc_path = icc_path
 
         self.load_softproof_icc_button.setToolTip(icc_path)
-        self.reset_softproof_icc_button.setToolTip(icc_path)
         self.load_softproof_icc_button.setChecked(True)
         self.reset_softproof_icc_button.setVisible(True)
         self.settings.setValue("softproof_icc", self.display_icc_path)
@@ -1605,7 +1652,6 @@ QProgressBar::chunk {{
         self.load_softproof_icc_button.setChecked(False)
         self.reset_softproof_icc_button.setVisible(False)
         self.load_softproof_icc_button.setToolTip("")
-        self.reset_softproof_icc_button.setToolTip("")
         self.settings.remove("softproof_icc")
 
         self.build_icc_transform()
@@ -1613,16 +1659,23 @@ QProgressBar::chunk {{
         self.parameter_changed()
 
     def build_icc_transform(self):
+        if self.icc_bpc:
+            flags = ImageCms.Flags.BLACKPOINTCOMPENSATION
+        else:
+            flags = 0x0
         try:
             if self.display_icc_path:
                 if self.softproof_icc_path:
+                    flags |= ImageCms.Flags.SOFTPROOFING
                     self.icc_transform = ImageCms.buildProofTransform(
                         self.srgb_profile,
                         self.display_icc_path,
                         self.softproof_icc_path,
                         "RGB",
                         "RGB",
-                        renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                        renderingIntent=self.display_intent,
+                        proofRenderingIntent=self.softproof_intent,
+                        flags=flags,
                     )
                 else:
                     self.icc_transform = ImageCms.buildTransform(
@@ -1630,16 +1683,20 @@ QProgressBar::chunk {{
                         self.display_icc_path,
                         "RGB",
                         "RGB",
-                        ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                        renderingIntent=self.display_intent,
+                        flags=flags,
                     )
             elif self.softproof_icc_path:
+                flags |= ImageCms.Flags.SOFTPROOFING
                 self.icc_transform = ImageCms.buildProofTransform(
                     self.srgb_profile,
                     self.srgb_profile,
                     self.softproof_icc_path,
                     "RGB",
                     "RGB",
-                    renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC,
+                    renderingIntent=self.display_intent,
+                    proofRenderingIntent=self.softproof_intent,
+                    flags=flags,
                 )
             else:
                 self.icc_transform = None
@@ -1647,6 +1704,50 @@ QProgressBar::chunk {{
             self.reset_display_icc()
             self.reset_softproof_icc()
             QTimer.singleShot(0, self.icc_loading_warning)
+
+    def set_display_intent(self, intent, build_transform=True):
+        self.display_absolute_intent.setChecked(intent == "absolute")
+        self.display_relative_intent.setChecked(intent == "relative")
+        self.display_relative_bpc_intent.setChecked(intent == "relative_bpc")
+        self.display_perceptual_intent.setChecked(intent == "perceptual")
+        self.display_saturation_intent.setChecked(intent == "saturation")
+
+        self.display_intent = {
+            "absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC,
+            "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
+            "relative_bpc": ImageCms.Intent.RELATIVE_COLORIMETRIC,
+            "perceptual": ImageCms.Intent.PERCEPTUAL,
+            "saturation": ImageCms.Intent.SATURATION,
+        }[intent]
+
+        self.icc_bpc = intent == "relative_bpc"
+
+        self.settings.setValue("display_rendering_intent", intent)
+
+        if build_transform:
+            self.build_icc_transform()
+
+            self.parameter_changed()
+
+    def set_softproof_intent(self, intent, build_transform=True):
+        self.softproof_absolute_intent.setChecked(intent == "absolute")
+        self.softproof_relative_intent.setChecked(intent == "relative")
+        self.softproof_perceptual_intent.setChecked(intent == "perceptual")
+        self.softproof_saturation_intent.setChecked(intent == "saturation")
+
+        self.softproof_intent = {
+            "absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC,
+            "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
+            "perceptual": ImageCms.Intent.PERCEPTUAL,
+            "saturation": ImageCms.Intent.SATURATION,
+        }[intent]
+
+        self.settings.setValue("softproof_rendering_intent", intent)
+
+        if build_transform:
+            self.build_icc_transform()
+
+            self.parameter_changed()
 
     def icc_loading_warning(self):
         QMessageBox.information(self, "ICC loading failed",
