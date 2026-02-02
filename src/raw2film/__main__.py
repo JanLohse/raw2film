@@ -1,5 +1,5 @@
 from spectral_film_lut.splash_screen import launch_splash_screen
-from spectral_film_lut import __version__
+from raw2film import __version__
 
 def run():
     app, splash_screen = launch_splash_screen("Raw2Film", __version__)

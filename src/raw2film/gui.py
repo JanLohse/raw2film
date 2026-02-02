@@ -17,7 +17,7 @@ from spectral_film_lut.film_loader import *
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import *
 
-from raw2film import data, utils
+from raw2film import data, utils, __version__
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.flip = False
-        self.setWindowTitle("Raw2Film")
+        self.setWindowTitle(f"Raw2Film {__version__}")
 
         self.filmstocks = filmstocks
         filmstock_info = {x: {'Year': filmstocks[x].year, 'Manufacturer': filmstocks[x].manufacturer, 'Type':
