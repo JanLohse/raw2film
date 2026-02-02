@@ -35,7 +35,7 @@ hiddenimports += collect_submodules("colour")
 hiddenimports += collect_submodules("spectral_film_lut")
 
 # ---- entry script ----
-entry_script = "src/raw2film/gui.py"
+entry_script = "src/raw2film/__main__.py"
 
 a = Analysis(
     [entry_script],
