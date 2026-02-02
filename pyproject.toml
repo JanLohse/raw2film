@@ -33,6 +33,9 @@ Homepage = "https://github.com/JanLohse/raw2film"
 Issues = "https://github.com/JanLohse/raw2film/issues"
 
 [project.gui-scripts]
-raw2film = "raw2film.gui:gui_main"
+raw2film = "raw2film.__main__:run"
 
 [tool.setuptools_scm]
+write_to = "src/raw2film/_version.py"
+version_scheme = "release-branch-semver"
+local_scheme = "no-local-version"
