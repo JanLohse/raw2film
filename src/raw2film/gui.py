@@ -13,14 +13,13 @@ from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSetti
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
     QProgressDialog, QSplitter, QVBoxLayout
-from spectral_film_lut.film_loader import *
-from spectral_film_lut.filmstock_selector import FilmStockSelector
-from spectral_film_lut.gui_objects import *
-
 from raw2film import data, utils, __version__
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
+from spectral_film_lut.film_loader import *
+from spectral_film_lut.filmstock_selector import FilmStockSelector
+from spectral_film_lut.gui_objects import *
 
 
 class MultiWorker(QObject):
@@ -582,9 +581,13 @@ Affects only colors.""")
                    tool_tip="""Aspect ratio of added canvas.""")
 
         self.black_offset = Slider()
-        self.black_offset.setMinMaxTicks(-2, 2, 1, 50)
+        self.black_offset.setMinMaxTicks(-1, 1, 1, 50)
         add_option(self.black_offset, "Black offset:", self.dflt_prf_params["black_offset"], self.black_offset.setValue,
-                   hideable=True, tool_tip="Change the black value without affecting other areas.")
+                   hideable=True,
+                   tool_tip="Specify black offset in percent. "
+                            "If positive a uniform offset is applied. "
+                            "Can be used to simulate viewing flare. "
+                            "Negative values use a curve to leave exposure unchanged.")
 
 
         QShortcut(QKeySequence('Up'), self).activated.connect(self.exp_comp.increase)
