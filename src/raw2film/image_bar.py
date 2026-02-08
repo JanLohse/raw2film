@@ -124,7 +124,7 @@ class Thumbnail(QFrame):
             return QSize(self.width(), self.width())
 
 
-class ImageBar(RoundedScrollArea):
+class ImageBar(QScrollArea):
     image_changed = pyqtSignal(str)
     copy_settings = pyqtSignal(str)
 

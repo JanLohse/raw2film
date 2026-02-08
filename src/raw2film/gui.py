@@ -4,24 +4,24 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial, lru_cache
 
-import PIL.ImageCms
-import exiftool
-import imageio
-import lensfunpy
-from PIL import Image, ImageCms
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer, QParallelAnimationGroup, \
     QAbstractAnimation
 from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
     QProgressDialog, QSplitter, QVBoxLayout
-from spectral_film_lut.film_loader import *
-from spectral_film_lut.filmstock_selector import FilmStockSelector
-from spectral_film_lut.gui_objects import *
 
+import PIL.ImageCms
+import exiftool
+import imageio
+import lensfunpy
+from PIL import Image, ImageCms
 from raw2film import data, utils, __version__
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
+from spectral_film_lut.film_loader import *
+from spectral_film_lut.filmstock_selector import FilmStockSelector
+from spectral_film_lut.gui_objects import *
 
 
 class MultiWorker(QObject):
@@ -204,17 +204,17 @@ class MainWindow(QMainWindow):
         canvas_group = SidebarGroup("Canvas", self)
         side_layout.addWidget(canvas_group)
 
-        scroll_area = RoundedScrollArea()
+        sidebar_container = QFrame(self)
+        sidebar_container.setObjectName("scroll")
+        sidebar_container_layout = QVBoxLayout(sidebar_container)
+        sidebar_container_layout.setContentsMargins(4, 4, 4, 4)
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setWidget(sidebar_settings)
         scroll_area.setMinimumWidth(280)
-        scroll_area.setStyleSheet(f"""
-QFrame {{
-    background-color: {BASE_COLOR};
-    border-radius: {BORDER_RADIUS}px;
-}}
-""")
+        sidebar_container_layout.addWidget(scroll_area)
 
         self.image = QLabel("Select a reference image for the preview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -223,14 +223,14 @@ QFrame {{
         self.pixmap = QPixmap()
 
         self.image_bar = ImageBar()
-        self.image_bar.setStyleSheet(f"""
-QFrame {{
-    background-color: {BASE_COLOR};
-    border-radius: {BORDER_RADIUS}px;
-}}
-        """)
+        image_bar_container = QFrame(self)
+        image_bar_container.setObjectName("scroll")
+        image_bar_container_layout = QVBoxLayout(image_bar_container)
+        image_bar_container_layout.setContentsMargins(4, 4, 4, 4)
+        image_bar_container_layout.addWidget(self.image_bar)
+
         page_splitter.addWidget(top_splitter)
-        page_splitter.addWidget(self.image_bar)
+        page_splitter.addWidget(image_bar_container)
         page_splitter.setContentsMargins(8, 8, 8, 8)
         top_splitter.setContentsMargins(0, 0, 0, 0)
 
@@ -238,7 +238,7 @@ QFrame {{
         page_splitter.setStretchFactor(1, 0)
 
         top_splitter.addWidget(self.image)
-        sidebar_layout.addWidget(scroll_area)
+        sidebar_layout.addWidget(sidebar_container)
         top_splitter.addWidget(sidebar_widget)
         top_splitter.setStretchFactor(0, 1)
         top_splitter.setStretchFactor(1, 0)
@@ -826,6 +826,8 @@ Affects only colors.""")
         self.save_timer = time.time()
 
         self.load_profile_params()
+
+        print(scroll_area.styleSheet())
 
         QTimer.singleShot(0, self.test_exiftool)
 
@@ -1633,7 +1635,7 @@ Affects only colors.""")
 
     def load_softproof_icc_dialog(self):
         icc_path, _ = QFileDialog.getOpenFileName(self, "Select ICC profile for soft proofing", "",
-            "ICC Profile (*.icc *.icm)", )
+                                                  "ICC Profile (*.icc *.icm)", )
         if icc_path:
             self.load_softproof_icc(icc_path)
             self.parameter_changed()
@@ -1672,16 +1674,20 @@ Affects only colors.""")
                 if self.softproof_icc_path:
                     flags |= ImageCms.Flags.SOFTPROOFING
                     self.icc_transform = ImageCms.buildProofTransform(self.srgb_profile, self.display_icc_path,
-                        self.softproof_icc_path, "RGB", "RGB", renderingIntent=self.display_intent,
-                        proofRenderingIntent=self.softproof_intent, flags=flags, )
+                                                                      self.softproof_icc_path, "RGB", "RGB",
+                                                                      renderingIntent=self.display_intent,
+                                                                      proofRenderingIntent=self.softproof_intent,
+                                                                      flags=flags, )
                 else:
                     self.icc_transform = ImageCms.buildTransform(self.srgb_profile, self.display_icc_path, "RGB", "RGB",
-                        renderingIntent=self.display_intent, flags=flags, )
+                                                                 renderingIntent=self.display_intent, flags=flags, )
             elif self.softproof_icc_path:
                 flags |= ImageCms.Flags.SOFTPROOFING
                 self.icc_transform = ImageCms.buildProofTransform(self.srgb_profile, self.srgb_profile,
-                    self.softproof_icc_path, "RGB", "RGB", renderingIntent=self.display_intent,
-                    proofRenderingIntent=self.softproof_intent, flags=flags, )
+                                                                  self.softproof_icc_path, "RGB", "RGB",
+                                                                  renderingIntent=self.display_intent,
+                                                                  proofRenderingIntent=self.softproof_intent,
+                                                                  flags=flags, )
             else:
                 self.icc_transform = None
         except PIL.ImageCms.PyCMSError:
@@ -1697,9 +1703,9 @@ Affects only colors.""")
         self.display_saturation_intent.setChecked(intent == "saturation")
 
         self.display_intent = \
-        {"absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC, "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
-            "relative_bpc": ImageCms.Intent.RELATIVE_COLORIMETRIC, "perceptual": ImageCms.Intent.PERCEPTUAL,
-            "saturation": ImageCms.Intent.SATURATION, }[intent]
+            {"absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC, "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
+             "relative_bpc": ImageCms.Intent.RELATIVE_COLORIMETRIC, "perceptual": ImageCms.Intent.PERCEPTUAL,
+             "saturation": ImageCms.Intent.SATURATION, }[intent]
 
         self.icc_bpc = intent == "relative_bpc"
 
@@ -1717,8 +1723,8 @@ Affects only colors.""")
         self.softproof_saturation_intent.setChecked(intent == "saturation")
 
         self.softproof_intent = \
-        {"absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC, "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
-            "perceptual": ImageCms.Intent.PERCEPTUAL, "saturation": ImageCms.Intent.SATURATION, }[intent]
+            {"absolute": ImageCms.Intent.ABSOLUTE_COLORIMETRIC, "relative": ImageCms.Intent.RELATIVE_COLORIMETRIC,
+             "perceptual": ImageCms.Intent.PERCEPTUAL, "saturation": ImageCms.Intent.SATURATION, }[intent]
 
         self.settings.setValue("softproof_rendering_intent", intent)
 
