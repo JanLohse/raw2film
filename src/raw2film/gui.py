@@ -191,16 +191,28 @@ class MainWindow(QMainWindow):
         sidebar_settings.setLayout(side_layout)
         side_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
+        def create_line():
+            line = QFrame(self)
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setStyleSheet(f"background-color: {ACCENT_COLOR};")
+            line.setMaximumHeight(1)
+            return line
+
         basic_settings_group = SidebarGroup("Basic editing", self)
         side_layout.addWidget(basic_settings_group)
+        side_layout.addWidget(create_line())
         profile_settings_group = SidebarGroup("Profile settings", self)
         side_layout.addWidget(profile_settings_group)
+        side_layout.addWidget(create_line())
         film_effects_group = SidebarGroup("Film effects", self)
         side_layout.addWidget(film_effects_group)
+        side_layout.addWidget(create_line())
         image_correction_group = SidebarGroup("Image correction", self)
         side_layout.addWidget(image_correction_group)
+        side_layout.addWidget(create_line())
         advanced_printing_group = SidebarGroup("Advanced printing techniques", self)
         side_layout.addWidget(advanced_printing_group)
+        side_layout.addWidget(create_line())
         canvas_group = SidebarGroup("Canvas", self)
         side_layout.addWidget(canvas_group)
 
