@@ -22,6 +22,13 @@ resource_datas = collect_data_files(
 )
 datas += resource_datas
 
+# ---- raw2film resources ----
+resource_datas = collect_data_files(
+    "raw2film",
+    includes=["resources/*", "resources/**/*"]
+)
+datas += resource_datas
+
 # ---- rawtoaces dataset ----
 rawtoaces_path = rawtoaces.__path__[0]
 datas.append((rawtoaces_path, "colour/characterisation/datasets/rawtoaces"))
@@ -33,6 +40,11 @@ hiddenimports += collect_submodules("networkx")
 hiddenimports += collect_submodules("numpy")
 hiddenimports += collect_submodules("colour")
 hiddenimports += collect_submodules("spectral_film_lut")
+
+# ---- icon path ----
+
+specpath = os.path.dirname(os.path.abspath(SPEC))
+icon = os.path.join(specpath, "src", "raw2film", "resources", "raw2film.ico")
 
 # ---- entry script ----
 entry_script = "src/raw2film/__main__.py"
@@ -64,5 +76,5 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    icon=None,
+    icon=icon,
 )

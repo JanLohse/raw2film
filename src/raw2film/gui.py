@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -6,7 +7,8 @@ from functools import partial, lru_cache
 
 from PyQt6.QtCore import QSize, QThreadPool, QThread, QRegularExpression, QSettings, QTimer, QParallelAnimationGroup, \
     QAbstractAnimation
-from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator
+from PyQt6.QtGui import QPixmap, QImage, QAction, QShortcut, QKeySequence, QRegularExpressionValidator, QIntValidator, \
+    QIcon
 from PyQt6.QtWidgets import QMainWindow, QGridLayout, QSizePolicy, QCheckBox, QInputDialog, QMessageBox, QDialog, \
     QProgressDialog, QSplitter, QVBoxLayout
 
@@ -15,7 +17,7 @@ import exiftool
 import imageio
 import lensfunpy
 from PIL import Image, ImageCms
-from raw2film import data, utils, __version__
+from raw2film import data, utils, __version__, R2F_BASE_DIR
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import *
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
@@ -65,7 +67,7 @@ class SidebarGroup(QWidget):
     def __init__(self, title="", parent=None):
         super().__init__(parent)
 
-        self.toggle_button = AnimatedToolButton()
+        self.toggle_button = AnimatedToolButton(parent=self)
         self.toggle_button._checked_color = QColor(BASE_COLOR)
         self.toggle_button.setText("  " + title)
         self.toggle_button.setCheckable(True)
@@ -151,6 +153,14 @@ class MainWindow(QMainWindow):
 
         self.flip = False
         self.setWindowTitle(f"Raw2Film {__version__}")
+        self.setStyleSheet(THEME)
+
+        icon = QIcon()
+        for size in [256, 128, 64, 48, 32, 16]:
+            path = f"{R2F_BASE_DIR}/resources/raw2film_{size}.png"
+            icon.addFile(path, QSize(size, size))
+
+        self.setWindowIcon(icon)
 
         self.filmstocks = filmstocks
         filmstock_info = {x: {'Year': filmstocks[x].year, 'Manufacturer': filmstocks[x].manufacturer, 'Type':
@@ -258,6 +268,7 @@ class MainWindow(QMainWindow):
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
+        file_menu.setStyleSheet(THEME)
         view_menu = menu.addMenu("View")
         edit_menu = menu.addMenu("Edit")
         view_menu.setToolTipsVisible(True)
@@ -367,10 +378,10 @@ class MainWindow(QMainWindow):
                                 "canvas_ratio": 0.8, "highlight_burn": 0, "burn_scale": 50, "flip": False, "tint": 0,
                                 "chroma_nr": 0}
 
-        self.profile_selector = WideComboBox()
+        self.profile_selector = WideComboBox(parent=self)
 
         self.profile_selector.addItem("Default")
-        self.add_profile = AnimatedButton()
+        self.add_profile = AnimatedButton(parent=self)
         self.add_profile.setObjectName("plus")
         self.add_profile.setFixedWidth(25)
         profile_widget = QWidget()
@@ -393,14 +404,14 @@ class MainWindow(QMainWindow):
         image_correction_group.add_option(self.lens_correction, "Lens correction:",
                                           self.dflt_img_params["lens_correction"], self.lens_correction.setChecked,
                                           tool_tip="Correct lens distortion and vignetting.")
-        self.camera_selector = WideComboBox()
+        self.camera_selector = WideComboBox(self)
 
         self.camera_selector.setMinimumWidth(100)
         self.camera_selector.addItems(self.cameras.keys())
         image_correction_group.add_option(self.camera_selector, "Camera model:", "None",
                                           self.camera_selector.setCurrentText,
                                           tool_tip="Select camera model for lens correction.")
-        self.lens_selector = WideComboBox()
+        self.lens_selector = WideComboBox(self)
         self.lens_selector.setMinimumWidth(100)
         self.lens_selector.addItems(self.lenses.keys())
         image_correction_group.add_option(self.lens_selector, "Lens model:", "None", self.lens_selector.setCurrentText,
@@ -467,7 +478,7 @@ class MainWindow(QMainWindow):
 
         self.wb_modes = {"Default": 6000, "Daylight": 5500, "Cloudy": 6500, "Shade": 7500, "Tungsten": 2800,
                          "Fluorescent": 3800, "Custom": None}
-        self.wb_mode = WideComboBox()
+        self.wb_mode = WideComboBox(self)
         self.wb_mode.addItems(list(self.wb_modes.keys()))
         basic_settings_group.add_option(self.wb_mode, "WB:", "Daylight", self.wb_mode.setCurrentText, tool_tip="""Select preset white balance.
 (Shift+D: daylight)
@@ -525,11 +536,11 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
 
         self.rotate = QWidget()
         rotate_layout = QHBoxLayout()
-        self.rotate_left = AnimatedButton()
+        self.rotate_left = AnimatedButton(parent=self)
         self.rotate_left.setObjectName("left")
-        self.rotate_right = AnimatedButton()
+        self.rotate_right = AnimatedButton(parent=self)
         self.rotate_right.setObjectName("right")
-        self.flip_button = AnimatedButton()
+        self.flip_button = AnimatedButton(parent=self)
         self.flip_button.setObjectName("flip")
         for btn in (self.rotate_left, self.rotate_right, self.flip_button):
             btn.setMinimumWidth(10)
@@ -554,7 +565,7 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
 (Ctrl+Plus: zoom in)
 (Ctrl+Minus: zoom out)""")
 
-        self.format_selector = WideComboBox()
+        self.format_selector = WideComboBox(self)
         self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
         profile_settings_group.add_option(self.format_selector, "Format:", self.dflt_prf_params["format"],
                                           self.format_selector.setCurrentText, tool_tip="""Select a preset film format.
@@ -563,10 +574,10 @@ and changes aspect ratio.""")
 
         self.frame_size = QWidget()
         frame_layout = QHBoxLayout()
-        self.frame_width = HoverLineEdit()
+        self.frame_width = HoverLineEdit(parent=self)
         regex = QRegularExpression(r"[0-9]*|[0-9]+\.[0-9]*")
         self.frame_width.setValidator(QRegularExpressionValidator(regex))
-        self.frame_height = HoverLineEdit()
+        self.frame_height = HoverLineEdit(parent=self)
         self.frame_height.setValidator(QRegularExpressionValidator(regex))
         frame_layout.addWidget(self.frame_width)
         frame_layout.addWidget(self.frame_height)
@@ -584,7 +595,7 @@ and changes aspect ratio.""")
         sidebar_keys_negative = ["Alias", "Manufacturer", "Type", "Year", "Sensitivity", "resolution", "Granularity",
                                  "Medium", "Chromaticity", "Gamma", "Comment"]
         self.filmstocks["None"] = None
-        self.negative_selector = FilmStockSelector(negative_info, self, sort_keys=sort_keys_negative, image_key="image",
+        self.negative_selector = FilmStockSelector(negative_info, self, self, sort_keys=sort_keys_negative, image_key="image",
                                                    group_keys=group_keys_negative, list_keys=list_keys_negative,
                                                    sidebar_keys=sidebar_keys_negative, default_group="Manufacturer")
         self.negative_selector.setMinimumWidth(100)
@@ -631,7 +642,7 @@ Decreases how blue the print is.""")
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
         list_keys_print = ["Manufacturer", "Type", "Year", "Chromaticity"]
         sidebar_keys_print = ["Alias", "Manufacturer", "Type", "Year", "Medium", "Chromaticity", "Gamma", "Comment"]
-        self.print_selector = FilmStockSelector(print_info, self, sort_keys=sort_keys_print,
+        self.print_selector = FilmStockSelector(print_info, self, self, sort_keys=sort_keys_print,
                                                 group_keys=group_keys_print, list_keys=list_keys_print,
                                                 sidebar_keys=sidebar_keys_print, default_group="Manufacturer",
                                                 image_key="image")
@@ -654,7 +665,7 @@ Affects only colors.""")
                                           self.saturation_slider.setValue,
                                           tool_tip="Adjust the saturation in the display color space.")
 
-        self.canvas_mode = WideComboBox()
+        self.canvas_mode = WideComboBox(self)
         self.canvas_mode.addItems(
             ["No", "Proportional white", "Proportional black", "Uniform white", "Uniform black", "Fixed white",
              "Fixed black"])
@@ -668,9 +679,9 @@ Affects only colors.""")
 
         self.canvas_size = QWidget()
         canvas_layout = QHBoxLayout()
-        self.canvas_width = HoverLineEdit()
+        self.canvas_width = HoverLineEdit(parent=self)
         self.canvas_width.setValidator(QRegularExpressionValidator(regex))
-        self.canvas_height = HoverLineEdit()
+        self.canvas_height = HoverLineEdit(parent=self)
         self.canvas_height.setValidator(QRegularExpressionValidator(regex))
         canvas_layout.addWidget(self.canvas_width)
         canvas_layout.addWidget(self.canvas_height)
@@ -1453,7 +1464,7 @@ Affects only colors.""")
         close_checkbox.setChecked(True)
         layout.addWidget(close_checkbox)
 
-        resolution_field = HoverLineEdit()
+        resolution_field = HoverLineEdit(parent=self)
         resolution_field.setValidator(QIntValidator())
         layout.addWidget(QLabel("Resolution:"))
         layout.addWidget(resolution_field)
@@ -1467,8 +1478,8 @@ Affects only colors.""")
 
         # Buttons
         button_layout = QHBoxLayout()
-        ok_button = AnimatedButton("OK")
-        cancel_button = AnimatedButton("Cancel")
+        ok_button = AnimatedButton("OK", parent=self)
+        cancel_button = AnimatedButton("Cancel", parent=self)
         button_layout.addWidget(ok_button)
         button_layout.addWidget(cancel_button)
 

@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Console tool to process raw files with a analog film look."
 readme = "README.md"
-requires-python = ">=3.8, <3.14"
+requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -22,7 +22,7 @@ dependencies = [
     "numpy",
     "opencv-python",
     "PyExifTool",
-    "rawpy < 0.26.0",
+    "rawpy",
     "scipy",
     "pillow",
     "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
