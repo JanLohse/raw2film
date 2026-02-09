@@ -22,7 +22,7 @@ dependencies = [
     "numpy",
     "opencv-python",
     "PyExifTool",
-    "rawpy",
+    "rawpy!=0.26.0",
     "scipy",
     "pillow",
     "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
