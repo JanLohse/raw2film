@@ -1,3 +1,7 @@
+"""
+Some data on exif tags, file extensions, film formats, and color spaces.
+"""
+
 import numpy as np
 
 METADATA_KEYS = [

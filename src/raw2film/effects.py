@@ -1,3 +1,7 @@
+"""
+Some image processing effects.
+"""
+
 import math
 from functools import lru_cache
 
@@ -21,7 +25,9 @@ else:
     torch_available = False
 
 
-def lens_correction(rgb, metadata, cam, lens):
+def lens_correction(
+    rgb: np.ndarray, metadata: dict, cam: None | str, lens: None | str
+) -> np.ndarray:
     """Apply lens correction using lensfunpy."""
     # noinspection PyUnresolvedReferences
     rgb = rgb.astype(np.float64)
@@ -42,7 +48,8 @@ def lens_correction(rgb, metadata, cam, lens):
     return rgb
 
 
-def rotate(rgb, degrees):
+def rotate(rgb: np.ndarray, degrees: float) -> np.ndarray:
+    """Rotate an image by a specified angle in degrees."""
     if degrees:
         input_height, input_width = rgb.shape[:2]
         image_center = tuple(np.array(rgb.shape[1::-1]) / 2)
@@ -72,7 +79,7 @@ def rotate(rgb, degrees):
     return rgb
 
 
-def crop_image(rgb, zoom=1, aspect=1.5, flip=False):
+def crop_image(rgb: xp.ndarray, zoom=1, aspect=1.5, flip=False) -> xp.ndarray:
     """Crops rgb data to aspect ratio."""
     x, y, _ = rgb.shape
     if flip:
@@ -110,6 +117,8 @@ def crop_image(rgb, zoom=1, aspect=1.5, flip=False):
 
 
 def mtf_curve(logf, vals):
+    """Turn mtf values into an interpolated function on log space."""
+
     def func(x):
         return xp.interp(xp.log1p(x), logf, vals, left=1, right=0)
 
@@ -117,6 +126,7 @@ def mtf_curve(logf, vals):
 
 
 def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
+    """Computes a convolution kernel from a mtf function."""
     kernel_size = round(kernel_size_mm / pixel_size_mm)
     if kernel_size % 2 == 0:
         kernel_size += 1
@@ -140,12 +150,14 @@ def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
 
 @lru_cache(maxsize=50)
 def mtf_kernel(logf, vals, scale):
+    """Cache a mtf convolution kernel."""
     mtf_func = mtf_curve(xp.asarray(logf), xp.asarray(vals))
     kernel = compute_kernel_from_function(mtf_func, 1.0, 1 / scale)
     return kernel
 
 
 def film_sharpness(rgb, stock, scale):
+    """Apply the sharpness and micro-contrast of a film stock ot an image."""
     kernel = xp.stack(
         [mtf_kernel(logf, vals, scale) for logf, vals in stock.mtf],
         axis=-1,
@@ -164,6 +176,7 @@ def film_sharpness(rgb, stock, scale):
 
 @njit
 def exponential_blur_kernel(size):
+    """Compute an exponential blur kernel for halation."""
     radius = size / 2
     size = 2 * math.floor(math.ceil(size) / 2) + 1
     center = math.ceil(size / 2)
@@ -184,6 +197,7 @@ def exponential_blur_kernel(size):
 def apply_grain(
     rgb, stock, scale, grain_size_mm=0.01, grain_sigma=0.4, bw_grain=False, **kwargs
 ):
+    """Applies a grain filter to an image."""
     grain = generate_grain(
         rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma
     )
@@ -195,6 +209,7 @@ def apply_grain(
 
 @njit
 def apply_halation_inplace(rgb, blured, color_factors):
+    """Adds halation inplace."""
     for i in range(rgb.shape[0]):
         for j in range(rgb.shape[1]):
             for c in range(rgb.shape[2]):
@@ -204,6 +219,7 @@ def apply_halation_inplace(rgb, blured, color_factors):
 
 @njit
 def apply_halation_bw(rgb, blured, intensity):
+    """Adds halation to a black and white image."""
     for i in range(rgb.shape[0]):
         for j in range(rgb.shape[1]):
             rgb[i, j] += blured[i, j] * intensity
@@ -220,6 +236,7 @@ def halation(
     halation_intensity=1,
     **kwargs,
 ):
+    """A halation image processing effect."""
     kernel = xp.asarray(
         exponential_blur_kernel(scale / 4 * halation_size), dtype=xp.float32
     )
@@ -238,7 +255,7 @@ def halation(
 
 
 def add_canvas(image, canvas_ratio, canvas_scale, canvas_color, **kwargs):
-    """Adds background canvas to image."""
+    """Adds a background canvas to an image."""
     img_ratio = image.shape[1] / image.shape[0]
     if img_ratio > canvas_ratio:
         output_resolution = (
@@ -272,6 +289,10 @@ def add_canvas_uniform(image, canvas_scale, canvas_color, **kwargs):
 
 
 def down_up_blur(image, scale=50, func=None):
+    """
+    Blur by downsampling and then upsampling. Very fast on CPU compared to accurate
+    blur filters.
+    """
     scale = math.ceil(min(image.shape[:2]) / scale)
     # Downsample
     blurred_channels = []
@@ -306,6 +327,9 @@ def down_up_blur(image, scale=50, func=None):
 
 
 def cupy_area_downsample(image, factor):
+    """
+    Performs area downsampling using cuda cores.
+    """
     img_torch = torch.utils.dlpack.from_dlpack(
         xp.asarray(image)[None, None, ...].toDlpack()
     )
@@ -320,6 +344,11 @@ def cupy_area_downsample(image, factor):
 
 
 def burn(image, negative_film, highlight_burn, burn_scale):
+    """
+    Simulates highlight burning, which is a darkroom printing technique to reduce
+    the contrast and brightness of highlights. Similar to modern local tone-mapping
+    techniques.
+    """
     highlight_burn *= 8000.0 / 65535.0
 
     def func(x):
@@ -340,6 +369,7 @@ def burn(image, negative_film, highlight_burn, burn_scale):
 
 @njit
 def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
+    """A fast 1D gaussian kernel."""
     assert size % 2 == 1
     k = size // 2
 
@@ -356,6 +386,7 @@ def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
 
 @njit(parallel=True)
 def blur_horizontal_masked(image, kernel, blur_mask):
+    """Horizontal blur with a mask."""
     h, w, c = image.shape
     k = kernel.shape[0] // 2
     temp = np.empty_like(image)
@@ -378,6 +409,7 @@ def blur_horizontal_masked(image, kernel, blur_mask):
 
 @njit(parallel=True)
 def blur_vertical_masked(image, kernel, blur_mask):
+    """Vertical blur with a mask."""
     h, w, c = image.shape
     k = kernel.shape[0] // 2
     output = np.empty_like(image)
@@ -411,6 +443,7 @@ def gaussian_blur_separable_masked(image, kernel, blur_channels):
 
 @njit(parallel=True)
 def XYZ_to_xyY(image, eps=1e-8):
+    """Converts from CIE XYZ to xyY."""
     h, w, _ = image.shape
     out = np.empty_like(image)
 
@@ -435,6 +468,7 @@ def XYZ_to_xyY(image, eps=1e-8):
 
 @njit(parallel=True)
 def xyY_to_XYZ(image, eps=1e-8):
+    """Converts from CIE xyY to XYZ."""
     h, w, _ = image.shape
     out = np.empty_like(image)
 
@@ -459,6 +493,7 @@ def xyY_to_XYZ(image, eps=1e-8):
 
 @njit
 def chroma_nr_filter(image, size=0):
+    """A simple chroma noise reduction filter by blurring only color channels."""
 
     image = XYZ_to_xyY(image)
     size = int(size) * 2 + 1

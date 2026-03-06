@@ -1,8 +1,4 @@
-import os
-import time
 from functools import cache
-from pathlib import Path
-from shutil import copy
 
 import exiftool
 import numpy as np
@@ -13,6 +9,7 @@ from raw2film import data
 
 @cache
 def load_metadata(src):
+    """Loads and caches image exit data."""
     with exiftool.ExifToolHelper() as et:
         metadata = et.get_metadata(src)[0]
     return metadata
@@ -76,115 +73,8 @@ def find_data(metadata, db):
     return cam, lens
 
 
-def prep_file_name(file):
-    name_start = file.split("-")[0]
-    if "-" in file:
-        end = file.split("-")[1]
-        name_end = name_start[: -len(end)] + end
-    else:
-        name_end = file
-    if name_start > name_end:
-        name_start, name_end = name_end, name_start
-
-    return name_start, name_end
-
-
-def cleaner(raw2film):
-    print("terminating...")
-    time.sleep(1)
-    for file in os.listdir():
-        if (raw2film.organize and file.endswith(".jpg")) or (
-            not raw2film.tiff and file.endswith(".tiff")
-        ):
-            os.remove(file)
-
-
-def copy_from_subfolder(file):
-    name_start, name_end = prep_file_name(file)
-
-    files = []
-
-    for path in Path().rglob("./*.*"):
-        filename = str(path).split("\\")[-1]
-        name = filename.split(".")[0]
-        if (
-            name_start <= name <= name_end
-            and filename.lower().endswith(data.EXTENSION_LIST)
-            and filename not in files
-        ):
-            files.append(filename)
-            if not os.path.isfile(filename):
-                copy(
-                    path,
-                    "../..",
-                )
-
-    return files
-
-
-def cleanup_files(file):
-    if not file:
-        print("Specify the files to clean to avoid errors")
-        return
-
-    name_start, name_end = prep_file_name(file)
-
-    for path in Path().rglob("./*/*.*"):
-        filename = str(path).split("\\")[-1]
-        name = filename.split(".")[0].split("_")[0]
-        if name_start <= name <= name_end and (
-            filename.lower().endswith(data.EXTENSION_LIST)
-            or (filename.lower().endswith("jpg") and "_" in filename)
-        ):
-            if not any(Path().rglob(f"*{name}.jpg")) and not os.path.isfile(filename):
-                print("deleted", filename)
-                os.remove(path)
-
-    # remove empty subfolders
-    for dir_path, dir_names, _ in os.walk("../..", topdown=False):
-        for dir_name in dir_names:
-            full_path = os.path.join(dir_path, dir_name)
-            if not os.listdir(full_path) and "20" in full_path:
-                print("deleted", full_path)
-                os.rmdir(full_path)
-
-
-def organize_files(src, file, metadata):
-    """Moves files into target folders."""
-    # create path
-    path = (
-        f"{metadata['EXIF:DateTimeOriginal'][:4]}/"
-        f"{metadata['EXIF:DateTimeOriginal'][:10].replace(':', '-')}/"
-    )
-
-    # move files
-    move_file(src, path + "/RAW/")
-    move_file(file, path)
-
-
-def move_file(src, path):
-    """Moves src file to path."""
-    if not os.path.exists(path):
-        os.makedirs(path)
-    os.replace(src, path + src)
-
-
-def fraction(arg):
-    if "/" in str(arg):
-        return float(arg.split("/")[0]) / float(arg.split("/")[1])
-    else:
-        return float(arg)
-
-
-def hex_color(arg):
-    if str(arg) == "white":
-        return [255, 255, 255]
-    if str(arg) == "black":
-        return [0, 0, 0]
-    return list(int(arg[i : i + 2], 16) for i in (0, 2, 4))
-
-
 def add_metadata(src, metadata, exp_comp):
+    """Adds metadata to an image file."""
     metadata = {
         key: metadata[key]
         for key in metadata

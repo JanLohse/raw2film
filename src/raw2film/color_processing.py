@@ -1,3 +1,7 @@
+"""
+Some helper functions for color math.
+"""
+
 import math
 
 import numpy as np
@@ -5,6 +9,7 @@ from spectral_film_lut.utils import xp
 
 
 def XYZ_to_kelvin(XYZ):
+    """Convert from CIE XYZ 1931 to the CCT in kelvin."""
     x = XYZ[0] / np.sum(XYZ)
     y = XYZ[1] / np.sum(XYZ)
     n = (x - 0.3366) / (y - 0.1735)
@@ -18,6 +23,7 @@ def XYZ_to_kelvin(XYZ):
 
 
 def kelvin_to_XYZ(CCT):
+    """Convert from a CCT in kelvin to CIE XYZ 1931."""
     # This section is ripped from the Colour Science package:
     CCT_3 = CCT**3
     CCT_2 = CCT**2
@@ -48,6 +54,7 @@ def kelvin_to_XYZ(CCT):
 
 
 def encode_ARRILogC3(x):
+    """Encode the ARRI Log C3 EOTF."""
     cut, a, b, c, d, e, f = (
         0.010591,
         5.555556,
@@ -141,6 +148,7 @@ def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
 
 
 def xyz_to_displayP3(XYZ, **kwargs):
+    """Convert from CIE XYZ 1931 to diplay P3 gamut."""
     M = np.array(
         [
             [2.493496911941425, -0.9313836179191239, -0.40271078445071684],
@@ -154,6 +162,7 @@ def xyz_to_displayP3(XYZ, **kwargs):
 
 
 def rec709_to_displayP3(rgb):
+    """Convert from rec. 709 to diplay P3 gamut."""
     M = np.array(
         [
             [0.822462, 0.177538, 0.000000],

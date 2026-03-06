@@ -20,6 +20,7 @@ from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
 
 
 def raw_to_linear(src, half_size=True):
+    """Load linear raw data using rawpy."""
     # convert raw file to linear data
     with rawpy.imread(src) as raw:
         # noinspection PyUnresolvedReferences
@@ -48,6 +49,7 @@ def crop_rotate_zoom(
     flip=False,
     **kwargs,
 ):
+    """Apply cropping, rotation, and a zoom to an image."""
     image = effects.crop_image(image, 1, aspect=frame_width / frame_height, flip=flip)
     if rotation:
         image = effects.rotate(image, rotation)
@@ -59,6 +61,7 @@ def crop_rotate_zoom(
 
 @cache
 def create_lut_cached(*args, **kwargs):
+    """Cache LUTs for specific settings."""
     return create_lut(*args, **kwargs)
 
 
@@ -83,6 +86,10 @@ def process_image(
     chroma_nr=0,
     **kwargs,
 ):
+    """
+    The full image processing pipeline that converts from linear XYZ to a display
+    referred image with film emulation applied.
+    """
     if measure_time:
         kwargs["measure_time"] = True
         start = time.time()

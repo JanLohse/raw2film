@@ -1,6 +1,6 @@
 # raw2film
 
-[![Docs](https://img.shields.io/badge/docs-offline-red)](https://janlohse.github.io/raw2film/)
+[![Docs](https://img.shields.io/badge/docs-online-blue)](https://janlohse.github.io/raw2film/)
 [![CI](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml/badge.svg)](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml)
 [![Version](https://img.shields.io/github/v/release/JanLohse/raw2film)](https://github.com/JanLohse/raw2film/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/JanLohse/raw2film?tab=MIT-1-ov-file#readme)

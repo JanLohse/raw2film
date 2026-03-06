@@ -61,7 +61,6 @@ from PyQt6.QtWidgets import (
 )
 from spectral_film_lut import BASE_DIR
 from spectral_film_lut.css_theme import ACCENT_COLOR, BASE_COLOR, BORDER_RADIUS, THEME
-from spectral_film_lut.film_loader import load_ui
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import (
     AnimatedButton,
@@ -230,6 +229,7 @@ class MainWindow(QMainWindow):
     """The main window of raw2film."""
 
     ui_update = pyqtSignal(dict)
+    """The UI has updated."""
 
     def __init__(self, filmstocks):
         super().__init__()
@@ -2575,11 +2575,3 @@ Affects only colors.""",
             "The ICC profiles could not be restored from last session. They have "
             "been reset.",
         )
-
-
-def gui_main():
-    load_ui(MainWindow, "Raw2Film", 0.16)
-
-
-if __name__ == "__main__":
-    gui_main()

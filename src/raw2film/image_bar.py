@@ -27,6 +27,8 @@ from spectral_film_lut.css_theme import BUTTON_RADIUS
 
 
 class RoundedLabel(QLabel):
+    """A label with rounded corners."""
+
     def __init__(self, radius=12, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.radius = radius
@@ -64,6 +66,8 @@ _thumbnail_color = {
 
 
 class Thumbnail(QFrame):
+    """A thumbnail frame for the image bar."""
+
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
         self.image_path = image_path
@@ -154,8 +158,12 @@ class Thumbnail(QFrame):
 
 
 class ImageBar(QScrollArea):
+    """A vertical scrollable image selector bar."""
+
     image_changed = pyqtSignal(str)
+    """The selected image has changed."""
     copy_settings = pyqtSignal(str)
+    """Settings are to be copied between images."""
 
     def __init__(self):
         super().__init__()
