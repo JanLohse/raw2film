@@ -105,27 +105,28 @@ class Thumbnail(QFrame):
         qimage = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
 
-        pixmap = pixmap.scaledToHeight(256, Qt.TransformationMode.SmoothTransformation)
+        pixmap = pixmap.scaledToHeight(256, Qt.TransformationMode.FastTransformation)
         self.setPixmap(pixmap)
 
     def resizeEvent(self, event):
         """Ensure the label is always a square and the image scales."""
-        height = event.size().height()
+        height = (event.size() * self.devicePixelRatioF()).height()
         if self._pixmap:
-            self.label.setPixmap(
-                self._pixmap.scaledToHeight(
-                    height, Qt.TransformationMode.FastTransformation
-                )
+            scaled_pixmap = self._pixmap.scaledToHeight(
+                height, Qt.TransformationMode.FastTransformation
             )
+            scaled_pixmap.setDevicePixelRatio(self.devicePixelRatioF())
+            self.label.setPixmap(scaled_pixmap)
 
     def setPixmap(self, pixmap: QPixmap):
         if pixmap:
             self._pixmap = pixmap
-            self.label.setPixmap(
-                self._pixmap.scaledToHeight(
-                    self.height(), Qt.TransformationMode.FastTransformation
-                )
+            scaled_pixmap = self._pixmap.scaledToHeight(
+                round(self.height() * self.devicePixelRatioF()),
+                Qt.TransformationMode.FastTransformation,
             )
+            scaled_pixmap.setDevicePixelRatio(self.devicePixelRatioF())
+            self.label.setPixmap(scaled_pixmap)
 
     def set_state(self, state="default"):
         bq_color = _thumbnail_color[state]

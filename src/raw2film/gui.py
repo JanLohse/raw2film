@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import shutil
 import threading
@@ -363,7 +364,6 @@ class MainWindow(QMainWindow):
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
         self.image.setMinimumSize(QSize(256, 256))
-        self.pixmap = QPixmap()
 
         self.image_bar = ImageBar()
         image_bar_container = QFrame(self)
@@ -1452,7 +1452,6 @@ Affects only colors.""",
         self.threadpool = QThreadPool()
 
         self.corrected_image = None
-        self.preview_image = None
         self.rotate_times = 0
         self.flip_image = False
         self.active = True  # prevent from running update_preview by setting inactive
@@ -1633,15 +1632,6 @@ Affects only colors.""",
             self.frame_width.setText(str(width))
             self.frame_height.setText(str(height))
 
-    def scale_pixmap(self):
-        if not self.pixmap.isNull():
-            scaled_pixmap = self.pixmap.scaled(
-                self.image.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.image.setPixmap(scaled_pixmap)
-
     def load_images(self):
         filenames, ok = QFileDialog.getOpenFileNames(
             self,
@@ -1719,7 +1709,7 @@ Affects only colors.""",
             return self.load_raw_image(src)
 
     def resizeEvent(self, event):
-        self.scale_pixmap()
+        self.parameter_changed()
         super().resizeEvent(event)
 
     def changed_wb_mode(self, mode):
@@ -1931,10 +1921,6 @@ Affects only colors.""",
         if self.active:
             self.start_worker(self.update_preview, src=src)
 
-    def crop_zoom_changed(self):
-        if self.active:
-            self.start_worker(self.update_preview, value_changed=False)
-
     def start_worker(self, function, semaphore=True, *args, **kwargs):
         if semaphore:
             if self.running:
@@ -1947,7 +1933,7 @@ Affects only colors.""",
             worker.signals.finished.connect(self.update_finished)
         self.threadpool.start(worker)
 
-    def update_preview(self, src=None, value_changed=True, *args, **kwargs):
+    def update_preview(self, src=None, *args, **kwargs):
         if src is None:
             if self.image_bar.current_image() is None:
                 return
@@ -1972,20 +1958,22 @@ Affects only colors.""",
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
-        if value_changed or self.full_preview.isChecked():
-            image = self.xyz_image(src)
-            processing_args["resolution"] = max(self.image.height(), self.image.width())
-            if not self.full_preview.isChecked():
-                processing_args["resolution"] = min(processing_args["resolution"], 1080)
-                processing_args["sharpness"] = False
-                processing_args["grain"] = False
-                processing_args["halation"] = False
-                processing_args["chroma_nr"] = 0
 
-            self.preview_image = process_image(
-                image, metadata=load_metadata(src), **processing_args
-            )
-        image = self.preview_image
+        pixel_ratio = self.devicePixelRatioF()
+        image = self.xyz_image(src)
+        processing_args["resolution"] = (
+            math.floor(self.image.height() * pixel_ratio),
+            math.floor(self.image.width() * pixel_ratio),
+        )
+        if not self.full_preview.isChecked():
+            # processing_args["resolution"] = min(processing_args["resolution"], 1080)
+            processing_args["sharpness"] = False
+            processing_args["grain"] = False
+            processing_args["halation"] = False
+            processing_args["chroma_nr"] = 0
+
+        image = process_image(image, metadata=load_metadata(src), **processing_args)
+
         height, width, _ = image.shape
         histogram = generate_histogram(image, height=80)
         histogram = QPixmap.fromImage(
@@ -2006,18 +1994,10 @@ Affects only colors.""",
 
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
+        pixmap.setDevicePixelRatio(pixel_ratio)
 
-        scaled_pixmap = pixmap.scaled(
-            self.image.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
-        self.image.setPixmap(scaled_pixmap)
+        self.image.setPixmap(pixmap)
         self.image.setToolTip(src)
-
-        # keep the original if you want for later rescaling
-        self.pixmap = pixmap
 
     def setup_image_params(self, src):
         image_params = {**self.dflt_img_params, **self.image_params[src]}
@@ -2050,7 +2030,7 @@ Affects only colors.""",
         if semaphore is not None:
             processing_args["semaphore"] = semaphore
         if resolution is not None:
-            processing_args["resolution"] = resolution
+            processing_args["resolution"] = (resolution, resolution)
         if (
             "print_film" in processing_args
             and processing_args["print_film"] is not None

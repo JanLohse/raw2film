@@ -76,7 +76,7 @@ def process_image(
     halation=True,
     sharpness=True,
     grain=2,
-    resolution=None,
+    resolution: None | tuple[int, int] = None,
     metadata=None,
     measure_time=False,
     semaphore=None,
@@ -107,7 +107,9 @@ def process_image(
 
     if resolution is not None:
         h, w = image.shape[:2]
-        scaling_factor = resolution / max(w, h)
+        h_factor = resolution[0] / h
+        w_factor = resolution[1] / w
+        scaling_factor = min(h_factor, w_factor)
         if scaling_factor < 1:
             image = cv.resize(
                 image,
