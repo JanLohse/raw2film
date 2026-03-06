@@ -6,26 +6,33 @@ build-backend = "setuptools.build_meta"
 name = "raw2film"
 dynamic = ["version"]
 authors = [
-  { name="Jan Lohse" },
+    { name = "Jan Lohse" },
 ]
-description = "Console tool to process raw files with a analog film look."
+description = "RAW image editor that emulates the look of various film stocks."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "ffmpeg-python",
-    "imageio",
-    "lensfunpy",
-    "numpy",
-    "opencv-python",
-    "PyExifTool",
-    "rawpy!=0.26.0",
-    "scipy",
-    "pillow",
-    "spectral_film_lut @ git+https://github.com/JanLohse/spectral_film_lut"
+    "ffmpeg-python>=0.2.0",
+    "imageio>=2.37.2",
+    "lensfunpy>=1.18.0",
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pillow>=12.1.1",
+    "pyexiftool>=0.5.6",
+    "rawpy>=0.26.1",
+    "scipy>=1.17.1",
+    "spectral-film-lut @ git+https://github.com/JanLohse/spectral_film_lut",
+]
+
+[dependency-groups]
+dev = [
+    "pdoc>=16.0.0",
+    "pre-commit>=4.5.1",
+    "ruff>=0.15.5",
 ]
 
 [project.urls]
@@ -39,3 +46,8 @@ raw2film = "raw2film.__main__:run"
 write_to = "src/raw2film/_version.py"
 version_scheme = "release-branch-semver"
 local_scheme = "no-local-version"
+
+
+[tool.ruff.lint]
+extend-select = ["I", "E"]
+extend-fixable = ["I", "E"]
