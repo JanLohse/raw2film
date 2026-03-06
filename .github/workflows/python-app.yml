@@ -1,35 +1,130 @@
-name: Build and Release Artifacts
+name: CI
 
 on:
   push:
-    branches:
-      - main
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  tag-and-release:
-    name: Tag and Create Release
+  checks:
+    name: Lint and Build Tests
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: [ "3.11", "3.12", "3.13", "3.14" ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Lint with Ruff
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "latest"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build pyinstaller
+          pip install .
+
+      - name: Build package
+        run: python -m build
+
+
+  build-docs:
+    name: Build Docs
+    needs: checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install Qt runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pdoc
+          pip install .
+
+      - name: Generate documentation
+        env:
+          PDOC_ALLOW_EXEC: "1"
+        run: |
+          pdoc ./src/raw2film \
+            --math \
+            --docformat google \
+            --logo "https://github.com/JanLohse/raw2film/blob/main/src/raw2film/resources/raw2film_128.png?raw=true" \
+            -o docs/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/
+
+
+  deploy-docs:
+    name: Deploy Docs
+    needs: build-docs
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+
+  create-tag:
+    name: Create New Tag
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
     outputs:
-      TAG: ${{ steps.bump.outputs.new_tag }}
-      VERSION: ${{ steps.set_version.outputs.version }}
+      TAG: ${{ steps.version.outputs.TAG }}
+      VERSION: ${{ steps.version.outputs.VERSION }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      # Create initial tag if none exists
-      - name: Create initial tag
+      - name: Create initial tag if none exists
         run: |
           if [ -z "$(git tag -l 'v*')" ]; then
             git tag v0.0.0
             git push origin v0.0.0
           fi
 
-      # Bump version
       - name: Bump version
         id: bump
         uses: anothrNick/github-tag-action@1.75.0
@@ -38,47 +133,37 @@ jobs:
           WITH_V: true
           DEFAULT_BUMP: patch
 
-      # Strip leading 'v' for artifact filenames
-      - name: Set version output
-        id: set_version
+      - name: Export version
+        id: version
         run: |
           TAG=${{ steps.bump.outputs.new_tag }}
           VERSION=${TAG#v}
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Create GitHub Release
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.bump.outputs.new_tag }}
-          name: Version ${{ steps.bump.outputs.new_tag }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-  build:
+
+  build-artifacts:
     name: Build Artifacts
-    needs: tag-and-release
+    needs: create-tag
+    runs-on: ${{ matrix.os }}
+
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        os: [ windows-latest, ubuntu-latest ]
+
     steps:
-      - name: Checkout
+      - name: Checkout tagged commit
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.create-tag.outputs.TAG }}
+          fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-
-      - name: Checkout release tag
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.tag-and-release.outputs.TAG }}
-          fetch-depth: 0
+          cache: "pip"
 
       - name: Install dependencies
         run: |
@@ -89,28 +174,50 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller raw2film.spec
 
-      # Package Windows EXE
-      - name: Package Windows EXE
-        if: matrix.os == 'windows-latest'
+      - name: Package binaries
         shell: bash
         run: |
-          mv dist/Raw2Film.exe Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.exe
+          VERSION=${{ needs.create-tag.outputs.VERSION }}
 
-      # Package Linux AppImage
-      - name: Package Linux binary
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          chmod +x dist/Raw2Film
-          mv dist/Raw2Film Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.AppImage
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            mv dist/Raw2Film.exe Raw2Film-${VERSION}.exe
+          else
+            chmod +x dist/Raw2Film
+            mv dist/Raw2Film Raw2Film-${VERSION}.AppImage
+          fi
 
-      # Upload artifacts to the release
-      - name: Upload to GitHub Release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: raw2film-${{ matrix.os }}
+          path: Raw2Film-${{ needs.create-tag.outputs.VERSION }}.*
+
+
+  release:
+    name: Create Release
+    needs: [ create-tag, build-artifacts ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw2film-windows-latest
+          path: dist/
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: raw2film-ubuntu-latest
+          path: dist/
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.tag-and-release.outputs.TAG }}
+          tag_name: ${{ needs.create-tag.outputs.TAG }}
+          name: Version ${{ needs.create-tag.outputs.VERSION }}
           files: |
-            Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.exe
-            Raw2Film-${{ needs.tag-and-release.outputs.VERSION }}.AppImage
+            dist/Raw2Film-${{ needs.create-tag.outputs.VERSION }}.exe
+            dist/Raw2Film-${{ needs.create-tag.outputs.VERSION }}.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

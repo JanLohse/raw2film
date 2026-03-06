@@ -184,7 +184,7 @@ cython_debug/
 *.ORI
 *.RAF
 *.RWL
-*.PEF 
+*.PEF
 *.PTX
 *.ARW
 __pycache__

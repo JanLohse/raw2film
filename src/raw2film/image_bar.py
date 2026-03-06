@@ -3,13 +3,27 @@ import io
 
 import rawpy
 from PIL import Image, ImageOps
-from PyQt6.QtCore import QThreadPool, QSize, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QPainterPath
-from PyQt6.QtGui import QShortcut, QKeySequence
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtWidgets import QVBoxLayout, QSizePolicy
-from spectral_film_lut.gui_objects import *
-from spectral_film_lut.utils import *
+from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+    QShortcut,
+    QWheelEvent,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+from spectral_film_lut.css_theme import BUTTON_RADIUS
 
 
 class RoundedLabel(QLabel):
@@ -31,15 +45,22 @@ class RoundedLabel(QLabel):
         # draw the pixmap (if present)
         if self.pixmap() is not None:
             pix = self.pixmap()
-            scaled = pix.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                Qt.TransformationMode.SmoothTransformation)
+            scaled = pix.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
             painter.drawPixmap(self.rect(), scaled)
         else:
             # fallback: draw normal background & text
             super().paintEvent(event)
 
 
-_thumbnail_color = {"default": "transparent", "highlighted": "#808080", "selected": "#dedede"}
+_thumbnail_color = {
+    "default": "transparent",
+    "highlighted": "#808080",
+    "selected": "#dedede",
+}
 
 
 class Thumbnail(QFrame):
@@ -87,12 +108,20 @@ class Thumbnail(QFrame):
         """Ensure the label is always a square and the image scales."""
         height = event.size().height()
         if self._pixmap:
-            self.label.setPixmap(self._pixmap.scaledToHeight(height, Qt.TransformationMode.FastTransformation))
+            self.label.setPixmap(
+                self._pixmap.scaledToHeight(
+                    height, Qt.TransformationMode.FastTransformation
+                )
+            )
 
     def setPixmap(self, pixmap: QPixmap):
         if pixmap:
             self._pixmap = pixmap
-            self.label.setPixmap(self._pixmap.scaledToHeight(self.height(), Qt.TransformationMode.FastTransformation))
+            self.label.setPixmap(
+                self._pixmap.scaledToHeight(
+                    self.height(), Qt.TransformationMode.FastTransformation
+                )
+            )
 
     def set_state(self, state="default"):
         bq_color = _thumbnail_color[state]
@@ -142,7 +171,9 @@ class ImageBar(QScrollArea):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.container = QWidget()
-        self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+        self.container.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
+        )
         self.setMinimumHeight(100)
         self.setMaximumHeight(250)
         self.height_hint = 130
@@ -154,11 +185,19 @@ class ImageBar(QScrollArea):
 
         self.setWidget(self.container)
 
-        QShortcut(QKeySequence('Ctrl+A'), self).activated.connect(self.highlight_all)
-        QShortcut(QKeySequence('Right'), self).activated.connect(lambda: self.arrow_pressed('right'))
-        QShortcut(QKeySequence('Shift+Right'), self).activated.connect(lambda: self.arrow_pressed('right', shift=True))
-        QShortcut(QKeySequence('Left'), self).activated.connect(lambda: self.arrow_pressed('left'))
-        QShortcut(QKeySequence('Shift+Left'), self).activated.connect(lambda: self.arrow_pressed('left', shift=True))
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.highlight_all)
+        QShortcut(QKeySequence("Right"), self).activated.connect(
+            lambda: self.arrow_pressed("right")
+        )
+        QShortcut(QKeySequence("Shift+Right"), self).activated.connect(
+            lambda: self.arrow_pressed("right", shift=True)
+        )
+        QShortcut(QKeySequence("Left"), self).activated.connect(
+            lambda: self.arrow_pressed("left")
+        )
+        QShortcut(QKeySequence("Shift+Left"), self).activated.connect(
+            lambda: self.arrow_pressed("left", shift=True)
+        )
 
         self.horizontalScrollBar().valueChanged.connect(self.check_visible)
         self.horizontalScrollBar().rangeChanged.connect(self.check_visible)
@@ -183,7 +222,9 @@ class ImageBar(QScrollArea):
         self.clear_images()
         for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
             label = Thumbnail(img_path, self)
-            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
+            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(
+                event, lbl
+            )
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
         QApplication.processEvents()
@@ -207,8 +248,13 @@ class ImageBar(QScrollArea):
         clicked_index = self.image_labels.index(label)
         for highlighted_label in self.highlighted_labels:
             highlighted_label.set_state("default")
-        self.highlighted_labels = {self.image_labels[index] for index in
-                                   range(min(selected_index, clicked_index), max(selected_index, clicked_index) + 1)}
+        self.highlighted_labels = {
+            self.image_labels[index]
+            for index in range(
+                min(selected_index, clicked_index),
+                max(selected_index, clicked_index) + 1,
+            )
+        }
         for highlighted_label in self.highlighted_labels:
             highlighted_label.set_state("highlighted")
         self.selected_label.set_state("selected")
@@ -249,7 +295,7 @@ class ImageBar(QScrollArea):
                 for highlighted_label in self.highlighted_labels:
                     highlighted_label.set_state("default")
                 self.highlighted_labels = {label}
-        elif not label in self.highlighted_labels:
+        elif label not in self.highlighted_labels:
             for highlighted_label in self.highlighted_labels:
                 highlighted_label.set_state("default")
             self.highlighted_labels = {label}
@@ -294,7 +340,7 @@ class ImageBar(QScrollArea):
         self.select_image(self.image_labels[target_index])
 
     def ensure_visible(self, label):
-        """ Scrolls the view to make sure the selected image is visible """
+        """Scrolls the view to make sure the selected image is visible"""
         x = label.pos().x()
         label_width = label.width()
         area_width = self.width()
@@ -321,7 +367,11 @@ class ImageBar(QScrollArea):
             self.image_labels.pop(index)
             if image_label == self.selected_label:
                 self.selected_label = None
-            if new_selected is not None and index <= new_selected and (index or new_selected):
+            if (
+                new_selected is not None
+                and index <= new_selected
+                and (index or new_selected)
+            ):
                 if index < new_selected:
                     new_selected -= 1
                 if new_selected >= len(self.image_labels) - 1:
@@ -347,7 +397,11 @@ class ImageBar(QScrollArea):
     def close_single_image(self, src):
         for label in self.image_labels:
             if label.image_path == src:
-                new_selected = self.close_labels([label, ])
+                new_selected = self.close_labels(
+                    [
+                        label,
+                    ]
+                )
                 if new_selected is not None and self.image_labels:
                     self.select_image(self.image_labels[new_selected])
                 return
