@@ -20,8 +20,7 @@ The film emulation includes:
 - Resolution and micro-contrast matches mtf chart for each film stock.
 - Set the simulated frame size to match resolution, grain intensity, and aspect ratio.
 
-<img src="https://github.com/user-attachments/assets/13915205-b34f-4184-9c08-2d6a68b90706#gh-light-mode-only" alt="main gui" width="100%">
-<img src="https://github.com/user-attachments/assets/f5aa60a0-c4df-4d1f-b298-0b8dfd271af4#gh-dark-mode-only" alt="main gui" style="display:none;" width="100%">
+<img width="100%" alt="Raw2Film main ui" src="https://github.com/user-attachments/assets/c81315bc-1147-4f27-a590-b63fa75c3d6f" />
 
 ## Installation
 
@@ -83,5 +82,4 @@ The interface is designed to be familiar for anyone who has used a raw editor be
 When clicking on the magnifying glass a window opens to search and browse through the
 available film stocks.
 
-<img src="https://github.com/user-attachments/assets/54b82d41-9386-49e6-9d3e-b389e8f1585c#gh-light-mode-only" alt="main gui" width="100%">
-<img src="https://github.com/user-attachments/assets/3886eea0-f21f-43de-a319-f84105daae50#gh-dark-mode-only" alt="main gui" style="display:none;" width="100%">
+<img width="100%" alt="Film stock selection ui" src="https://github.com/user-attachments/assets/5af71ab0-3802-4d22-b9e7-6f9e09efc7c4" />
