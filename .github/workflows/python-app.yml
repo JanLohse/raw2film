@@ -187,7 +187,7 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: raw2film-${{ matrix.os }}
           path: Raw2Film-${{ needs.create-tag.outputs.VERSION }}.*
