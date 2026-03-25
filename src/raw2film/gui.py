@@ -440,6 +440,10 @@ class MainWindow(QMainWindow):
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
+        self.half_res_preview = QAction("Half res. preview", self)
+        self.half_res_preview.setCheckable(True)
+        self.half_res_preview.setShortcut(QKeySequence("Ctrl+Shift+H"))
+        view_menu.addAction(self.half_res_preview)
         self.load_display_icc_button = QAction("Load display ICC profile", self)
         self.load_display_icc_button.setCheckable(True)
         view_menu.addAction(self.load_display_icc_button)
@@ -1323,6 +1327,7 @@ Affects only colors.""",
             lambda x: self.setting_changed(x, "lens_correction")
         )
         self.full_preview.triggered.connect(lambda: self.parameter_changed())
+        self.half_res_preview.triggered.connect(lambda: self.parameter_changed())
         self.halation.stateChanged.connect(
             lambda x: self.profile_changed(x, "halation")
         )
@@ -1989,6 +1994,11 @@ Affects only colors.""",
             math.floor(self.image.height() * pixel_ratio),
             math.floor(self.image.width() * pixel_ratio),
         )
+        if self.half_res_preview.isChecked():
+            processing_args["resolution"] = tuple(
+                x // 2 for x in processing_args["resolution"]
+            )
+            processing_args["double_upscale"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False

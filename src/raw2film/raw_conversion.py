@@ -84,6 +84,7 @@ def process_image(
     highlight_burn=0,
     burn_scale=50,
     chroma_nr=0,
+    double_upscale=False,
     **kwargs,
 ):
     """
@@ -233,5 +234,14 @@ def process_image(
             image = add_canvas(image, **kwargs)
         elif "Uniform" in canvas_mode:
             image = add_canvas_uniform(image, **kwargs)
+
+    if double_upscale:
+        image = cv.resize(
+            image,
+            None,
+            fx=2,
+            fy=2,
+            interpolation=cv.INTER_CUBIC,
+        )
 
     return image
