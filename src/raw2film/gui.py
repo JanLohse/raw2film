@@ -509,11 +509,13 @@ class MainWindow(QMainWindow):
             "halation_green_factor": 0.3,
             "projector_kelvin": 6500,
             "halation_intensity": 1,
-            "black_offset": 0,
+            "shadow_comp": 0,
+            "white_comp": True,
             "pre_flash_neg": -4,
             "pre_flash_print": -4,
             "sat_adjust": 1,
             "grain_sigma": 0.4,
+            "gamma_func": "sRGB",
         }
         self.dflt_img_params = {
             "exp_comp": 0,
@@ -1166,17 +1168,35 @@ Affects only colors.""",
             tool_tip="""Aspect ratio of added canvas.""",
         )
 
-        self.black_offset = Slider()
-        self.black_offset.setMinMaxTicks(-1, 1, 1, 50)
+        self.shadow_comp = Slider()
+        self.shadow_comp.setMinMaxTicks(-2, 2, 1, 50)
         profile_settings_group.add_option(
-            self.black_offset,
-            "Black offset",
-            self.dflt_prf_params["black_offset"],
-            self.black_offset.setValue,
+            self.shadow_comp,
+            "Shadow comp.",
+            self.dflt_prf_params["shadow_comp"],
+            self.shadow_comp.setValue,
             tool_tip="Specify black offset in percent. "
             "If positive a uniform offset is applied. "
             "Can be used to simulate viewing flare. "
             "Negative values use a curve to leave exposure unchanged.",
+        )
+
+        self.white_comp = QCheckBox()
+        """
+        When viewing print film brightness will be increased to clip at exactly 1.0.
+        When viewing slide film white balancing is applied, so that a gray patch will
+        actually produce the color temperature specified by the  projector kelvin.
+        """
+        profile_settings_group.add_option(
+            self.white_comp,
+            "White adjust",
+            self.dflt_prf_params["white_comp"],
+            self.white_comp.setChecked,
+            tool_tip="""
+        When viewing print film brightness will be increased to clip at exactly 1.0.
+        When viewing slide film white balancing is applied, so that a gray patch will
+        actually produce the color temperature specified by the  projector kelvin.
+                """,
         )
 
         QShortcut(QKeySequence("Up"), self).activated.connect(self.exp_comp.increase)
@@ -1399,8 +1419,8 @@ Affects only colors.""",
                 "canvas_ratio",
             )
         )
-        self.black_offset.valueChanged.connect(
-            lambda x: self.profile_changed(x, "black_offset")
+        self.shadow_comp.valueChanged.connect(
+            lambda x: self.profile_changed(x, "shadow_comp")
         )
         self.chroma_nr.valueChanged.connect(
             lambda x: self.setting_changed(x, "chroma_nr")
@@ -1437,6 +1457,9 @@ Affects only colors.""",
         )
         self.softproof_perceptual_intent.triggered.connect(
             lambda x: self.set_softproof_intent("perceptual")
+        )
+        self.white_comp.stateChanged.connect(
+            lambda x: self.profile_changed(x, "white_comp")
         )
 
         self.setCentralWidget(page_splitter)
@@ -1880,7 +1903,8 @@ Affects only colors.""",
         self.grain_sigma.setValue(profile_params["grain_sigma"])
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
-        self.black_offset.setValue(profile_params["black_offset"])
+        self.shadow_comp.setValue(profile_params["shadow_comp"])
+        self.white_comp.setChecked(profile_params["white_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
 
         if "projector_kelvin" in profile_params:
@@ -1966,7 +1990,6 @@ Affects only colors.""",
             math.floor(self.image.width() * pixel_ratio),
         )
         if not self.full_preview.isChecked():
-            # processing_args["resolution"] = min(processing_args["resolution"], 1080)
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
