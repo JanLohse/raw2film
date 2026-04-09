@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/JanLohse/raw2film?tab=MIT-1-ov-file#readme)
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13%20|%203.14-blue)](https://www.python.org/)
 
-raw2film is full raw image editor with a focus on realistic film emulation.
+Raw2Film is full raw image editor with a focus on realistic film emulation.
 
 The looks are based on published film datasheets and use the image processing pipeline
 from [Spectral Film LUT](https://github.com/JanLohse/spectral_film_lut).
@@ -24,9 +24,7 @@ The film emulation includes:
 
 ## Installation
 
-### Requirements
-
-To run raw2film it is required to have installed [exiftool](https://exiftool.org/) on
+To run Raw2Film it is required to have installed [exiftool](https://exiftool.org/) on
 your system.
 On Linux this can be done easily with
 
@@ -35,26 +33,39 @@ sudo apt install exiftool
 ```
 
 ### Windows
+Download the latest `.exe` from the [releases](../../releases) page and run it.
 
-The easiest way to run raw2film is to download the latest `.exe` from
-the [releases](../../releases) section.
-(There might be issues with Windows Defender, in which case it is recommended to use the
-python package.)
+Alternatively, install via Python (see [below](#python-package)).
 
 ### Linux
+Download the `.AppImage` from the [releases](../../releases) page and make it executable:
 
-Download the `.AppImage` from the [releases](../../releases) section or install the
-python package.
+```bash
+chmod +x spectral_film_lut-{version}.AppImage
+./spectral_film_lut.AppImage
+```
+
+Alternatively, install via Python (see [below](#python-package)).
+
+### macOS
+There is currently no native binary available for macOS.
+Install and run the application using a Python-based method.
+See the [Python Package](#python-package) section below.
 
 ### Python Package
 
-You can also install the program using pip:
+Install the application using your preferred Python package manager. We show it for the
+default pip. Others can be found in the full documentation.
 
 ```bash
-pip install git+https://github.com/JanLohse/raw2film
+pip install git+https://github.com/JanLohse/spectral_film_lut
 ```
 
-Then run with `raw2film`.
+Then just run with:
+
+```bash
+spectral_film_lut
+```
 
 ### GPU acceleration
 

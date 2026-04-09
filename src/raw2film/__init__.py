@@ -1,9 +1,3 @@
-"""
-[![GitHub](https://img.shields.io/badge/GitHub-repo-blue?logo=github)](https://github.com/JanLohse/raw2film)
-.. include:: ../../README.md
-   :start-line: 3
-"""
-
 from pathlib import Path
 
 try:
