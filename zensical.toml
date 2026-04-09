@@ -1,6 +1,6 @@
 [project]
 site_name = "Raw2Film"
-site_url = "https://janlohse.github.io/raw2film/raw2film"
+site_url = "https://janlohse.github.io/raw2film"
 site_description = "A simple GUI tool for generating custom datasheet-based film emulation LUTs."
 site_author = "Jan Lohse"
 copyright = "&copy; 2026 Jan Lohse"
