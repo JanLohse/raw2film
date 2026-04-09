@@ -1,5 +1,5 @@
 """
-Some image processing effects.
+Image processing effects.
 """
 
 import math

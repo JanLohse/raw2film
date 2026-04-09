@@ -1,4 +1,4 @@
-# raw2film
+# Raw2Film
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://janlohse.github.io/raw2film/)
 [![CI](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml/badge.svg)](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml)

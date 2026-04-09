@@ -1,5 +1,5 @@
 """
-Some data on exif tags, file extensions, film formats, and color spaces.
+Data on exif tags, file extensions, film formats, and color spaces.
 """
 
 import numpy as np
@@ -81,6 +81,8 @@ METADATA_KEYS = [
     "SensorRightBorder",
     "ProcessingSoftware",
 ]
+"""Exif data keys to include."""
+
 EXTENSION_LIST = (
     ".rw2",
     ".dng",
@@ -96,6 +98,8 @@ EXTENSION_LIST = (
     ".ptx",
     ".arw",
 )
+"""File extensions for RAW formats."""
+
 FORMATS = {
     "110": (17, 13),
     "135-half": (24, 18),
@@ -118,6 +122,8 @@ FORMATS = {
     "65mm": (48.56, 22.1),
     "IMAX": (70.41, 52.63),
 }
+"""Film frame formats with their size."""
+
 REC709_TO_XYZ = np.array(
     [
         [0.4124564, 0.3575761, 0.1804375],
@@ -126,6 +132,8 @@ REC709_TO_XYZ = np.array(
     ],
     dtype=np.float32,
 )
+"""Conversion matrix from Rec. 709 to CIE XYZ."""
+
 XYZ_TO_REC709 = np.array(
     [
         [3.2404542, -1.5371385, -0.4985314],
@@ -134,3 +142,4 @@ XYZ_TO_REC709 = np.array(
     ],
     dtype=np.float32,
 )
+"""Conversion matrix from CIE XYZ to Rec. 709."""

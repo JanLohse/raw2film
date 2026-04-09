@@ -1,3 +1,7 @@
+"""
+Additional utility functions.
+"""
+
 from functools import cache
 
 import exiftool

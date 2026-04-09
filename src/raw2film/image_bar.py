@@ -1,3 +1,7 @@
+"""
+The image bar on the bottom of the application.
+"""
+
 import gc
 import io
 

@@ -1,3 +1,7 @@
+"""
+The main processing pipeline for RAW images.
+"""
+
 import time
 from contextlib import nullcontext
 from functools import cache

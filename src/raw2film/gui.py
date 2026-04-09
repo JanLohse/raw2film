@@ -1,3 +1,7 @@
+"""
+The main gui implementation.
+"""
+
 import json
 import math
 import os

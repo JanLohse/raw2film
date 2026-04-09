@@ -1,5 +1,5 @@
 """
-Some helper functions for color math.
+Helper functions for color math.
 """
 
 import math
