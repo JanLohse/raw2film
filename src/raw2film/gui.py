@@ -519,8 +519,6 @@ class MainWindow(QMainWindow):
             "halation_intensity": 1,
             "shadow_comp": 0,
             "white_comp": True,
-            "pre_flash_neg": -4,
-            "pre_flash_print": -4,
             "sat_adjust": 1,
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
@@ -730,7 +728,7 @@ class MainWindow(QMainWindow):
         )
 
         self.exp_comp = Slider()
-        self.exp_comp.setMinMaxTicks(-3, 3, 1, 10, self.dflt_img_params["exp_comp"])
+        self.exp_comp.setMinMaxTicks(-3, 3, 1, 20, self.dflt_img_params["exp_comp"])
         basic_settings_group.add_option(
             self.exp_comp,
             "Exposure",
@@ -803,35 +801,6 @@ class MainWindow(QMainWindow):
             tool_tip="Strength of chroma noise reduction.",
         )
 
-        self.pre_flash_neg = Slider()
-        self.pre_flash_neg.setMinMaxTicks(
-            -4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_neg"]
-        )
-        advanced_printing_group.add_option(
-            self.pre_flash_neg,
-            "Pre-flash negative",
-            self.dflt_prf_params["pre_flash_neg"],
-            self.pre_flash_neg.setValue,
-            tool_tip="""Simulate the effect of exposing the negative with uniform light.
-Helps to reduce contrast by lifting the shadows.
-Set in how many stops below middle gray the uniform exposure is.
--4 will turn off the effect completely.""",
-        )
-        self.pre_flash_print = Slider()
-        self.pre_flash_print.setMinMaxTicks(
-            -4, -1, 1, 10, default=self.dflt_prf_params["pre_flash_print"]
-        )
-        advanced_printing_group.add_option(
-            self.pre_flash_print,
-            "Pre-flash print",
-            self.dflt_prf_params["pre_flash_print"],
-            self.pre_flash_print.setValue,
-            tool_tip="""Simulate the effect of exposing the print film with uniform
-light. Helps to reduce contrast by lowering the highlights. Set in how many stops below
-middle gray the uniform exposure is. -4 will turn off the effect completely.
-(Ctrl+Up: increase)
-(Ctrl+Down: decrease)""",
-        )
         self.highlight_burn = Slider()
         self.highlight_burn.setMinMaxTicks(
             0, 1, 1, 20, default=self.dflt_img_params["highlight_burn"]
@@ -1221,12 +1190,6 @@ Affects only colors.""",
         QShortcut(QKeySequence("Shift+Down"), self).activated.connect(
             self.highlight_burn.decrease
         )
-        QShortcut(QKeySequence("Ctrl+Up"), self).activated.connect(
-            self.pre_flash_print.increase
-        )
-        QShortcut(QKeySequence("Ctrl+Down"), self).activated.connect(
-            self.pre_flash_print.decrease
-        )
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
         QShortcut(QKeySequence("Ctrl++"), self).activated.connect(
             lambda: self.zoom.increase(5)
@@ -1381,12 +1344,6 @@ Affects only colors.""",
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
         self.delete_all_profiles_button.triggered.connect(self.delete_all_profiles)
-        self.pre_flash_neg.valueChanged.connect(
-            lambda x: self.profile_changed(x, "pre_flash_neg")
-        )
-        self.pre_flash_print.valueChanged.connect(
-            lambda x: self.profile_changed(x, "pre_flash_print")
-        )
         self.highlight_burn.valueChanged.connect(
             lambda x: self.setting_changed(x, "highlight_burn")
         )
@@ -1884,8 +1841,6 @@ Affects only colors.""",
         self.halation_green.setValue(profile_params["halation_green_factor"])
         self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
-        self.pre_flash_neg.setValue(profile_params["pre_flash_neg"])
-        self.pre_flash_print.setValue(profile_params["pre_flash_print"])
         self.grain.setCheckState(Qt.CheckState(profile_params["grain"]))
         if "frame_width" in profile_params:
             self.frame_width.setText(str(profile_params["frame_width"]))
