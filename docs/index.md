@@ -1,3 +1,10 @@
+---
+icon: lucide/film
+tags:
+  - Guide
+---
+
+
 # Raw2Film
 
 [![GitHub](https://img.shields.io/badge/GitHub-repo-blue?logo=github)](https://github.com/JanLohse/raw2film)

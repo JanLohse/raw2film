@@ -1,3 +1,10 @@
+---
+icon: lucide/play
+tags:
+  - Guide
+  - UI
+---
+
 # Usage
 
 The interface is designed to be familiar for anyone who has used a raw editor before.

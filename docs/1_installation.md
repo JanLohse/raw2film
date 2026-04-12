@@ -1,3 +1,10 @@
+---
+icon: lucide/download
+tags:
+  - Guide
+  - Setup
+---
+
 # Installation
 
 To run Raw2Film it is required to have installed [exiftool](https://exiftool.org/) on
