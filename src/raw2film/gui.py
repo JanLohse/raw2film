@@ -1730,16 +1730,6 @@ Affects only colors.""",
         image = image.astype(xp.float32) / 65535
         return image
 
-    def xyz_image(self, src=None):
-        if src is None:
-            src = self.image_bar.current_image()
-        if self.lens_correction.isChecked():
-            cam = self.camera_selector.currentText()
-            lens = self.lens_selector.currentText()
-            return self.load_raw_image(src, cam, lens)
-        else:
-            return self.load_raw_image(src)
-
     def resizeEvent(self, event):
         self.parameter_changed()
         super().resizeEvent(event)
@@ -1993,7 +1983,12 @@ Affects only colors.""",
             ]
 
         pixel_ratio = self.devicePixelRatioF()
-        image = self.xyz_image(src)
+        if processing_args["lens_correction"]:
+            image = self.load_raw_image(
+                src, processing_args.get("cam", None), processing_args.get("lens", None)
+            )
+        else:
+            image = self.load_raw_image(src)
         processing_args["resolution"] = (
             math.floor(self.image.height() * pixel_ratio),
             math.floor(self.image.width() * pixel_ratio),
@@ -2090,6 +2085,7 @@ Affects only colors.""",
                     self.cameras[processing_args["cam"]],
                     self.lenses[processing_args["lens"]],
                 )
+        image = image.astype(xp.float32) / 65535
         processing_args["chroma_nr"] *= 2
         image = process_image(
             image,
