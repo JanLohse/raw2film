@@ -7,6 +7,7 @@ from functools import cache
 import exiftool
 import numpy as np
 from numba import njit
+from spectral_film_lut.config import DEFAULT_DTYPE
 
 from raw2film import data
 
@@ -107,9 +108,9 @@ def generate_histogram(image, black_value=39, white_value=222, height=100):
         Histogram as a numpy array of shape (height, 256, 3).
     """
     # Initialize bins
-    hist_r = np.zeros(256, dtype=np.float32)
-    hist_g = np.zeros(256, dtype=np.float32)
-    hist_b = np.zeros(256, dtype=np.float32)
+    hist_r = np.zeros(256, dtype=DEFAULT_DTYPE)
+    hist_g = np.zeros(256, dtype=DEFAULT_DTYPE)
+    hist_b = np.zeros(256, dtype=DEFAULT_DTYPE)
 
     h, w, _ = image.shape
 
