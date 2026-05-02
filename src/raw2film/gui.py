@@ -2285,7 +2285,7 @@ Affects only colors.""",
                     "profile_params": {},
                 }
         if Path(filename).is_file():
-            with open(filename, "r") as f:
+            with open(filename) as f:
                 old_dict = json.load(f)
             complete_dict["image_params"] = {
                 **old_dict["image_params"],
@@ -2324,7 +2324,7 @@ Affects only colors.""",
             self.load_settings(filename)
 
     def load_settings(self, filename):
-        with open(filename, "r") as f:
+        with open(filename) as f:
             complete_dict = json.load(f)
         self.image_params = {**complete_dict["image_params"], **self.image_params}
         self.profile_params = {**complete_dict["profile_params"], **self.profile_params}

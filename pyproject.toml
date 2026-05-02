@@ -30,9 +30,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mkdocstrings-python>=2.0.3",
-    "pre-commit>=4.5.1",
-    "ruff>=0.15.10",
-    "zensical>=0.0.32",
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.12",
+    "zensical>=0.0.39",
 ]
 
 [project.urls]
@@ -47,7 +47,8 @@ write_to = "src/raw2film/_version.py"
 version_scheme = "release-branch-semver"
 local_scheme = "no-local-version"
 
-
 [tool.ruff.lint]
-extend-select = ["I", "E"]
-extend-fixable = ["I", "E"]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
