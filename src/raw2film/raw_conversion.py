@@ -2,25 +2,40 @@
 The main processing pipeline for RAW images.
 """
 
-import time
-from contextlib import nullcontext
 from functools import cache
+from typing import Literal
 
 import cv2 as cv
 import numpy as np
 import rawpy
+from PIL import Image, ImageCms
+from spectral_film_lut.color_space import GAMMA_KEYS
+from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import (
-    CUDA_AVAILABLE,
-    apply_lut_tetrahedral_int,
     create_lut,
-    to_numpy,
-    xp,
+    film_conversion,
 )
 
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
+from raw2film.utils import (
+    apply_lut_tetrahedral_float,
+    load_metadata,
+    resolution_scaling,
+)
+
+CANVAS_MODES = Literal[
+    "No",
+    "Proportional white",
+    "Proportional black",
+    "Uniform white",
+    "Uniform black",
+    "Fixed white",
+    "Fixed black",
+]
+"""Available canvas modes."""
 
 
 def raw_to_linear(src, half_size=True):
@@ -39,19 +54,21 @@ def raw_to_linear(src, half_size=True):
             demosaic_algorithm=rawpy.DemosaicAlgorithm(2),
             four_color_rgb=False,
         )
+    rgb = rgb.astype(DEFAULT_DTYPE) / 65535.0
+
+    rgb *= 2 ** calc_exposure(rgb, metadata=load_metadata(src))
 
     return rgb
 
 
 def crop_rotate_zoom(
-    image,
-    frame_width=36,
-    frame_height=24,
-    rotation=0,
-    zoom=1,
-    rotate_times=0,
-    flip=False,
-    **kwargs,
+    image: np.ndarray,
+    frame_width: int | float = 36,
+    frame_height: int | float = 24,
+    rotation: float = 0.0,
+    zoom: float = 1.0,
+    rotate_times: int = 0,
+    flip: bool = False,
 ):
     """Apply cropping, rotation, and a zoom to an image."""
     image = effects.crop_image(image, 1, aspect=frame_width / frame_height, flip=flip)
@@ -70,174 +87,167 @@ def create_lut_cached(*args, **kwargs):
 
 
 def process_image(
-    image,
-    negative_film,
-    grain_size,
-    grain_sigma,
-    frame_width=36,
-    frame_height=24,
-    print_film=None,
-    halation=True,
-    sharpness=True,
-    grain=2,
+    image: np.ndarray,
+    negative_film: FilmSpectral,
+    grain_size: float,
+    grain_sigma: float,
+    frame_width: int | float = 36,
+    frame_height: int | float = 24,
+    print_film: FilmSpectral | None = None,
+    halation: bool = True,
+    sharpness: bool = True,
+    grain: int = 2,
     resolution: None | tuple[int, int] = None,
-    metadata=None,
-    measure_time=False,
-    semaphore=None,
-    canvas_mode="No",
-    highlight_burn=0,
-    burn_scale=50,
-    chroma_nr=0,
-    double_upscale=False,
-    **kwargs,
+    canvas_mode: CANVAS_MODES = "No",
+    canvas_scale: float = 1.0,
+    canvas_ratio: float = 1.0,
+    highlight_burn: float = 0.0,
+    burn_scale: float = 50.0,
+    chroma_nr: int = 0,
+    double_upscale: bool = False,
+    exp_comp: float = 0.0,
+    rotation: float = 0.0,
+    zoom: float = 1.0,
+    rotate_times: int = 0,
+    flip: bool = False,
+    red_light: float = 0.0,
+    green_light: float = 0.0,
+    blue_light: float = 0.0,
+    halation_size: float = 1.0,
+    halation_green_factor: float = 0.4,
+    projector_kelvin: int = 6500,
+    halation_intensity: float = 1.0,
+    shadow_comp: float = 0.0,
+    sat_adjust: float = 1.0,
+    gamma_func: GAMMA_KEYS = "sRGB",
+    exp_kelvin: int = 6500,
+    tint: float = 0.0,
+    inversion_gamma: float = 4.0,
+    idealized_curve: bool = False,
+    inversion: bool = False,
+    push_pull: float = 0.0,
+    white_balance: bool = False,
+    white_clip: bool = False,
+    icc_transform=None,
+    lut_size: int = 33,
+    **_,
 ):
     """
     The full image processing pipeline that converts from linear XYZ to a display
     referred image with film emulation applied.
     """
-    if measure_time:
-        kwargs["measure_time"] = True
-        start = time.time()
-    exp_comp = calc_exposure(image, metadata=metadata, **kwargs)
-    if "exp_comp" in kwargs:
-        kwargs["exp_comp"] += exp_comp
-    else:
-        kwargs["exp_comp"] = exp_comp
+    assert ((lut_size - 1) & (lut_size - 2)) == 0
 
-    image = crop_rotate_zoom(image, frame_width, frame_height, **kwargs)
+    image = crop_rotate_zoom(
+        image, frame_width, frame_height, rotation, zoom, rotate_times, flip
+    )
 
     if chroma_nr:
-        # TODO: support cuda
         image = chroma_nr_filter(image, chroma_nr)
 
     if resolution is not None:
-        h, w = image.shape[:2]
-        h_factor = resolution[0] / h
-        w_factor = resolution[1] / w
-        scaling_factor = min(h_factor, w_factor)
-        if scaling_factor < 1:
-            image = cv.resize(
-                image,
-                (int(w * scaling_factor), int(h * scaling_factor)),
-                interpolation=cv.INTER_AREA,
-            )
-        elif scaling_factor > 1:
-            image = cv.resize(
-                image,
-                (int(w * scaling_factor), int(h * scaling_factor)),
-                interpolation=cv.INTER_LANCZOS4,
-            )
+        image = resolution_scaling(image, resolution)
 
-    lock = semaphore if semaphore is not None and CUDA_AVAILABLE else nullcontext()
-    with lock:
-        image = xp.asarray(image)
-        scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
+    scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
-        if halation:
+    if halation:
 
-            def halation_func(x):
-                return effects.halation(x, scale, **kwargs)
-        else:
-            halation_func = None
-
-        transform = FilmSpectral.generate_conversion(
-            negative_film,
-            mode="negative",
-            adx=False,
-            input_colourspace=None,
-            halation_func=halation_func,
-            **kwargs,
-        )
-        image = transform(image)
-
-        if sharpness and negative_film.mtf is not None:
-            start_sub = time.time()
-            image = effects.film_sharpness(image, negative_film, scale)
-            if measure_time:
-                print(
-                    f"{'sharpness':28} {time.time() - start_sub:.4f}s {image.dtype} "
-                    f"{image.shape} {type(image)}"
-                )
-
-        if grain and negative_film.rms_density is not None:
-            start_sub = time.time()
-            image = effects.apply_grain(
-                image,
-                negative_film,
+        def halation_func(x: np.ndarray) -> np.ndarray:
+            return effects.halation(
+                x,
                 scale,
-                grain_size_mm=grain_size / 1000,
-                grain_sigma=grain_sigma,
-                bw_grain=grain == 1,
+                halation_size=halation_size,
+                halation_green_factor=halation_green_factor,
+                halation_intensity=halation_intensity,
             )
-            if measure_time:
-                print(
-                    f"{'grain':28} {time.time() - start_sub:.4f}s {image.dtype} "
-                    f"{image.shape} {type(image)}"
-                )
+    else:
+        halation_func = None
 
-        if highlight_burn and (
-            print_film is not None
-            or negative_film.density_measure in ["status_m", "bw"]
-        ):
-            start_sub = time.time()
-            image = effects.burn(image, negative_film, highlight_burn, burn_scale)
-            if measure_time:
-                print(
-                    f"{'burn':28} {time.time() - start_sub:.4f}s {image.dtype} "
-                    f"{image.shape} {type(image)}"
-                )
+    image = film_conversion(
+        image,
+        negative_film,
+        mode="negative",
+        adx_coding=False,
+        input_colorspace=None,
+        exp_kelvin=exp_kelvin,
+        tint=tint,
+        exp_comp=exp_comp,
+        halation_func=halation_func,
+        push_pull=push_pull,
+    )
 
-        image = xp.clip(image * 2, 0, 1)
-        image *= 2**16 - 1
-        image = image.astype(xp.uint16)
+    if sharpness and negative_film.mtf is not None:
+        image = effects.film_sharpness(image, negative_film, scale)
 
-    if measure_time:
-        start_sub = time.time()
-    if "exp_comp" in kwargs:
-        kwargs["exp_comp"] = round(kwargs["exp_comp"], ndigits=1)
+    if grain and negative_film.rms_density is not None:
+        image = effects.apply_grain(
+            image,
+            negative_film,
+            scale,
+            grain_size_mm=grain_size / 1000,
+            grain_sigma=grain_sigma,
+            bw_grain=grain == 1,
+            adx=False,
+        )
+
+    if highlight_burn and (
+        print_film is not None or negative_film.density_measure in ["status_m", "bw"]
+    ):
+        image = effects.burn(image, negative_film, highlight_burn, burn_scale)
+
+    image /= 4.0
+
     lut = create_lut_cached(
         negative_film,
         print_film,
         mode="print",
-        input_colourspace=None,
-        adx=False,
+        input_colorspace=None,
+        adx_coding=False,
         cube=False,
-        adx_scaling=2,
-        **kwargs,
+        red_light=red_light,
+        green_light=green_light,
+        blue_light=blue_light,
+        projector_kelvin=projector_kelvin,
+        shadow_comp=shadow_comp,
+        sat_adjust=sat_adjust,
+        gamma_func=gamma_func,
+        inversion_gamma=inversion_gamma,
+        idealized_curve=idealized_curve,
+        inversion=inversion,
+        white_balance=white_balance,
+        white_clip=white_clip,
+        linear_scaling=4.0,
     )
-    lut = (lut * (2**16 - 1)).astype(xp.uint16)
-    if measure_time:
-        print(f"{'create lut':28} {time.time() - start_sub:.4f}s")
-        start_sub = time.time()
     if image.shape[-1] == 1:
         image = image.repeat(3, -1)
 
-    height, width, _ = image.shape
-    if CUDA_AVAILABLE:
-        image = apply_lut_tetrahedral_int(to_numpy(image), lut)
-        # TODO fix image = to_numpy(run_lut_cuda(xp.asarray(image), xp.asarray(lut)))
-    else:
-        image = apply_lut_tetrahedral_int(image, lut)
-    if measure_time:
-        print(f"{'apply lut':28} {time.time() - start_sub:.4f}s")
-        print(f"{'total':28} {time.time() - start:.4f}s")
+    lut = (lut * (2**8 - 1)).astype(np.uint8)
+    if icc_transform is not None:
+        lut_shape = lut.shape
+        lut = lut.reshape(lut_shape[0], -1, lut_shape[-1])
+        lut = Image.fromarray(lut)
+        ImageCms.applyTransform(lut, icc_transform, inPlace=True)
+        lut = np.array(lut, np.uint8)
+        lut = lut.reshape(lut_shape)
 
-    if canvas_mode and canvas_mode is not None and canvas_mode != "No":
+    image = apply_lut_tetrahedral_float(image, lut)
+
+    if canvas_mode != "No":
         if "white" in canvas_mode:
-            kwargs["canvas_color"] = [255, 255, 255]
+            canvas_color = (255, 255, 255)
         elif "black" in canvas_mode:
-            kwargs["canvas_color"] = [0, 0, 0]
+            canvas_color = (0, 0, 0)
         else:
-            kwargs["canvas_color"] = [128, 128, 128]
-        if "canvas_scale" not in kwargs:
-            kwargs["canvas_scale"] = 1
+            canvas_color = (128, 128, 128)
         if "Proportional" in canvas_mode:
-            kwargs["canvas_ratio"] = image.shape[1] / image.shape[0]
-            image = add_canvas(image, **kwargs)
-        elif "Fixed" in canvas_mode and "canvas_ratio" in kwargs:
-            image = add_canvas(image, **kwargs)
+            canvas_ratio = image.shape[1] / image.shape[0]
+            image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
+        elif "Fixed" in canvas_mode:
+            image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
         elif "Uniform" in canvas_mode:
-            image = add_canvas_uniform(image, **kwargs)
+            image = add_canvas_uniform(image, canvas_scale, canvas_color)
+        if resolution is not None:
+            image = resolution_scaling(image, resolution)
 
     if double_upscale:
         image = cv.resize(

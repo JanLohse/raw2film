@@ -5,7 +5,7 @@ Helper functions for color math.
 import math
 
 import numpy as np
-from spectral_film_lut.utils import xp
+from spectral_film_lut.config import DEFAULT_DTYPE
 
 
 def XYZ_to_kelvin(XYZ):
@@ -68,9 +68,11 @@ def encode_ARRILogC3(x):
     return np.where(x > cut, (c / np.log(10)) * np.log(a * x + b) + d, e * x + f)
 
 
-def calc_exposure(rgb, ref_exposure=0.18, metadata=None, **kwargs):
+def calc_exposure(
+    rgb: np.ndarray, ref_exposure: float = 0.18, metadata: dict | None = None
+):
     """Calculates exposure value of the rgb image."""
-    lum_mat = rgb[:, :, 1]
+    lum_mat = rgb[::2, ::2, 1]
 
     factor = 3
     if metadata is not None:
@@ -111,7 +113,7 @@ def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
     """
     # XYZ to linear RGB matrix (sRGB, D65)
     if M is None:
-        M = xp.array(
+        M = np.array(
             [
                 [3.2406, -1.5372, -0.4986],
                 [-0.9689, 1.8758, 0.0415],
@@ -128,21 +130,21 @@ def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
 
     # Optional clipping before gamma (standard practice)
     if clip:
-        RGB_linear = xp.clip(RGB_linear, 0.0, 1.0)
+        RGB_linear = np.clip(RGB_linear, 0.0, 1.0)
 
     # Apply sRGB gamma encoding
     a = 0.055
     threshold = 0.0031308
-    RGB = xp.where(
+    RGB = np.where(
         RGB_linear <= threshold,
         12.92 * RGB_linear,
-        (1 + a) * xp.power(RGB_linear, 1 / 2.4) - a,
+        (1 + a) * np.power(RGB_linear, 1 / 2.4) - a,
     )
 
     # Optional output in uint8
     if output_uint8:
-        RGB = xp.clip(RGB, 0.0, 1.0) * 255
-        RGB = RGB.get().astype(xp.uint8)
+        RGB = np.clip(RGB, 0.0, 1.0) * 255
+        RGB = RGB.get().astype(np.uint8)
 
     return RGB
 
@@ -169,7 +171,7 @@ def rec709_to_displayP3(rgb):
             [0.033194, 0.966806, 0.000000],
             [0.017083, 0.072397, 0.910520],
         ],
-        dtype=xp.float32,
+        dtype=DEFAULT_DTYPE,
     )
-    rgb = np.clip(rgb @ M.T, 0, 255).astype(xp.uint8)
+    rgb = np.clip(rgb @ M.T, 0, 255).astype(np.uint8)
     return rgb

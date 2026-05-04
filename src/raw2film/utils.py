@@ -2,11 +2,14 @@
 Additional utility functions.
 """
 
+import math
 from functools import cache
 
+import cv2 as cv
 import exiftool
 import numpy as np
-from numba import njit
+from numba import njit, prange
+from spectral_film_lut.config import DEFAULT_DTYPE
 
 from raw2film import data
 
@@ -107,9 +110,9 @@ def generate_histogram(image, black_value=39, white_value=222, height=100):
         Histogram as a numpy array of shape (height, 256, 3).
     """
     # Initialize bins
-    hist_r = np.zeros(256, dtype=np.float32)
-    hist_g = np.zeros(256, dtype=np.float32)
-    hist_b = np.zeros(256, dtype=np.float32)
+    hist_r = np.zeros(256, dtype=DEFAULT_DTYPE)
+    hist_g = np.zeros(256, dtype=DEFAULT_DTYPE)
+    hist_b = np.zeros(256, dtype=DEFAULT_DTYPE)
 
     h, w, _ = image.shape
 
@@ -177,3 +180,129 @@ def generate_histogram(image, black_value=39, white_value=222, height=100):
             hist_img[y, x, 2] = white_value
 
     return hist_img
+
+
+def resolution_scaling(image: np.ndarray, resolution) -> np.ndarray:
+    h, w = image.shape[:2]
+    h_factor = resolution[0] / h
+    w_factor = resolution[1] / w
+    scaling_factor = min(h_factor, w_factor)
+    if scaling_factor < 1:
+        image = cv.resize(
+            image,
+            (int(w * scaling_factor), int(h * scaling_factor)),
+            interpolation=cv.INTER_AREA,
+        )
+    elif scaling_factor > 1:
+        image = cv.resize(
+            image,
+            (int(w * scaling_factor), int(h * scaling_factor)),
+            interpolation=cv.INTER_LANCZOS4,
+        )
+    return image
+
+
+@njit(parallel=True)
+def apply_lut_tetrahedral_float(
+    image: np.ndarray,  # float32 in [0, 1]
+    lut: np.ndarray,  # uint8 LUT (size, size, size, 3)
+    interpolation_depth: int = 16,
+) -> np.ndarray:
+    h, w, c = image.shape
+    size = lut.shape[0]
+    max_int = 2**interpolation_depth - 1
+    k = interpolation_depth - int(math.log2(size - 1))
+    scale = 1 << k
+
+    out = np.empty((h, w, 3), dtype=np.uint8)
+
+    for y in prange(h):
+        for x in prange(w):
+            r = int(image[y, x, 0] * max_int)
+            g = int(image[y, x, 1] * max_int)
+            b = int(image[y, x, 2] * max_int)
+
+            r0 = r >> k
+            g0 = g >> k
+            b0 = b >> k
+
+            dr = r & (scale - 1)
+            dg = g & (scale - 1)
+            db = b & (scale - 1)
+
+            r1 = min(r0 + 1, size - 1)
+            g1 = min(g0 + 1, size - 1)
+            b1 = min(b0 + 1, size - 1)
+
+            c000 = lut[r0, g0, b0]
+
+            # Tetrahedral interpolation
+            if dr >= dg:
+                if dg >= db:
+                    c100 = lut[r1, g0, b0]
+                    c110 = lut[r1, g1, b0]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + dr * (c100 - c000)
+                        + dg * (c110 - c100)
+                        + db * (c111 - c110)
+                    )
+                elif dr >= db:
+                    c100 = lut[r1, g0, b0]
+                    c101 = lut[r1, g0, b1]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + dr * (c100 - c000)
+                        + db * (c101 - c100)
+                        + dg * (c111 - c101)
+                    )
+                else:
+                    c001 = lut[r0, g0, b1]
+                    c101 = lut[r1, g0, b1]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + db * (c001 - c000)
+                        + dr * (c101 - c001)
+                        + dg * (c111 - c101)
+                    )
+            else:
+                if db >= dg:
+                    c001 = lut[r0, g0, b1]
+                    c011 = lut[r0, g1, b1]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + db * (c001 - c000)
+                        + dg * (c011 - c001)
+                        + dr * (c111 - c011)
+                    )
+                elif db >= dr:
+                    c010 = lut[r0, g1, b0]
+                    c011 = lut[r0, g1, b1]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + dg * (c010 - c000)
+                        + db * (c011 - c010)
+                        + dr * (c111 - c011)
+                    )
+                else:
+                    c010 = lut[r0, g1, b0]
+                    c110 = lut[r1, g1, b0]
+                    c111 = lut[r1, g1, b1]
+                    c = (
+                        c000 * scale
+                        + dg * (c010 - c000)
+                        + dr * (c110 - c010)
+                        + db * (c111 - c110)
+                    )
+
+            # Convert back to uint8 safely
+            out[y, x, 0] = np.uint8(c[0] // scale)
+            out[y, x, 1] = np.uint8(c[1] // scale)
+            out[y, x, 2] = np.uint8(c[2] // scale)
+
+    return out

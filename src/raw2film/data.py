@@ -3,6 +3,7 @@ Data on exif tags, file extensions, film formats, and color spaces.
 """
 
 import numpy as np
+from spectral_film_lut.config import DEFAULT_DTYPE
 
 METADATA_KEYS = [
     "GPSDateStamp",
@@ -130,7 +131,7 @@ REC709_TO_XYZ = np.array(
         [0.2126729, 0.7151522, 0.0721750],
         [0.0193339, 0.1191920, 0.9503041],
     ],
-    dtype=np.float32,
+    dtype=DEFAULT_DTYPE,
 )
 """Conversion matrix from Rec. 709 to CIE XYZ."""
 
@@ -140,6 +141,6 @@ XYZ_TO_REC709 = np.array(
         [-0.9692660, 1.8760108, 0.0415560],
         [0.0556434, -0.2040259, 1.0572252],
     ],
-    dtype=np.float32,
+    dtype=DEFAULT_DTYPE,
 )
 """Conversion matrix from CIE XYZ to Rec. 709."""

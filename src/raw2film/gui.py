@@ -17,7 +17,7 @@ import imageio
 import lensfunpy
 import numpy as np
 import PIL.ImageCms
-from PIL import Image, ImageCms
+from PIL import ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -65,7 +65,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from spectral_film_lut import BASE_DIR
-from spectral_film_lut.css_theme import ACCENT_COLOR, BASE_COLOR, BORDER_RADIUS, THEME
+from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import (
     AnimatedButton,
@@ -76,7 +76,6 @@ from spectral_film_lut.gui_objects import (
     WideComboBox,
     Worker,
 )
-from spectral_film_lut.utils import CUDA_AVAILABLE, xp
 
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
 from raw2film.image_bar import ImageBar
@@ -328,7 +327,7 @@ class MainWindow(QMainWindow):
         def create_line():
             line = QFrame(self)
             line.setFrameShape(QFrame.Shape.HLine)
-            line.setStyleSheet(f"background-color: {ACCENT_COLOR};")
+            line.setStyleSheet(f"background-color: {OUTLINE_COLOR};")
             line.setMaximumHeight(1)
             return line
 
@@ -509,30 +508,34 @@ class MainWindow(QMainWindow):
             "halation": True,
             "sharpness": True,
             "grain": 2,
-            "format": "135",
+            "film_format": "135",
             "frame_width": 36,
             "frame_height": 24,
             "grain_size": 6,
             "halation_size": 1.0,
             "halation_green_factor": 0.3,
             "projector_kelvin": 6500,
+            "inversion_gamma": 4.0,
+            "idealized_curve": False,
             "halation_intensity": 1,
             "shadow_comp": 0,
-            "white_comp": True,
+            "white_clip": False,
+            "white_balance": False,
             "sat_adjust": 1,
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
+            "push_pull": 0.0,
         }
         self.dflt_img_params = {
             "exp_comp": 0,
             "zoom": 1,
             "rotate_times": 0,
             "rotation": 0,
-            "exposure_kelvin": 6000,
+            "exp_kelvin": 6000,
             "profile": "Default",
             "lens_correction": True,
             "canvas_mode": "No",
-            "canvas_scale": 1,
+            "canvas_scale": 1.0,
             "canvas_ratio": 0.8,
             "highlight_burn": 0,
             "burn_scale": 50,
@@ -560,8 +563,8 @@ class MainWindow(QMainWindow):
             "Profile",
             self.dflt_img_params["profile"],
             self.profile_selector.setCurrentText,
-            tool_tip="""Select the profile specifying film and format parameters.
-(1-9: select profile)""",
+            tool_tip="Select the profile specifying film and format parameters.\n"
+            "(1-9: select profile)",
         )
 
         self.lensfunpy_db = lensfunpy.Database()
@@ -619,13 +622,11 @@ class MainWindow(QMainWindow):
             "Grain",
             self.dflt_prf_params["grain"],
             self.grain.setChecked,
-            tool_tip="""
-<table>
+            tool_tip="""<table>
   <tr><td><u>Unchecked: </u></td><td>No film grain.</td></tr>
   <tr><td><u>Partially Checked: </u></td><td>Monochromatic film grain.</td></tr>
   <tr><td><u>Checked: </u></td><td>RGB film grain.</td></tr>
-</table>
-""",
+</table>""",
         )
 
         self.grain_size = SliderLog()
@@ -672,8 +673,8 @@ class MainWindow(QMainWindow):
             "Halation",
             self.dflt_prf_params["halation"],
             self.halation.setChecked,
-            tool_tip="""Activate halation, a warm glow around highlights, resulting
-            from reflections on the back of the film.""",
+            tool_tip="Activate halation, a warm glow around highlights, resulting\n"
+            "from reflections on the back of the film.",
         )
 
         self.halation_size = SliderLog()
@@ -689,8 +690,8 @@ class MainWindow(QMainWindow):
             "Halation size",
             self.dflt_prf_params["halation_size"],
             self.halation_size.setValue,
-            tool_tip="""How far the halation spreads. Halation is a warm glow around
-            highlights, resulting from reflections on the film backing.""",
+            tool_tip="How far the halation spreads. Halation is a warm glow around\n"
+            "highlights, resulting from reflections on the film backing.",
         )
 
         self.halation_green = Slider()
@@ -709,8 +710,8 @@ class MainWindow(QMainWindow):
             "Halation color",
             self.dflt_prf_params["halation_green_factor"],
             self.halation_green.setValue,
-            tool_tip="""How red or yellow the halation is. Specifies how strongly the
-            halation reaches into the green sensitive layer.""",
+            tool_tip="How red or yellow the halation is. Specifies how strongly the\n"
+            "halation reaches into the green sensitive layer.",
         )
 
         self.halation_intensity = SliderLog()
@@ -722,9 +723,8 @@ class MainWindow(QMainWindow):
             "Halation intensity",
             self.dflt_prf_params["halation_intensity"],
             self.halation_intensity.setValue,
-            tool_tip="""How intense the halation is.
-        Halation is a warm glow around highlights,
-        resulting from reflections on the film backing.""",
+            tool_tip="How intense the halation is. Halation is a warm glow around\n"
+            "highlights, resulting from reflections on the film backing.",
         )
 
         self.exp_comp = Slider()
@@ -734,9 +734,9 @@ class MainWindow(QMainWindow):
             "Exposure",
             self.dflt_img_params["exp_comp"],
             self.exp_comp.setValue,
-            tool_tip="""Adjust exposure in stops.
-(Up: increase exposure)
-(Down: decrease exposure)""",
+            tool_tip="Adjust exposure in stops.\n"
+            "(Up: increase exposure)\n"
+            "(Down: decrease exposure)",
         )
 
         self.wb_modes = {
@@ -755,17 +755,17 @@ class MainWindow(QMainWindow):
             "WB",
             "Daylight",
             self.wb_mode.setCurrentText,
-            tool_tip="""Select preset white balance.
-(Shift+D: daylight)
-(Shift+C: cloudy)
-(Shift+S: shade)
-(Shift+F: fluorescent)
-(Shift+T: Tungsten)""",
+            tool_tip="Select preset white balance.\n"
+            "(Shift+D: daylight)\n"
+            "(Shift+C: cloudy)\n"
+            "(Shift+S: shade)\n"
+            "(Shift+F: fluorescent)\n"
+            "(Shift+T: Tungsten)",
         )
 
         self.exp_wb = SliderLog()
         self.exp_wb.setMinMaxSteps(
-            2700, 16000, 120, self.dflt_img_params["exposure_kelvin"], -2
+            2700, 16000, 120, self.dflt_img_params["exp_kelvin"], -2
         )
         self.exp_wb.set_color_gradient(
             np.array([2 / 3, 0.14, 0.65277]), np.array([2 / 3, 0.14, 0.15277])
@@ -773,7 +773,7 @@ class MainWindow(QMainWindow):
         basic_settings_group.add_option(
             self.exp_wb,
             "Kelvin",
-            self.dflt_img_params["exposure_kelvin"],
+            self.dflt_img_params["exp_kelvin"],
             self.exp_wb.setValue,
             tool_tip="Adjust white balance in kelvin.",
         )
@@ -810,10 +810,11 @@ class MainWindow(QMainWindow):
             "Highlight burn",
             self.dflt_img_params["highlight_burn"],
             self.highlight_burn.setValue,
-            tool_tip="""Lower the brightness of bright areas on the print film.
-Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
-(Shift+Up: increase)
-(Shift+Down: decrease)""",
+            tool_tip="Lower the brightness of bright areas on the print film. Reach\n"
+            "can be configures under 'Burn scale' under 'Advanced printing\n"
+            "techniques'.\n"
+            "(Shift+Up: increase)\n"
+            "(Shift+Down: decrease)",
         )
         self.burn_scale = Slider()
         self.burn_scale.setMinMaxTicks(
@@ -848,8 +849,8 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
         basic_settings_group.add_option(
             self.rotate,
             "Rotate",
-            tool_tip="""Rotate the image by 90 degrees or change the orientation.
-(Ctrl+R: rotate right)""",
+            tool_tip="Rotate the image by 90 degrees or change the orientation.\n"
+            "(Ctrl+R: rotate right)",
         )
 
         self.rotation = Slider()
@@ -861,9 +862,9 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
             "Rotation angle",
             self.dflt_img_params["rotation"],
             self.rotation.setValue,
-            tool_tip="""Rotate by an angle in degrees.
-(Ctrl+Right: rotate right)
-(Ctrl+Left: rotate left)""",
+            tool_tip="Rotate by an angle in degrees.\n"
+            "(Ctrl+Right: rotate right)\n"
+            "(Ctrl+Left: rotate left)",
         )
 
         self.zoom = Slider()
@@ -873,9 +874,9 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
             "Zoom",
             self.dflt_img_params["zoom"],
             self.zoom.setValue,
-            tool_tip="""Crop into the image.
-(Ctrl+Plus: zoom in)
-(Ctrl+Minus: zoom out)""",
+            tool_tip="Crop into the image.\n"
+            "(Ctrl+Plus: zoom in)\n"
+            "(Ctrl+Minus: zoom out)",
         )
 
         self.format_selector = WideComboBox(self)
@@ -883,11 +884,10 @@ Reach can be configures under 'Burn scale' under 'Advanced printing techniques'.
         profile_settings_group.add_option(
             self.format_selector,
             "Format",
-            self.dflt_prf_params["format"],
+            self.dflt_prf_params["film_format"],
             self.format_selector.setCurrentText,
-            tool_tip="""Select a preset film format.
-Adjusts scale of film characteristics (halation, resolution, grain)
-and changes aspect ratio.""",
+            tool_tip="Select a preset film format. Adjusts scale of film\n"
+            "characteristics (halation, resolution, grain) and changes aspect ratio.",
         )
 
         self.frame_size = QWidget()
@@ -904,11 +904,10 @@ and changes aspect ratio.""",
         profile_settings_group.add_option(
             self.frame_size,
             "Width/Height",
-            self.dflt_prf_params["format"],
+            self.dflt_prf_params["film_format"],
             self.format_selector.setCurrentText,
-            tool_tip="""Specify simulated film frame size.
-Adjusts scale of film characteristics (halation, resolution, grain)
-and changes aspect ratio.""",
+            tool_tip="Specify simulated film frame size. Adjusts scale of film\n"
+            "characteristics (halation, resolution, grain) and changes aspect ratio.",
         )
 
         negative_info = {
@@ -944,6 +943,7 @@ and changes aspect ratio.""",
             "Comment",
         ]
         self.filmstocks["None"] = None
+        self.filmstocks["Inversion"] = None
         self.negative_selector = FilmStockSelector(
             negative_info,
             self,
@@ -958,11 +958,11 @@ and changes aspect ratio.""",
         self.negative_selector.setMinimumWidth(100)
         profile_settings_group.add_option(
             self.negative_selector,
-            "Negativ stock",
+            "Negative stock",
             self.dflt_prf_params["negative_film"],
             self.negative_selector.setCurrentText,
-            tool_tip="""Which negative film stock to emulate.
-Affects colors, resolution, and graininess""",
+            tool_tip="Which negative film stock to emulate. Affects colors,\n"
+            "resolution, and graininess",
         )
 
         luma_bright = 0.8
@@ -980,8 +980,8 @@ Affects colors, resolution, and graininess""",
             "Red printer light",
             self.dflt_prf_params["red_light"],
             self.red_light.setValue,
-            tool_tip="""How strong the simulated red light is during printing.
-Decreases how red the print is.""",
+            tool_tip="How strong the simulated red light is during printing.\n"
+            "Decreases how red the print is.",
         )
         self.green_light = Slider()
         self.green_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
@@ -994,8 +994,8 @@ Decreases how red the print is.""",
             "Green printer light",
             self.dflt_prf_params["green_light"],
             self.green_light.setValue,
-            tool_tip="""How strong the simulated green light is during printing.
-Decreases how green the print is.""",
+            tool_tip="How strong the simulated green light is during printing.\n"
+            "Decreases how green the print is.",
         )
         self.blue_light = Slider()
         self.blue_light.setMinMaxTicks(-0.75, 0.75, 1, 50)
@@ -1008,8 +1008,8 @@ Decreases how green the print is.""",
             "Blue printer light",
             self.dflt_prf_params["blue_light"],
             self.blue_light.setValue,
-            tool_tip="""How strong the simulated blue light is during printing.
-Decreases how blue the print is.""",
+            tool_tip="How strong the simulated blue light is during printing.\n"
+            "Decreases how blue the print is.",
         )
 
         self.link_lights = QCheckBox()
@@ -1021,6 +1021,7 @@ Decreases how blue the print is.""",
         )
 
         print_info = {x: y for x, y in filmstock_info.items() if y["stage"] == "print"}
+        print_info["Inversion"] = {}
         print_info["None"] = {}
         sort_keys_print = ["Name", "Year", "Gamma"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
@@ -1052,11 +1053,32 @@ Decreases how blue the print is.""",
             "Print stock",
             self.dflt_prf_params["print_film"],
             self.print_selector.setCurrentText,
-            tool_tip="""Which print material to emulate.
-Affects only colors.""",
+            tool_tip="Which print material to emulate. Affects only colors.",
+        )
+
+        self.push_pull = Slider()
+        """
+        How much to push or pull the film, adjusting contrast. Works linearly scaling
+        the characteristic curve of the film. Not based on measured data, but a rough
+        approximation, useful for controlling contrast.
+
+        Not recommended for use with slide film.
+        """
+        self.push_pull.setMinMaxTicks(-1.5, 1.5, 1, 20)
+        profile_settings_group.add_option(
+            self.push_pull,
+            "Push/pull",
+            self.dflt_prf_params["push_pull"],
+            self.push_pull.setValue,
+            tool_tip="How much to push or pull the film, adjusting contrast.\n"
+            "Works linearly scaling the characteristic curve of the film.\n"
+            "Not based on measured data, but a rough approximation useful\n"
+            "for controlling contrast.\n"
+            "Not recommended for use with slide film.",
         )
 
         self.projector_kelvin = SliderLog()
+        """Under what light temperature to view the print or slide."""
         self.projector_kelvin.setMinMaxSteps(
             2700, 16000, 120, self.dflt_prf_params["projector_kelvin"], -2
         )
@@ -1065,11 +1087,62 @@ Affects only colors.""",
         )
         profile_settings_group.add_option(
             self.projector_kelvin,
-            "Projector wb",
+            "Projector WB",
             self.dflt_prf_params["projector_kelvin"],
             self.projector_kelvin.setValue,
             tool_tip="Under what light temperature to view the print or slide.",
         )
+
+        self.inversion_gamma = Slider()
+        """
+        The gamma applied using the inversion if 'Inversion' is selected or when
+        'idealized curve' is checked."""
+        self.inversion_gamma.setMinMaxTicks(1, 7, 1, 10)
+        profile_settings_group.add_option(
+            self.inversion_gamma,
+            "Gamma",
+            self.dflt_prf_params["inversion_gamma"],
+            self.inversion_gamma.setValue,
+            tool_tip="The gamma applied using the inversion if 'Inversion' is\n"
+            "selected or when 'idealized curve' is checked.",
+        )
+
+        self.idealized_curve = QCheckBox("Pure curve")
+        """
+        Replace the characteristic curve of the print film with an ideal gamma curve.
+        Preserves the sensitivity and dye densities of the print film.
+        When activated, the gamma is controlled by the inversion gamma.
+        """
+        self.idealized_curve.setToolTip(
+            "Replace the characteristic curve of the print film with an ideal gamma\n"
+            "curve. Preserves the sensitivity and dye densities of the print film.\n"
+            "When activated, the gamma is controlled by the inversion gamma."
+        )
+
+        self.white_clip = QCheckBox("Clip")
+        """
+        When viewing print film brightness will be increased to clip at exactly 1.0.
+        When viewing slide film white balancing is applied, so that a gray patch will
+        actually produce the color temperature specified by the  projector kelvin.
+        """
+        self.white_clip.setToolTip(
+            "When viewing print film brightness will be increased to clip at\n"
+            "exactly 1.0. When viewing slide film white balancing is\n"
+            "applied, so that a gray patch will actually produce the color\n"
+            "temperature specified by the  projector kelvin."
+        )
+
+        self.white_balance = QCheckBox("WB")
+        """Whether to white balance slide film."""
+        self.white_balance.setToolTip("Whether to white balance slide film.")
+
+        checker_widget = QWidget()
+        checker_widget_layout = QHBoxLayout(checker_widget)
+        checker_widget.setLayout(QHBoxLayout())
+        checker_widget_layout.addWidget(self.idealized_curve)
+        checker_widget_layout.addWidget(self.white_clip)
+        checker_widget_layout.addWidget(self.white_balance)
+        profile_settings_group.add_option(checker_widget)
 
         self.saturation_slider = Slider()
         self.saturation_slider.setMinMaxTicks(
@@ -1142,7 +1215,7 @@ Affects only colors.""",
             "Width/Height",
             1,
             lambda x: (self.canvas_width.setText("5"), self.canvas_height.setText("4")),
-            tool_tip="""Aspect ratio of added canvas.""",
+            tool_tip="Aspect ratio of added canvas.",
         )
 
         self.shadow_comp = Slider()
@@ -1152,28 +1225,9 @@ Affects only colors.""",
             "Shadow comp.",
             self.dflt_prf_params["shadow_comp"],
             self.shadow_comp.setValue,
-            tool_tip="Specify black offset in percent. "
-            "If positive a uniform offset is applied. "
-            "Can be used to simulate viewing flare. "
-            "Negative values use a curve to leave exposure unchanged.",
-        )
-
-        self.white_comp = QCheckBox()
-        """
-        When viewing print film brightness will be increased to clip at exactly 1.0.
-        When viewing slide film white balancing is applied, so that a gray patch will
-        actually produce the color temperature specified by the  projector kelvin.
-        """
-        profile_settings_group.add_option(
-            self.white_comp,
-            "White adjust",
-            self.dflt_prf_params["white_comp"],
-            self.white_comp.setChecked,
-            tool_tip="""
-        When viewing print film brightness will be increased to clip at exactly 1.0.
-        When viewing slide film white balancing is applied, so that a gray patch will
-        actually produce the color temperature specified by the  projector kelvin.
-                """,
+            tool_tip="Specify black offset in percent. If positive a uniform offset\n"
+            "is applied. Can be used to simulate viewing flare. Negative values use a\n"
+            "curve to leave exposure unchanged.",
         )
 
         QShortcut(QKeySequence("Up"), self).activated.connect(self.exp_comp.increase)
@@ -1270,15 +1324,30 @@ Affects only colors.""",
         )
         self.image_selector.triggered.connect(self.load_images)
         self.folder_selector.triggered.connect(self.load_folder)
+        self.push_pull.valueChanged.connect(
+            lambda x: self.profile_changed(x, "push_pull")
+        )
         self.projector_kelvin.valueChanged.connect(
             lambda x: self.profile_changed(x, "projector_kelvin")
+        )
+        self.inversion_gamma.valueChanged.connect(
+            lambda x: self.profile_changed(x, "inversion_gamma")
+        )
+        self.idealized_curve.stateChanged.connect(
+            lambda x: self.profile_changed(x, "idealized_curve")
+        )
+        self.white_clip.stateChanged.connect(
+            lambda x: self.profile_changed(x, "white_clip")
+        )
+        self.white_balance.stateChanged.connect(
+            lambda x: self.profile_changed(x, "white_balance")
         )
         self.exp_comp.valueChanged.connect(
             lambda x: self.setting_changed(x, "exp_comp")
         )
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
         self.exp_wb.valueChanged.connect(
-            lambda x: self.setting_changed(x, "exposure_kelvin")
+            lambda x: self.setting_changed(x, "exp_kelvin")
         )
         self.tint.valueChanged.connect(lambda x: self.setting_changed(x, "tint"))
         self.red_light.valueChanged.connect(
@@ -1423,9 +1492,6 @@ Affects only colors.""",
         )
         self.softproof_perceptual_intent.triggered.connect(
             lambda x: self.set_softproof_intent("perceptual")
-        )
-        self.white_comp.stateChanged.connect(
-            lambda x: self.profile_changed(x, "white_comp")
         )
 
         self.setCentralWidget(page_splitter)
@@ -1615,9 +1681,9 @@ Affects only colors.""",
             self.profile_selector.addItem(text)
             self.profile_selector.setCurrentText(text)
 
-    def format_changed(self, format):
-        if format != "Custom" and not self.loading:
-            width, height = data.FORMATS[format]
+    def format_changed(self, film_format: str):
+        if film_format != "Custom" and not self.loading:
+            width, height = data.FORMATS[film_format]
             self.frame_width.setText(str(width))
             self.frame_height.setText(str(height))
 
@@ -1668,8 +1734,8 @@ Affects only colors.""",
             self.image_params[src_short]["profile"] = (
                 self.profile_selector.currentText()
             )
-        if "exposure_kelvin" not in self.image_params[src_short]:
-            self.image_params[src_short]["exposure_kelvin"] = self.exp_wb.getValue()
+        if "exp_kelvin" not in self.image_params[src_short]:
+            self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
         self.load_image_params(src_short)
         if self.active:
             self.update_preview(src)
@@ -1684,7 +1750,6 @@ Affects only colors.""",
 
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
-        image = image.astype(xp.float32) / 65535
         return image
 
     def resizeEvent(self, event):
@@ -1760,12 +1825,10 @@ Affects only colors.""",
                     self.image_params[src_short]["profile"] = (
                         self.profile_selector.currentText()
                     )
-                if "exposure_kelvin" not in self.image_params[src_short]:
-                    self.image_params[src_short]["exposure_kelvin"] = (
-                        self.exp_wb.getValue()
-                    )
+                if "exp_kelvin" not in self.image_params[src_short]:
+                    self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
             self.image_params[src_short][key] = value
-        if key == "exposure_kelvin":
+        if key == "exp_kelvin":
             self.update_wb_mode(value)
         self.parameter_changed()
 
@@ -1806,10 +1869,10 @@ Affects only colors.""",
             self.flip = image_params["flip"]
 
         set_safely(self.rotation, "setValue", "rotation")
-        set_safely(self.exp_wb, "setValue", "exposure_kelvin")
+        set_safely(self.exp_wb, "setValue", "exp_kelvin")
         set_safely(self.tint, "setValue", "tint")
 
-        set_safely(self, "update_wb_mode", "exposure_kelvin")
+        set_safely(self, "update_wb_mode", "exp_kelvin")
 
         set_safely(self.lens_correction, "setChecked", "lens_correction")
         set_safely(self.canvas_mode, "setCurrentText", "canvas_mode")
@@ -1858,8 +1921,12 @@ Affects only colors.""",
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.shadow_comp.setValue(profile_params["shadow_comp"])
-        self.white_comp.setChecked(profile_params["white_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
+        self.inversion_gamma.setValue(profile_params["inversion_gamma"])
+        self.idealized_curve.setChecked(profile_params["idealized_curve"])
+        self.white_clip.setChecked(profile_params["white_clip"])
+        self.white_balance.setChecked(profile_params["white_balance"])
+        self.push_pull.setValue(profile_params["push_pull"])
 
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
@@ -1933,6 +2000,8 @@ Affects only colors.""",
             "print_film" in processing_args
             and processing_args["print_film"] is not None
         ):
+            if processing_args["print_film"] == "Inversion":
+                processing_args["inversion"] = True
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
@@ -1959,8 +2028,12 @@ Affects only colors.""",
             processing_args["halation"] = False
             processing_args["chroma_nr"] = 0
 
-        image = process_image(image, metadata=load_metadata(src), **processing_args)
-
+        image = process_image(
+            image,
+            metadata=load_metadata(src),
+            icc_transform=self.icc_transform,
+            **processing_args,
+        )
         height, width, _ = image.shape
         histogram = generate_histogram(image, height=80)
         histogram = QPixmap.fromImage(
@@ -1973,11 +2046,6 @@ Affects only colors.""",
             )
         )
         self.histogram.setPixmap(histogram)
-
-        if self.icc_transform is not None:
-            image = Image.fromarray(image)
-            image = ImageCms.applyTransform(image, self.icc_transform)
-            image = np.array(image, np.uint8)
 
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
@@ -2040,13 +2108,11 @@ Affects only colors.""",
                     self.cameras[processing_args["cam"]],
                     self.lenses[processing_args["lens"]],
                 )
-        image = image.astype(xp.float32) / 65535
+
         processing_args["chroma_nr"] *= 2
         image = process_image(
             image,
-            metadata=load_metadata(src),
-            fast_mode=False,
-            lut_size=67,
+            lut_size=65,
             **processing_args,
         )
         path = "/".join(filename.split("/")[:-1])
@@ -2095,9 +2161,6 @@ Affects only colors.""",
 
     def save_multiple_process(self, folder, filenames, **kwargs):
         self.active = False
-        if CUDA_AVAILABLE:
-            xp.get_default_memory_pool().free_all_blocks()
-            xp.get_default_pinned_memory_pool().free_all_blocks()
         self.task_count = len(filenames)
         self.progress_dialog = QProgressDialog(
             "Starting export...", "Cancel", 0, self.task_count, parent=self
@@ -2141,9 +2204,6 @@ Affects only colors.""",
     def tasks_finished(self):
         self.active = True
         self.progress_dialog.close()
-        if CUDA_AVAILABLE:
-            xp.get_default_memory_pool().free_all_blocks()
-            xp.get_default_pinned_memory_pool().free_all_blocks()
         if self.image_bar.current_image() is not None:
             self.load_image(self.image_bar.current_image())
 
