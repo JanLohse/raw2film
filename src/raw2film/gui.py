@@ -2112,7 +2112,7 @@ class MainWindow(QMainWindow):
         processing_args["chroma_nr"] *= 2
         image = process_image(
             image,
-            lut_size=67,
+            lut_size=65,
             **processing_args,
         )
         path = "/".join(filename.split("/")[:-1])

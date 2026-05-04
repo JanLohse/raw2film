@@ -14,7 +14,6 @@ from spectral_film_lut.color_space import GAMMA_KEYS
 from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import (
-    apply_lut_tetrahedral_int,
     create_lut,
     film_conversion,
 )
@@ -22,7 +21,11 @@ from spectral_film_lut.utils import (
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
-from raw2film.utils import load_metadata, resolution_scaling
+from raw2film.utils import (
+    apply_lut_tetrahedral_float,
+    load_metadata,
+    resolution_scaling,
+)
 
 CANVAS_MODES = Literal[
     "No",
@@ -127,6 +130,7 @@ def process_image(
     white_balance: bool = False,
     white_clip: bool = False,
     icc_transform=None,
+    lut_size: int = 33,
     **_,
 ):
     """
@@ -134,6 +138,7 @@ def process_image(
     referred image with film emulation applied.
     """
     start = time.time()
+    assert ((lut_size - 1) & (lut_size - 2)) == 0
 
     image = crop_rotate_zoom(
         image, frame_width, frame_height, rotation, zoom, rotate_times, flip
@@ -194,11 +199,7 @@ def process_image(
     ):
         image = effects.burn(image, negative_film, highlight_burn, burn_scale)
 
-    start_2 = time.time()
-    image = np.clip(image / 4.0, 0, 1)
-    image *= 2**16 - 1
-    image = image.astype(np.uint16)
-    print(f"np.uint16: {time.time() - start_2:.4f}s")
+    image /= 4.0
 
     lut = create_lut_cached(
         negative_film,
@@ -224,21 +225,17 @@ def process_image(
     if image.shape[-1] == 1:
         image = image.repeat(3, -1)
 
+    lut = (lut * (2**8 - 1)).astype(np.uint8)
     if icc_transform is not None:
-        lut = (lut * (2**8 - 1)).astype(np.uint8)
         lut_shape = lut.shape
         lut = lut.reshape(lut_shape[0], -1, lut_shape[-1])
         lut = Image.fromarray(lut)
         ImageCms.applyTransform(lut, icc_transform, inPlace=True)
         lut = np.array(lut, np.uint8)
         lut = lut.reshape(lut_shape)
-    else:
-        lut = (lut * (2**16 - 1)).astype(np.uint16)
 
     start_2 = time.time()
-    image = apply_lut_tetrahedral_int(
-        image, lut, lut_depth=16 if icc_transform is None else 8
-    )
+    image = apply_lut_tetrahedral_float(image, lut)
     print(f"apply_lut_tetrahedral_int: {time.time() - start_2:.4f}s")
 
     if canvas_mode != "No":
