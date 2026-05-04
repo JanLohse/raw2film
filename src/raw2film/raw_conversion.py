@@ -2,13 +2,16 @@
 The main processing pipeline for RAW images.
 """
 
+import time
 from functools import cache
 from typing import Literal
 
 import cv2 as cv
 import numpy as np
 import rawpy
+from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
+from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import (
     apply_lut_tetrahedral_int,
@@ -19,6 +22,7 @@ from spectral_film_lut.utils import (
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
+from raw2film.utils import load_metadata, resolution_scaling
 
 CANVAS_MODES = Literal[
     "No",
@@ -48,6 +52,9 @@ def raw_to_linear(src, half_size=True):
             demosaic_algorithm=rawpy.DemosaicAlgorithm(2),
             four_color_rgb=False,
         )
+    rgb = rgb.astype(DEFAULT_DTYPE) / 65535.0
+
+    rgb *= 2 ** calc_exposure(rgb, metadata=load_metadata(src))
 
     return rgb
 
@@ -89,7 +96,6 @@ def process_image(
     sharpness: bool = True,
     grain: int = 2,
     resolution: None | tuple[int, int] = None,
-    metadata: dict | None = None,
     canvas_mode: CANVAS_MODES = "No",
     canvas_scale: float = 1.0,
     canvas_ratio: float = 1.0,
@@ -110,7 +116,6 @@ def process_image(
     projector_kelvin: int = 6500,
     halation_intensity: float = 1.0,
     shadow_comp: float = 0.0,
-    white_comp: bool = True,
     sat_adjust: float = 1.0,
     gamma_func: GAMMA_KEYS = "sRGB",
     exp_kelvin: int = 6500,
@@ -118,13 +123,17 @@ def process_image(
     inversion_gamma: float = 4.0,
     idealized_curve: bool = False,
     inversion: bool = False,
+    push_pull: float = 0.0,
+    white_balance: bool = False,
+    white_clip: bool = False,
+    icc_transform=None,
     **_,
 ):
     """
     The full image processing pipeline that converts from linear XYZ to a display
     referred image with film emulation applied.
     """
-    exp_comp += calc_exposure(image, metadata=metadata)
+    start = time.time()
 
     image = crop_rotate_zoom(
         image, frame_width, frame_height, rotation, zoom, rotate_times, flip
@@ -134,22 +143,7 @@ def process_image(
         image = chroma_nr_filter(image, chroma_nr)
 
     if resolution is not None:
-        h, w = image.shape[:2]
-        h_factor = resolution[0] / h
-        w_factor = resolution[1] / w
-        scaling_factor = min(h_factor, w_factor)
-        if scaling_factor < 1:
-            image = cv.resize(
-                image,
-                (int(w * scaling_factor), int(h * scaling_factor)),
-                interpolation=cv.INTER_AREA,
-            )
-        elif scaling_factor > 1:
-            image = cv.resize(
-                image,
-                (int(w * scaling_factor), int(h * scaling_factor)),
-                interpolation=cv.INTER_LANCZOS4,
-            )
+        image = resolution_scaling(image, resolution)
 
     scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 
@@ -166,17 +160,20 @@ def process_image(
     else:
         halation_func = None
 
+    start_2 = time.time()
     image = film_conversion(
         image,
         negative_film,
         mode="negative",
-        adx_coding=True,  # TODO: remove unnecessary ADX endcoding
+        adx_coding=False,
         input_colorspace=None,
         exp_kelvin=exp_kelvin,
         tint=tint,
         exp_comp=exp_comp,
         halation_func=halation_func,
+        push_pull=push_pull,
     )
+    print(f"film_conversion: {time.time() - start_2:.4f}s")
 
     if sharpness and negative_film.mtf is not None:
         image = effects.film_sharpness(image, negative_film, scale)
@@ -189,7 +186,7 @@ def process_image(
             grain_size_mm=grain_size / 1000,
             grain_sigma=grain_sigma,
             bw_grain=grain == 1,
-            adx=True,  # TODO: remove unnecessary ADX endcoding
+            adx=False,
         )
 
     if highlight_burn and (
@@ -197,38 +194,54 @@ def process_image(
     ):
         image = effects.burn(image, negative_film, highlight_burn, burn_scale)
 
-    image = np.clip(image * 2, 0, 1)
+    start_2 = time.time()
+    image = np.clip(image / 4.0, 0, 1)
     image *= 2**16 - 1
     image = image.astype(np.uint16)
+    print(f"np.uint16: {time.time() - start_2:.4f}s")
 
     lut = create_lut_cached(
         negative_film,
         print_film,
         mode="print",
         input_colorspace=None,
-        adx_coding=True,  # TODO: remove unnecessary ADX endcoding
+        adx_coding=False,
         cube=False,
-        adx_scaling=2,
         red_light=red_light,
         green_light=green_light,
         blue_light=blue_light,
         projector_kelvin=projector_kelvin,
         shadow_comp=shadow_comp,
-        white_comp=white_comp,
         sat_adjust=sat_adjust,
         gamma_func=gamma_func,
         inversion_gamma=inversion_gamma,
         idealized_curve=idealized_curve,
         inversion=inversion,
+        white_balance=white_balance,
+        white_clip=white_clip,
+        linear_scaling=4.0,
     )
-    lut = (lut * (2**16 - 1)).astype(np.uint16)
     if image.shape[-1] == 1:
         image = image.repeat(3, -1)
 
-    image = apply_lut_tetrahedral_int(image, lut)
+    if icc_transform is not None:
+        lut = (lut * (2**8 - 1)).astype(np.uint8)
+        lut_shape = lut.shape
+        lut = lut.reshape(lut_shape[0], -1, lut_shape[-1])
+        lut = Image.fromarray(lut)
+        ImageCms.applyTransform(lut, icc_transform, inPlace=True)
+        lut = np.array(lut, np.uint8)
+        lut = lut.reshape(lut_shape)
+    else:
+        lut = (lut * (2**16 - 1)).astype(np.uint16)
+
+    start_2 = time.time()
+    image = apply_lut_tetrahedral_int(
+        image, lut, lut_depth=16 if icc_transform is None else 8
+    )
+    print(f"apply_lut_tetrahedral_int: {time.time() - start_2:.4f}s")
 
     if canvas_mode != "No":
-        # TODO: fix canvas preview
         if "white" in canvas_mode:
             canvas_color = (255, 255, 255)
         elif "black" in canvas_mode:
@@ -242,6 +255,8 @@ def process_image(
             image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
         elif "Uniform" in canvas_mode:
             image = add_canvas_uniform(image, canvas_scale, canvas_color)
+        if resolution is not None:
+            image = resolution_scaling(image, resolution)
 
     if double_upscale:
         image = cv.resize(
@@ -252,4 +267,5 @@ def process_image(
             interpolation=cv.INTER_CUBIC,
         )
 
+    print(f"total: {time.time() - start:.4f}s\n")
     return image

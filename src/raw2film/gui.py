@@ -17,7 +17,7 @@ import imageio
 import lensfunpy
 import numpy as np
 import PIL.ImageCms
-from PIL import Image, ImageCms
+from PIL import ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -65,7 +65,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from spectral_film_lut import BASE_DIR
-from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import (
@@ -520,10 +519,12 @@ class MainWindow(QMainWindow):
             "idealized_curve": False,
             "halation_intensity": 1,
             "shadow_comp": 0,
-            "white_comp": True,
+            "white_clip": False,
+            "white_balance": False,
             "sat_adjust": 1,
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
+            "push_pull": 0.0,
         }
         self.dflt_img_params = {
             "exp_comp": 0,
@@ -1055,6 +1056,27 @@ class MainWindow(QMainWindow):
             tool_tip="Which print material to emulate. Affects only colors.",
         )
 
+        self.push_pull = Slider()
+        """
+        How much to push or pull the film, adjusting contrast. Works linearly scaling
+        the characteristic curve of the film. Not based on measured data, but a rough
+        approximation, useful for controlling contrast.
+
+        Not recommended for use with slide film.
+        """
+        self.push_pull.setMinMaxTicks(-1.5, 1.5, 1, 20)
+        profile_settings_group.add_option(
+            self.push_pull,
+            "Push/pull",
+            self.dflt_prf_params["push_pull"],
+            self.push_pull.setValue,
+            tool_tip="How much to push or pull the film, adjusting contrast.\n"
+            "Works linearly scaling the characteristic curve of the film.\n"
+            "Not based on measured data, but a rough approximation useful\n"
+            "for controlling contrast.\n"
+            "Not recommended for use with slide film.",
+        )
+
         self.projector_kelvin = SliderLog()
         """Under what light temperature to view the print or slide."""
         self.projector_kelvin.setMinMaxSteps(
@@ -1085,8 +1107,42 @@ class MainWindow(QMainWindow):
             "selected or when 'idealized curve' is checked.",
         )
 
-        # TODO: add color masking, idealized curve, white adjust, white balance
-        #   maybe split profile settings into two panels?
+        self.idealized_curve = QCheckBox("Pure curve")
+        """
+        Replace the characteristic curve of the print film with an ideal gamma curve.
+        Preserves the sensitivity and dye densities of the print film.
+        When activated, the gamma is controlled by the inversion gamma.
+        """
+        self.idealized_curve.setToolTip(
+            "Replace the characteristic curve of the print film with an ideal gamma\n"
+            "curve. Preserves the sensitivity and dye densities of the print film.\n"
+            "When activated, the gamma is controlled by the inversion gamma."
+        )
+
+        self.white_clip = QCheckBox("Clip")
+        """
+        When viewing print film brightness will be increased to clip at exactly 1.0.
+        When viewing slide film white balancing is applied, so that a gray patch will
+        actually produce the color temperature specified by the  projector kelvin.
+        """
+        self.white_clip.setToolTip(
+            "When viewing print film brightness will be increased to clip at\n"
+            "exactly 1.0. When viewing slide film white balancing is\n"
+            "applied, so that a gray patch will actually produce the color\n"
+            "temperature specified by the  projector kelvin."
+        )
+
+        self.white_balance = QCheckBox("WB")
+        """Whether to white balance slide film."""
+        self.white_balance.setToolTip("Whether to white balance slide film.")
+
+        checker_widget = QWidget()
+        checker_widget_layout = QHBoxLayout(checker_widget)
+        checker_widget.setLayout(QHBoxLayout())
+        checker_widget_layout.addWidget(self.idealized_curve)
+        checker_widget_layout.addWidget(self.white_clip)
+        checker_widget_layout.addWidget(self.white_balance)
+        profile_settings_group.add_option(checker_widget)
 
         self.saturation_slider = Slider()
         self.saturation_slider.setMinMaxTicks(
@@ -1172,23 +1228,6 @@ class MainWindow(QMainWindow):
             tool_tip="Specify black offset in percent. If positive a uniform offset\n"
             "is applied. Can be used to simulate viewing flare. Negative values use a\n"
             "curve to leave exposure unchanged.",
-        )
-
-        self.white_comp = QCheckBox()
-        """
-        When viewing print film brightness will be increased to clip at exactly 1.0.
-        When viewing slide film white balancing is applied, so that a gray patch will
-        actually produce the color temperature specified by the  projector kelvin.
-        """
-        profile_settings_group.add_option(
-            self.white_comp,
-            "White adjust",
-            self.dflt_prf_params["white_comp"],
-            self.white_comp.setChecked,
-            tool_tip="When viewing print film brightness will be increased to clip at\n"
-            "exactly 1.0. When viewing slide film white balancing is applied, so that\n"
-            "a gray patch will actually produce the color temperature specified by\n"
-            "the  projector kelvin.",
         )
 
         QShortcut(QKeySequence("Up"), self).activated.connect(self.exp_comp.increase)
@@ -1285,11 +1324,23 @@ class MainWindow(QMainWindow):
         )
         self.image_selector.triggered.connect(self.load_images)
         self.folder_selector.triggered.connect(self.load_folder)
+        self.push_pull.valueChanged.connect(
+            lambda x: self.profile_changed(x, "push_pull")
+        )
         self.projector_kelvin.valueChanged.connect(
             lambda x: self.profile_changed(x, "projector_kelvin")
         )
         self.inversion_gamma.valueChanged.connect(
             lambda x: self.profile_changed(x, "inversion_gamma")
+        )
+        self.idealized_curve.stateChanged.connect(
+            lambda x: self.profile_changed(x, "idealized_curve")
+        )
+        self.white_clip.stateChanged.connect(
+            lambda x: self.profile_changed(x, "white_clip")
+        )
+        self.white_balance.stateChanged.connect(
+            lambda x: self.profile_changed(x, "white_balance")
         )
         self.exp_comp.valueChanged.connect(
             lambda x: self.setting_changed(x, "exp_comp")
@@ -1441,9 +1492,6 @@ class MainWindow(QMainWindow):
         )
         self.softproof_perceptual_intent.triggered.connect(
             lambda x: self.set_softproof_intent("perceptual")
-        )
-        self.white_comp.stateChanged.connect(
-            lambda x: self.profile_changed(x, "white_comp")
         )
 
         self.setCentralWidget(page_splitter)
@@ -1702,7 +1750,6 @@ class MainWindow(QMainWindow):
 
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
-        image = image.astype(DEFAULT_DTYPE) / 65535
         return image
 
     def resizeEvent(self, event):
@@ -1874,8 +1921,12 @@ class MainWindow(QMainWindow):
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.shadow_comp.setValue(profile_params["shadow_comp"])
-        self.white_comp.setChecked(profile_params["white_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
+        self.inversion_gamma.setValue(profile_params["inversion_gamma"])
+        self.idealized_curve.setChecked(profile_params["idealized_curve"])
+        self.white_clip.setChecked(profile_params["white_clip"])
+        self.white_balance.setChecked(profile_params["white_balance"])
+        self.push_pull.setValue(profile_params["push_pull"])
 
         if "projector_kelvin" in profile_params:
             self.projector_kelvin.setValue(profile_params["projector_kelvin"])
@@ -1977,8 +2028,12 @@ class MainWindow(QMainWindow):
             processing_args["halation"] = False
             processing_args["chroma_nr"] = 0
 
-        image = process_image(image, metadata=load_metadata(src), **processing_args)
-
+        image = process_image(
+            image,
+            metadata=load_metadata(src),
+            icc_transform=self.icc_transform,
+            **processing_args,
+        )
         height, width, _ = image.shape
         histogram = generate_histogram(image, height=80)
         histogram = QPixmap.fromImage(
@@ -1991,11 +2046,6 @@ class MainWindow(QMainWindow):
             )
         )
         self.histogram.setPixmap(histogram)
-
-        if self.icc_transform is not None:
-            image = Image.fromarray(image)
-            image = ImageCms.applyTransform(image, self.icc_transform)
-            image = np.array(image, np.uint8)
 
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)
@@ -2058,12 +2108,10 @@ class MainWindow(QMainWindow):
                     self.cameras[processing_args["cam"]],
                     self.lenses[processing_args["lens"]],
                 )
-        image = image.astype(DEFAULT_DTYPE) / 65535
+
         processing_args["chroma_nr"] *= 2
         image = process_image(
             image,
-            metadata=load_metadata(src),
-            fast_mode=False,
             lut_size=67,
             **processing_args,
         )

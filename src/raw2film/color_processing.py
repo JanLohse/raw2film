@@ -72,7 +72,7 @@ def calc_exposure(
     rgb: np.ndarray, ref_exposure: float = 0.18, metadata: dict | None = None
 ):
     """Calculates exposure value of the rgb image."""
-    lum_mat = rgb[:, :, 1]
+    lum_mat = rgb[::2, ::2, 1]
 
     factor = 3
     if metadata is not None:

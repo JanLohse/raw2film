@@ -4,6 +4,7 @@ Additional utility functions.
 
 from functools import cache
 
+import cv2 as cv
 import exiftool
 import numpy as np
 from numba import njit
@@ -178,3 +179,23 @@ def generate_histogram(image, black_value=39, white_value=222, height=100):
             hist_img[y, x, 2] = white_value
 
     return hist_img
+
+
+def resolution_scaling(image: np.ndarray, resolution) -> np.ndarray:
+    h, w = image.shape[:2]
+    h_factor = resolution[0] / h
+    w_factor = resolution[1] / w
+    scaling_factor = min(h_factor, w_factor)
+    if scaling_factor < 1:
+        image = cv.resize(
+            image,
+            (int(w * scaling_factor), int(h * scaling_factor)),
+            interpolation=cv.INTER_AREA,
+        )
+    elif scaling_factor > 1:
+        image = cv.resize(
+            image,
+            (int(w * scaling_factor), int(h * scaling_factor)),
+            interpolation=cv.INTER_LANCZOS4,
+        )
+    return image

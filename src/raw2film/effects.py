@@ -3,6 +3,7 @@ Image processing effects.
 """
 
 import math
+from collections.abc import Callable
 from functools import lru_cache
 
 import cv2 as cv
@@ -37,6 +38,7 @@ def lens_correction(
     undistorted_cords = mod.apply_geometry_distortion()
     rgb = np.clip(lensfunpy_util.remap(rgb, undistorted_cords), a_min=0, a_max=None)
     mod.apply_color_modification(rgb)
+
     return rgb
 
 
@@ -206,7 +208,9 @@ def apply_grain(
 
 
 @njit
-def apply_halation_inplace(rgb, blured, color_factors):
+def apply_halation_inplace(
+    rgb: np.ndarray, blured: np.ndarray, color_factors: np.ndarray
+):
     """Adds halation inplace."""
     for i in range(rgb.shape[0]):
         for j in range(rgb.shape[1]):
@@ -216,7 +220,7 @@ def apply_halation_inplace(rgb, blured, color_factors):
 
 
 @njit
-def apply_halation_bw(rgb, blured, intensity):
+def apply_halation_bw(rgb: np.ndarray, blured: np.ndarray, intensity: float):
     """Adds halation to a black and white image."""
     for i in range(rgb.shape[0]):
         for j in range(rgb.shape[1]):
@@ -290,7 +294,7 @@ def add_canvas_uniform(
     return canvas.astype(dtype="uint8")
 
 
-def down_up_blur(image, scale=50, func=None):
+def down_up_blur(image: np.ndarray, scale: int = 50, func: Callable | None = None):
     """
     Blur by downsampling and then upsampling. Very fast on CPU compared to accurate
     blur filters.
@@ -322,7 +326,12 @@ def down_up_blur(image, scale=50, func=None):
     return np.stack(blurred_channels, axis=-1)
 
 
-def burn(image, negative_film, highlight_burn, burn_scale):
+def burn(
+    image: np.ndarray,
+    negative_film: FilmSpectral,
+    highlight_burn: float,
+    burn_scale: float,
+):
     """
     Simulates highlight burning, which is a darkroom printing technique to reduce
     the contrast and brightness of highlights. Similar to modern local tone-mapping
@@ -364,7 +373,9 @@ def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
 
 
 @njit(parallel=True)
-def blur_horizontal_masked(image, kernel, blur_mask):
+def blur_horizontal_masked(
+    image: np.ndarray, kernel: np.ndarray, blur_mask: np.ndarray
+):
     """Horizontal blur with a mask."""
     h, w, c = image.shape
     k = kernel.shape[0] // 2
@@ -387,7 +398,7 @@ def blur_horizontal_masked(image, kernel, blur_mask):
 
 
 @njit(parallel=True)
-def blur_vertical_masked(image, kernel, blur_mask):
+def blur_vertical_masked(image: np.ndarray, kernel: np.ndarray, blur_mask: np.ndarray):
     """Vertical blur with a mask."""
     h, w, c = image.shape
     k = kernel.shape[0] // 2
@@ -421,7 +432,7 @@ def gaussian_blur_separable_masked(image, kernel, blur_channels):
 
 
 @njit(parallel=True)
-def XYZ_to_xyY(image, eps=1e-8):
+def XYZ_to_xyY(image: np.ndarray, eps: float = 1e-8):
     """Converts from CIE XYZ to xyY."""
     h, w, _ = image.shape
     out = np.empty_like(image)
@@ -446,7 +457,7 @@ def XYZ_to_xyY(image, eps=1e-8):
 
 
 @njit(parallel=True)
-def xyY_to_XYZ(image, eps=1e-8):
+def xyY_to_XYZ(image: np.ndarray, eps: float = 1e-8):
     """Converts from CIE xyY to XYZ."""
     h, w, _ = image.shape
     out = np.empty_like(image)
