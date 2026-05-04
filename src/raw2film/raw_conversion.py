@@ -2,7 +2,6 @@
 The main processing pipeline for RAW images.
 """
 
-import time
 from functools import cache
 from typing import Literal
 
@@ -137,7 +136,6 @@ def process_image(
     The full image processing pipeline that converts from linear XYZ to a display
     referred image with film emulation applied.
     """
-    start = time.time()
     assert ((lut_size - 1) & (lut_size - 2)) == 0
 
     image = crop_rotate_zoom(
@@ -165,7 +163,6 @@ def process_image(
     else:
         halation_func = None
 
-    start_2 = time.time()
     image = film_conversion(
         image,
         negative_film,
@@ -178,7 +175,6 @@ def process_image(
         halation_func=halation_func,
         push_pull=push_pull,
     )
-    print(f"film_conversion: {time.time() - start_2:.4f}s")
 
     if sharpness and negative_film.mtf is not None:
         image = effects.film_sharpness(image, negative_film, scale)
@@ -234,9 +230,7 @@ def process_image(
         lut = np.array(lut, np.uint8)
         lut = lut.reshape(lut_shape)
 
-    start_2 = time.time()
     image = apply_lut_tetrahedral_float(image, lut)
-    print(f"apply_lut_tetrahedral_int: {time.time() - start_2:.4f}s")
 
     if canvas_mode != "No":
         if "white" in canvas_mode:
@@ -264,5 +258,4 @@ def process_image(
             interpolation=cv.INTER_CUBIC,
         )
 
-    print(f"total: {time.time() - start:.4f}s\n")
     return image
