@@ -24,7 +24,7 @@ dependencies = [
     "pyexiftool>=0.5.6",
     "rawpy>=0.26.1",
     "scipy>=1.17.1",
-    "spectral-film-lut @ git+https://github.com/JanLohse/spectral_film_lut@2.5D-LUT",
+    "spectral-film-lut @ git+https://github.com/JanLohse/spectral_film_lut",
 ]
 
 [dependency-groups]
