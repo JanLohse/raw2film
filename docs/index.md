@@ -7,6 +7,7 @@ tags:
 
 # Raw2Film
 
+[![PyPI version](https://img.shields.io/pypi/v/raw2film)](https://pypi.org/project/raw2film/)
 [![GitHub](https://img.shields.io/badge/GitHub-repo-blue?logo=github)](https://github.com/JanLohse/raw2film)
 [![CI](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml/badge.svg)](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml)
 [![Version](https://img.shields.io/github/v/release/JanLohse/raw2film)](https://github.com/JanLohse/raw2film/releases)

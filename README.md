@@ -1,5 +1,6 @@
 # Raw2Film
 
+[![PyPI version](https://img.shields.io/pypi/v/raw2film)](https://pypi.org/project/raw2film/)
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://janlohse.github.io/raw2film/)
 [![CI](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml/badge.svg)](https://github.com/JanLohse/raw2film/actions/workflows/python-app.yml)
 [![Version](https://img.shields.io/github/v/release/JanLohse/raw2film)](https://github.com/JanLohse/raw2film/releases)
@@ -66,13 +67,6 @@ Then just run with:
 ```bash
 spectral_film_lut
 ```
-
-### GPU acceleration
-
-To make use of your GPUs CUDA cores you need to install the python package CuPy and run
-the program from the python package.
-CUDA is used to display the preview, which results in a more responsive UI.
-It can result in slower exports though, as there might be a lack of VRAM.
 
 ## Usage
 

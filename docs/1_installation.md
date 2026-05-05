@@ -46,7 +46,7 @@ Install the application using your preferred Python package manager.
     Installs the package into the current Python environment:
 
     ```bash
-    pip install git+https://github.com/JanLohse/raw2film
+    pip install raw2film
     ```
 
 === "pipx"
@@ -54,22 +54,20 @@ Install the application using your preferred Python package manager.
     environment:
 
     ```bash
-    pipx install git+https://github.com/JanLohse/raw2film
+    pipx install raw2film
     ```
 
 === "uv"
     Install the application as an isolated tool:
 
     ```bash
-    uv tool install git+https://github.com/JanLohse/raw2film
+    uv tool install raw2film
     ```
 
     Alternatively, run directly from a cloned repository without installing:
 
     ```bash
-    git clone https://github.com/JanLohse/raw2film
-    cd raw2film
-    uv run raw2film
+    uvx raw2film
     ```
 
 After installation, run the application:
@@ -78,14 +76,14 @@ After installation, run the application:
 raw2film
 ```
 
-## CUDA support
+## Legacy CUDA support
 
-For hardware acceleration we make use of CuPy. It might be removed in future releases
-though.
-There is not a relevant speed-up for generating LUTs, that justifies the added
-complexity in code.
+CUDA support has been removed in the current versions. There are plans to add more
+universal GPU support, not reliant on the proprietary CUDA drivers. Recently there
+have also been improvements added that make the live preview much faster than before
+on CPU.
 
-Once CUDA support is removed, a legacy CUDA branch will be added. To use CUDA pull that
-branch
-and install using pip, and additionally install the https://cupy.dev/ package.
-To disable CUDA on an installation with CUDA capabilities, use the argument `--no-cuda`.
+A legacy CUDA branch has been added. Importantly it is also far out of date in many
+regards. When using it additionally installing [CuPy package](https://cupy.dev) is
+necessary to activate the GPU functionality. To disable CUDA on an installation with
+CUDA capabilities, use the argument `--no-cuda`.
