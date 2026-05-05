@@ -8,7 +8,7 @@ from spectral_film_lut.splash_screen import launch_splash_screen
 from raw2film import R2F_BASE_DIR, __version__
 
 
-def run():
+def run(exit_immediately: bool = False):
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
             "jan_lohse.raw2film"
@@ -24,7 +24,7 @@ def run():
 
     from raw2film.gui import MainWindow
 
-    load_ui(MainWindow, splash_screen, app, 0.16)
+    load_ui(MainWindow, splash_screen, app, exit_immediately=exit_immediately)
 
 
 if __name__ == "__main__":
