@@ -49,8 +49,8 @@ class RoundedLabel(QLabel):
         painter.setClipPath(path)
 
         # draw the pixmap (if present)
-        if self.pixmap() is not None:
-            pix = self.pixmap()
+        pix = self.pixmap()
+        if pix is not None and not pix.isNull():
             scaled = pix.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,

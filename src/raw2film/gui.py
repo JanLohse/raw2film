@@ -1138,7 +1138,6 @@ class MainWindow(QMainWindow):
 
         checker_widget = QWidget()
         checker_widget_layout = QHBoxLayout(checker_widget)
-        checker_widget.setLayout(QHBoxLayout())
         checker_widget_layout.addWidget(self.idealized_curve)
         checker_widget_layout.addWidget(self.white_clip)
         checker_widget_layout.addWidget(self.white_balance)

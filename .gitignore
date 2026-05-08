@@ -165,6 +165,7 @@ cython_debug/
 *.JPEG
 *.RW2
 *.DNG
+*.dng
 *.CRW
 *.CR2
 *.CR3
