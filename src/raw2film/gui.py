@@ -1218,15 +1218,20 @@ class MainWindow(QMainWindow):
         )
 
         self.shadow_comp = Slider()
-        self.shadow_comp.setMinMaxTicks(-2, 2, 1, 50)
+        """
+        Specify black compensation. For positive values blacks are lifted with a film
+        like curves. For negative values shadows are darkened without crushing any
+        details.
+        """
+        self.shadow_comp.setMinMaxTicks(-1, 1, 1, 50)
         profile_settings_group.add_option(
             self.shadow_comp,
             "Shadow comp.",
             self.dflt_prf_params["shadow_comp"],
             self.shadow_comp.setValue,
-            tool_tip="Specify black offset in percent. If positive a uniform offset\n"
-            "is applied. Can be used to simulate viewing flare. Negative values use a\n"
-            "curve to leave exposure unchanged.",
+            tool_tip="Specify black compensation. For positive values blacks are\n"
+            "lifted with a film like curves. For negative values shadows are\n"
+            "darkened without crushing any details.",
         )
 
         QShortcut(QKeySequence("Up"), self).activated.connect(self.exp_comp.increase)
