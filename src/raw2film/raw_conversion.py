@@ -2,6 +2,7 @@
 The main processing pipeline for RAW images.
 """
 
+import time
 from functools import cache
 from typing import Literal
 
@@ -15,8 +16,12 @@ from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import (
     create_lut,
     film_conversion,
+    log_clip,
+    multi_channel_interp,
 )
+from spectral_film_lut.xy_lut import apply_2d_lut
 
+from gpu import apply_lut_gpu
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
@@ -86,7 +91,7 @@ def create_lut_cached(*args, **kwargs):
     return create_lut(*args, **kwargs)
 
 
-def process_image(
+def process_image_old(
     image: np.ndarray,
     negative_film: FilmSpectral,
     grain_size: float,
@@ -230,7 +235,9 @@ def process_image(
         lut = np.array(lut, np.uint8)
         lut = lut.reshape(lut_shape)
 
-    image = apply_lut_tetrahedral_float(image, lut)
+    start = time.time()
+    apply_lut_tetrahedral_float(image, lut)
+    print(f"CPU  {time.time() - start:.4f}s")
 
     if canvas_mode != "No":
         if "white" in canvas_mode:
@@ -257,5 +264,88 @@ def process_image(
             fy=2,
             interpolation=cv.INTER_CUBIC,
         )
+
+    return image
+
+
+def process_image(
+    image: np.ndarray,
+    negative_film: FilmSpectral,
+    print_film: FilmSpectral | None = None,
+    exp_comp: float = 0.0,
+    red_light: float = 0.0,
+    green_light: float = 0.0,
+    blue_light: float = 0.0,
+    projector_kelvin: int = 6500,
+    shadow_comp: float = 0.0,
+    sat_adjust: float = 1.0,
+    gamma_func: GAMMA_KEYS = "sRGB",
+    exp_kelvin: int = 6500,
+    tint: float = 0.0,
+    inversion_gamma: float = 4.0,
+    idealized_curve: bool = False,
+    inversion: bool = False,
+    push_pull: float = 0.0,
+    white_balance: bool = False,
+    white_clip: bool = False,
+    icc_transform=None,
+    lut_size: int = 33,
+    **_,
+):
+    """
+    The full image processing pipeline that converts from linear XYZ to a display
+    referred image with film emulation applied.
+    """
+    assert ((lut_size - 1) & (lut_size - 2)) == 0
+
+    image = np.ascontiguousarray(image)
+
+    input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
+
+    image = apply_2d_lut(np.clip(image, 0, None), input_lut)  # gpu
+
+    log_clip(image)  # gpu
+
+    log_exp_vals, density_vals = negative_film.get_density_curve(push_pull=push_pull)
+
+    image = multi_channel_interp(image, log_exp_vals, density_vals)  # gpu
+
+    image /= 4.0  # gpu
+
+    lut = create_lut_cached(
+        negative_film,
+        print_film,
+        mode="print",
+        input_colorspace=None,
+        adx_coding=False,
+        cube=False,
+        red_light=red_light,
+        green_light=green_light,
+        blue_light=blue_light,
+        projector_kelvin=projector_kelvin,
+        shadow_comp=shadow_comp,
+        sat_adjust=sat_adjust,
+        gamma_func=gamma_func,
+        inversion_gamma=inversion_gamma,
+        idealized_curve=idealized_curve,
+        inversion=inversion,
+        white_balance=white_balance,
+        white_clip=white_clip,
+        linear_scaling=4.0,
+    )
+    if image.shape[-1] == 1:
+        image = image.repeat(3, -1)
+
+    lut = (lut * (2**8 - 1)).astype(np.uint8)
+    if icc_transform is not None:
+        lut_shape = lut.shape
+        lut = lut.reshape(lut_shape[0], -1, lut_shape[-1])
+        lut = Image.fromarray(lut)
+        ImageCms.applyTransform(lut, icc_transform, inPlace=True)
+        lut = np.array(lut, np.uint8)
+        lut = lut.reshape(lut_shape)
+
+    image = apply_lut_gpu(image, lut)  # gpu
+    # image = apply_lut_tetrahedral_float(image, lut)
 
     return image

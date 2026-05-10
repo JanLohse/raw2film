@@ -26,6 +26,7 @@ dependencies = [
     "rawpy>=0.26.1",
     "scipy>=1.17.1",
     "spectral-film-lut>=0.4.6",
+    "wgpu>=0.31.0",
 ]
 
 [dependency-groups]
