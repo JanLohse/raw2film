@@ -20,8 +20,14 @@ from spectral_film_lut.utils import (
     multi_channel_interp,
 )
 from spectral_film_lut.xy_lut import apply_2d_lut
+from wgpu import get_default_device
 
-from gpu import apply_lut_gpu
+from gpu import (
+    apply_lut_shader,
+    image_to_gpu,
+    lut_to_gpu,
+    texture_to_numpy,
+)
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
@@ -298,19 +304,11 @@ def process_image(
     """
     assert ((lut_size - 1) & (lut_size - 2)) == 0
 
-    image = np.ascontiguousarray(image)
-
+    # create LUTs
     input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
 
-    image = apply_2d_lut(np.clip(image, 0, None), input_lut)  # gpu
-
-    log_clip(image)  # gpu
-
-    log_exp_vals, density_vals = negative_film.get_density_curve(push_pull=push_pull)
-
-    image = multi_channel_interp(image, log_exp_vals, density_vals)  # gpu
-
-    image /= 4.0  # gpu
+    density_curve = negative_film.get_density_curve(push_pull=push_pull)
+    density_curve[1:] /= 4.0
 
     lut = create_lut_cached(
         negative_film,
@@ -333,9 +331,6 @@ def process_image(
         white_clip=white_clip,
         linear_scaling=4.0,
     )
-    if image.shape[-1] == 1:
-        image = image.repeat(3, -1)
-
     lut = (lut * (2**8 - 1)).astype(np.uint8)
     if icc_transform is not None:
         lut_shape = lut.shape
@@ -345,7 +340,47 @@ def process_image(
         lut = np.array(lut, np.uint8)
         lut = lut.reshape(lut_shape)
 
-    image = apply_lut_gpu(image, lut)  # gpu
-    # image = apply_lut_tetrahedral_float(image, lut)
+    # Process image
+
+    image = np.ascontiguousarray(image)
+
+    image = apply_2d_lut(np.clip(image, 0, None), input_lut)  # gpu
+
+    log_clip(image)  # gpu
+
+    image = multi_channel_interp(image, density_curve)  # gpu
+
+    if image.shape[-1] == 1:
+        image = image.repeat(3, -1)
+
+    # Prepare GPU
+
+    device = get_default_device()
+    h, w, _ = image.shape
+
+    # CPU -> GPU
+
+    image_tex = image_to_gpu(device, image)
+    lut_tex = lut_to_gpu(device, lut)
+
+    # Apply shaders
+
+    out_tex = apply_lut_shader(
+        device=device,
+        image_tex=image_tex,
+        lut_tex=lut_tex,
+        width=w,
+        height=h,
+        lut_size=lut.shape[0],
+    )
+
+    # GPU -> CPU
+
+    image = texture_to_numpy(
+        device=device,
+        texture=out_tex,
+        width=w,
+        height=h,
+    )
 
     return image
