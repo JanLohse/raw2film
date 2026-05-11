@@ -17,16 +17,11 @@ from spectral_film_lut.utils import (
     create_lut,
     film_conversion,
     log_clip,
-    multi_channel_interp,
 )
 from spectral_film_lut.xy_lut import apply_2d_lut
-from wgpu import get_default_device
 
 from gpu import (
-    apply_lut_shader,
-    image_to_gpu,
-    lut_to_gpu,
-    texture_to_numpy,
+    GpuProcessor,
 )
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
@@ -277,6 +272,7 @@ def process_image_old(
 def process_image(
     image: np.ndarray,
     negative_film: FilmSpectral,
+    gpu_processor: GpuProcessor,
     print_film: FilmSpectral | None = None,
     exp_comp: float = 0.0,
     red_light: float = 0.0,
@@ -348,39 +344,51 @@ def process_image(
 
     log_clip(image)  # gpu
 
-    image = multi_channel_interp(image, density_curve)  # gpu
+    # image = multi_channel_interp(image, density_curve)  # gpu
 
-    if image.shape[-1] == 1:
-        image = image.repeat(3, -1)
+    # if image.shape[-1] == 1:
+    #     image = image.repeat(3, -1)
 
     # Prepare GPU
 
-    device = get_default_device()
     h, w, _ = image.shape
 
     # CPU -> GPU
 
-    image_tex = image_to_gpu(device, image)
-    lut_tex = lut_to_gpu(device, lut)
-
+    start = time.time()
+    image_tex = gpu_processor.image_to_gpu(image, h, w)
+    lut_1d_tex, xp_min, xp_max = gpu_processor.lut_1d_to_gpu(density_curve)
+    lut_3d_tex = gpu_processor.lut_3d_to_gpu(lut)
+    print(0, time.time() - start)
     # Apply shaders
 
-    out_tex = apply_lut_shader(
-        device=device,
+    start = time.time()
+    out_tex = gpu_processor.apply_lut_1d_shader(
         image_tex=image_tex,
-        lut_tex=lut_tex,
+        lut_tex=lut_1d_tex,
+        width=w,
+        height=h,
+        xp_min=xp_min,
+        xp_max=xp_max,
+    )
+
+    out_tex = gpu_processor.apply_lut_3d_shader(
+        image_tex=out_tex,
+        lut_tex=lut_3d_tex,
         width=w,
         height=h,
         lut_size=lut.shape[0],
     )
+    print(1, time.time() - start)
 
     # GPU -> CPU
 
-    image = texture_to_numpy(
-        device=device,
+    start = time.time()
+    image = gpu_processor.texture_to_numpy(
         texture=out_tex,
         width=w,
         height=h,
     )
+    print(2, time.time() - start)
 
     return image

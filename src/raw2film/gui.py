@@ -77,6 +77,7 @@ from spectral_film_lut.gui_objects import (
     Worker,
 )
 
+from gpu import GpuProcessor
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import process_image, raw_to_linear
@@ -1525,6 +1526,8 @@ class MainWindow(QMainWindow):
         self.srgb_profile = ImageCms.createProfile("sRGB")
         self.icc_bpc = False
 
+        self.gpu_processor = GpuProcessor()
+
         self.image_params = {}
         self.profile_params = {}
 
@@ -2034,6 +2037,7 @@ class MainWindow(QMainWindow):
 
         image = process_image(
             image,
+            gpu_processor=self.gpu_processor,
             metadata=load_metadata(src),
             icc_transform=self.icc_transform,
             **processing_args,
