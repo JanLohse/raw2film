@@ -20,12 +20,10 @@ from spectral_film_lut.utils import (
 )
 from spectral_film_lut.xy_lut import apply_2d_lut
 
-from gpu import (
-    GpuProcessor,
-)
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
 from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
+from raw2film.gpu import GpuProcessor
 from raw2film.utils import (
     apply_lut_tetrahedral_float,
     load_metadata,

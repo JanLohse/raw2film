@@ -13,13 +13,11 @@ class GpuProcessor:
         self.device = get_default_device()
         self.queue = self.device.queue
 
-        lut_1d_shader_path = Path(__file__).parent / "raw2film/shaders/lut_1d.wgsl"
+        lut_1d_shader_path = Path(__file__).parent / "shaders/lut_1d.wgsl"
         lut_1d_shader_code = lut_1d_shader_path.read_text()
         self.lut_1d_shader = self.device.create_shader_module(code=lut_1d_shader_code)
 
-        lut_3d_shader_path = (
-            Path(__file__).parent / "raw2film/shaders/lut_tetrahedral.wgsl"
-        )
+        lut_3d_shader_path = Path(__file__).parent / "shaders/lut_tetrahedral.wgsl"
         lut_3d_shader_code = lut_3d_shader_path.read_text()
         self.lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
         print(time.time() - start)
@@ -246,14 +244,6 @@ class GpuProcessor:
             usage=wgpu.BufferUsage.UNIFORM,
         )
 
-        # shader
-
-        shader_path = Path(__file__).parent / "raw2film/shaders/lut_tetrahedral.wgsl"
-
-        shader_code = shader_path.read_text()
-
-        shader = self.device.create_shader_module(code=shader_code)
-
         # bind group layout
 
         bind_group_layout = self.device.create_bind_group_layout(
@@ -328,7 +318,7 @@ class GpuProcessor:
         pipeline = self.device.create_compute_pipeline(
             layout=pipeline_layout,
             compute={
-                "module": shader,
+                "module": self.lut_3d_shader,
                 "entry_point": "main",
             },
         )

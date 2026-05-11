@@ -77,8 +77,8 @@ from spectral_film_lut.gui_objects import (
     Worker,
 )
 
-from gpu import GpuProcessor
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
+from raw2film.gpu import GpuProcessor
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import process_image, raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
