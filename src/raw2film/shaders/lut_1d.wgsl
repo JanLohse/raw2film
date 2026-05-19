@@ -17,6 +17,11 @@ var out_tex: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(3)
 var<uniform> params: Params;
 
+fn safe_log10(x: f32) -> f32 {
+    let v = max(x, 1e-16);
+    return log(v) / log(10.0);
+}
+
 
 fn lut_interp(x: f32, ch: u32) -> f32 {
 
@@ -76,9 +81,9 @@ fn main(
         0
     );
 
-    let r = lut_interp(color.r, 0u);
-    let g = lut_interp(color.g, 1u);
-    let b = lut_interp(color.b, 2u);
+    let r = lut_interp(safe_log10(color.r), 0u);
+    let g = lut_interp(safe_log10(color.g), 1u);
+    let b = lut_interp(safe_log10(color.b), 2u);
 
     textureStore(
         out_tex,

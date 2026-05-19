@@ -16,9 +16,7 @@ from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import (
     create_lut,
     film_conversion,
-    log_clip,
 )
-from spectral_film_lut.xy_lut import apply_2d_lut
 
 from raw2film import effects
 from raw2film.color_processing import calc_exposure
@@ -338,9 +336,9 @@ def process_image(
 
     image = np.ascontiguousarray(image)
 
-    image = apply_2d_lut(np.clip(image, 0, None), input_lut)  # gpu
+    # image = apply_2d_lut(np.clip(image, 0, None), input_lut)  # gpu
 
-    log_clip(image)  # gpu
+    # log_clip(image)  # gpu TODO
 
     # image = multi_channel_interp(image, density_curve)  # gpu
 
@@ -356,12 +354,21 @@ def process_image(
     start = time.time()
     image_tex = gpu_processor.image_to_gpu(image, h, w)
     lut_1d_tex, xp_min, xp_max = gpu_processor.lut_1d_to_gpu(density_curve)
+    lut_2d_tex = gpu_processor.lut_2d_to_gpu(input_lut)
     lut_3d_tex = gpu_processor.lut_3d_to_gpu(lut)
     print(0, time.time() - start)
     # Apply shaders
 
     start = time.time()
-    out_tex = gpu_processor.apply_lut_1d_shader(
+    image_tex = gpu_processor.apply_lut_2d_shader(
+        image_tex=image_tex,
+        lut_tex=lut_2d_tex,
+        width=w,
+        height=h,
+        lut_size=input_lut.shape[0],
+    )
+
+    image_tex = gpu_processor.apply_lut_1d_shader(
         image_tex=image_tex,
         lut_tex=lut_1d_tex,
         width=w,
@@ -370,8 +377,8 @@ def process_image(
         xp_max=xp_max,
     )
 
-    out_tex = gpu_processor.apply_lut_3d_shader(
-        image_tex=out_tex,
+    image_tex = gpu_processor.apply_lut_3d_shader(
+        image_tex=image_tex,
         lut_tex=lut_3d_tex,
         width=w,
         height=h,
@@ -383,7 +390,7 @@ def process_image(
 
     start = time.time()
     image = gpu_processor.texture_to_numpy(
-        texture=out_tex,
+        texture=image_tex,
         width=w,
         height=h,
     )

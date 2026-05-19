@@ -17,6 +17,10 @@ class GpuProcessor:
         lut_1d_shader_code = lut_1d_shader_path.read_text()
         self.lut_1d_shader = self.device.create_shader_module(code=lut_1d_shader_code)
 
+        lut_2d_shader_path = Path(__file__).parent / "shaders/lut_2d.wgsl"
+        lut_2d_shader_code = lut_2d_shader_path.read_text()
+        self.lut_2d_shader = self.device.create_shader_module(code=lut_2d_shader_code)
+
         lut_3d_shader_path = Path(__file__).parent / "shaders/lut_tetrahedral.wgsl"
         lut_3d_shader_code = lut_3d_shader_path.read_text()
         self.lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
@@ -45,36 +49,6 @@ class GpuProcessor:
                 "rows_per_image": h,
             },
             (w, h, 1),
-        )
-
-        return tex
-
-    def lut_3d_to_gpu(self, lut: np.ndarray):
-
-        size = lut.shape[0]
-
-        # uint8 -> normalized float texture
-        rgba = np.ones((size, size, size, 4), dtype=np.uint8) * 255
-        rgba[..., :3] = lut
-
-        tex = self.device.create_texture(
-            size=(size, size, size),
-            dimension="3d",
-            format="rgba8unorm",
-            usage=(wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING),
-        )
-
-        self.queue.write_texture(
-            {
-                "texture": tex,
-                "origin": (0, 0, 0),
-            },
-            rgba,
-            {
-                "bytes_per_row": size * 4,
-                "rows_per_image": size,
-            },
-            (size, size, size),
         )
 
         return tex
@@ -112,6 +86,80 @@ class GpuProcessor:
         )
 
         return tex, xp[0], xp[-1]
+
+    def lut_3d_to_gpu(self, lut: np.ndarray):
+
+        size = lut.shape[0]
+
+        # uint8 -> normalized float texture
+        rgba = np.ones((size, size, size, 4), dtype=np.uint8) * 255
+        rgba[..., :3] = lut
+
+        tex = self.device.create_texture(
+            size=(size, size, size),
+            dimension="3d",
+            format="rgba8unorm",
+            usage=(wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING),
+        )
+
+        self.queue.write_texture(
+            {
+                "texture": tex,
+                "origin": (0, 0, 0),
+            },
+            rgba,
+            {
+                "bytes_per_row": size * 4,
+                "rows_per_image": size,
+            },
+            (size, size, size),
+        )
+
+        return tex
+
+    def lut_2d_to_gpu(self, lut: np.ndarray):
+
+        size = lut.shape[0]
+
+        # Ensure float32
+        lut = np.asarray(lut, dtype=np.float32)
+
+        channels = lut.shape[2]
+
+        if channels > 4:
+            raise ValueError("LUT must have <= 4 channels")
+
+        # RGBA texture payload
+        rgba = np.zeros((size, size, 4), dtype=np.float32)
+
+        rgba[..., :channels] = lut
+
+        # Optional alpha
+        if channels < 4:
+            rgba[..., 3] = 1.0
+
+        tex = self.device.create_texture(
+            size=(size, size, 1),
+            dimension="2d",
+            format="rgba32float",
+            usage=(wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING),
+        )
+
+        self.queue.write_texture(
+            {
+                "texture": tex,
+                "origin": (0, 0, 0),
+            },
+            rgba.tobytes(),
+            {
+                # 4 float32 channels
+                "bytes_per_row": size * 4 * 4,
+                "rows_per_image": size,
+            },
+            (size, size, 1),
+        )
+
+        return tex
 
     def apply_lut_1d_shader(
         self,
@@ -192,6 +240,104 @@ class GpuProcessor:
         compute_pass.dispatch_workgroups(
             (width + 15) // 16,
             (height + 15) // 16,
+            1,
+        )
+
+        compute_pass.end()
+
+        self.device.queue.submit([encoder.finish()])
+
+        return out_tex
+
+    def apply_lut_2d_shader(
+        self,
+        image_tex,
+        lut_tex,
+        width,
+        height,
+        lut_size,
+    ):
+
+        pipeline = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={
+                "module": self.lut_2d_shader,
+                "entry_point": "main",
+            },
+        )
+
+        out_tex = self.device.create_texture(
+            size=(width, height, 1),
+            dimension="2d",
+            format="rgba32float",
+            usage=(
+                wgpu.TextureUsage.STORAGE_BINDING
+                | wgpu.TextureUsage.TEXTURE_BINDING
+                | wgpu.TextureUsage.COPY_SRC
+            ),
+        )
+
+        # WGSL:
+        #
+        # struct Params {
+        #     width: u32,
+        #     height: u32,
+        #     lutSize: u32,
+        # };
+        #
+        # Uniform buffers require 16-byte alignment.
+        # Add one padding u32.
+
+        params = struct.pack(
+            "4I",
+            width,
+            height,
+            lut_size,
+            0,  # padding
+        )
+
+        uniform_buffer = self.device.create_buffer_with_data(
+            data=params,
+            usage=wgpu.BufferUsage.UNIFORM,
+        )
+
+        bind_group = self.device.create_bind_group(
+            layout=pipeline.get_bind_group_layout(0),
+            entries=[
+                {
+                    "binding": 0,
+                    "resource": image_tex.create_view(),
+                },
+                {
+                    "binding": 1,
+                    "resource": lut_tex.create_view(),
+                },
+                {
+                    "binding": 2,
+                    "resource": out_tex.create_view(),
+                },
+                {
+                    "binding": 3,
+                    "resource": {
+                        "buffer": uniform_buffer,
+                        "offset": 0,
+                        "size": len(params),
+                    },
+                },
+            ],
+        )
+
+        encoder = self.device.create_command_encoder()
+
+        compute_pass = encoder.begin_compute_pass()
+
+        compute_pass.set_pipeline(pipeline)
+        compute_pass.set_bind_group(0, bind_group)
+
+        # Must match @workgroup_size(8,8,1)
+        compute_pass.dispatch_workgroups(
+            (width + 7) // 8,
+            (height + 7) // 8,
             1,
         )
 
