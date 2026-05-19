@@ -6,9 +6,7 @@ import json
 import math
 import os
 import shutil
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, partial
 from pathlib import Path
 
@@ -78,54 +76,34 @@ from spectral_film_lut.gui_objects import (
 )
 
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
-from raw2film.gpu import GpuProcessor
+from raw2film.cpu_processor import CpuProcessor
+from raw2film.gpu_processor import GpuProcessor
 from raw2film.image_bar import ImageBar
-from raw2film.raw_conversion import process_image, raw_to_linear
+from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
 
 class MultiWorker(QObject):
-    """A worker that runs multiple worker threads."""
-
-    progress = pyqtSignal(str)
-    """How many of the workers finished."""
+    progress = pyqtSignal(str, int)
     finished = pyqtSignal()
-    """If all worker threads finished."""
 
     def __init__(self):
         super().__init__()
-        self.cancel_event = threading.Event()
+        self.cancelled = False
 
-    def run_tasks(self, func, tasks, max_workers=None, **kwargs):
-        semaphore = threading.Semaphore(1)
-        kwargs["semaphore"] = semaphore
-        kwargs["cancel_event"] = self.cancel_event  # Pass cancel flag to each task
+    def run_tasks(self, func, tasks, **kwargs):
+        for i, task in enumerate(tasks, start=1):
+            if self.cancelled:
+                break
 
-        def func_wrapper(i, *args, **kwargs):
-            if self.cancel_event.is_set():
-                return "Cancelled"
+            result = func(*task, **kwargs)
 
-            if i < max_workers:
-                time.sleep(i)
-            return func(*args, **kwargs)
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(func_wrapper, i, *task, **kwargs)
-                for i, task in enumerate(tasks)
-                if not self.cancel_event.is_set()
-            ]
-
-            for future in as_completed(futures):
-                if self.cancel_event.is_set():
-                    break
-                self.progress.emit(future.result())
+            self.progress.emit(result, i)
 
         self.finished.emit()
 
     def cancel(self):
-        self.cancel_event.set()
-        self.finished.emit()
+        self.cancelled = True
 
 
 down_arrow_icon = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
@@ -444,6 +422,9 @@ class MainWindow(QMainWindow):
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
         view_menu.addAction(self.full_preview)
+        self.gpu_processing = QAction("GPU rendering", self)
+        self.gpu_processing.setCheckable(True)
+        view_menu.addAction(self.gpu_processing)
         self.half_res_preview = QAction("Half res. preview", self)
         self.half_res_preview.setCheckable(True)
         self.half_res_preview.setShortcut(QKeySequence("Ctrl+Shift+H"))
@@ -1368,6 +1349,7 @@ class MainWindow(QMainWindow):
             lambda x: self.setting_changed(x, "lens_correction")
         )
         self.full_preview.triggered.connect(lambda: self.parameter_changed())
+        self.gpu_processing.triggered.connect(lambda: self.parameter_changed())
         self.half_res_preview.triggered.connect(lambda: self.parameter_changed())
         self.halation.stateChanged.connect(
             lambda x: self.profile_changed(x, "halation")
@@ -1526,7 +1508,8 @@ class MainWindow(QMainWindow):
         self.srgb_profile = ImageCms.createProfile("sRGB")
         self.icc_bpc = False
 
-        self.gpu_processor = GpuProcessor()
+        self.gpu_processor = GpuProcessor(self.cameras, self.lenses)
+        self.cpu_processor = CpuProcessor(self.cameras, self.lenses)
 
         self.image_params = {}
         self.profile_params = {}
@@ -2014,12 +1997,6 @@ class MainWindow(QMainWindow):
             ]
 
         pixel_ratio = self.devicePixelRatioF()
-        if processing_args["lens_correction"]:
-            image = self.load_raw_image(
-                src, processing_args.get("cam", None), processing_args.get("lens", None)
-            )
-        else:
-            image = self.load_raw_image(src)
         processing_args["resolution"] = (
             math.floor(self.image.height() * pixel_ratio),
             math.floor(self.image.width() * pixel_ratio),
@@ -2028,17 +2005,20 @@ class MainWindow(QMainWindow):
             processing_args["resolution"] = tuple(
                 x // 2 for x in processing_args["resolution"]
             )
-            processing_args["double_upscale"] = True
+            processing_args["half_res"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
             processing_args["chroma_nr"] = 0
 
-        image = process_image(
-            image,
-            gpu_processor=self.gpu_processor,
-            metadata=load_metadata(src),
+        if self.gpu_processing.isChecked():
+            processor = self.gpu_processor
+        else:
+            processor = self.cpu_processor
+
+        image = processor.process(
+            src,
             icc_transform=self.icc_transform,
             **processing_args,
         )
@@ -2077,7 +2057,6 @@ class MainWindow(QMainWindow):
         quality=100,
         close=False,
         resolution=None,
-        semaphore=None,
         **kwargs,
     ):
         src_short = src.split("/")[-1]
@@ -2090,8 +2069,6 @@ class MainWindow(QMainWindow):
         processing_args["negative_film"] = self.filmstocks[
             processing_args["negative_film"]
         ]
-        if semaphore is not None:
-            processing_args["semaphore"] = semaphore
         if resolution is not None:
             processing_args["resolution"] = (resolution, resolution)
         if (
@@ -2101,7 +2078,6 @@ class MainWindow(QMainWindow):
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
-        image = raw_to_linear(src, half_size=False)
         metadata = load_metadata(src)
         if processing_args["lens_correction"]:
             if "cam" not in processing_args or "lens" not in processing_args:
@@ -2109,18 +2085,18 @@ class MainWindow(QMainWindow):
                 if cam is not None or lens is not None:
                     processing_args["cam"] = cam.maker + " " + cam.model
                     processing_args["lens"] = lens.model
-            if "cam" in processing_args and "lens" in processing_args:
-                image = effects.lens_correction(
-                    image,
-                    metadata,
-                    self.cameras[processing_args["cam"]],
-                    self.lenses[processing_args["lens"]],
-                )
 
         processing_args["chroma_nr"] *= 2
-        image = process_image(
-            image,
-            lut_size=65,
+
+        if self.gpu_processing.isChecked():
+            processor = self.gpu_processor
+        else:
+            processor = self.cpu_processor
+
+        image = processor.process(
+            src,
+            half_size=False,
+            cache=False,
             **processing_args,
         )
         path = "/".join(filename.split("/")[:-1])
@@ -2141,7 +2117,6 @@ class MainWindow(QMainWindow):
         if move_raw:
             if not os.path.exists(path + "RAW"):
                 os.makedirs(path + "RAW")
-            # self.save_settings_directory(path + 'RAW', src=src_short)
             if move_raw == 2:
                 os.replace(src, path + "RAW/" + src.split("/")[-1])
             elif move_raw == 1 and not os.path.isfile(
@@ -2169,9 +2144,14 @@ class MainWindow(QMainWindow):
 
     def save_multiple_process(self, folder, filenames, **kwargs):
         self.active = False
-        self.task_count = len(filenames)
+
+        tasks = [
+            (filename, folder + "/" + filename.split("/")[-1].split(".")[0])
+            for filename in filenames
+        ]
+
         self.progress_dialog = QProgressDialog(
-            "Starting export...", "Cancel", 0, self.task_count, parent=self
+            "Starting export...", "Cancel", 0, len(tasks), parent=self
         )
         self.progress_dialog.setWindowTitle("Export")
         self.progress_dialog.setAutoClose(False)
@@ -2179,35 +2159,35 @@ class MainWindow(QMainWindow):
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
-        QApplication.processEvents()
 
         self.thread = QThread()
         self.worker = MultiWorker()
-        self.progress_dialog.canceled.connect(self.worker.cancel)
+
         self.worker.moveToThread(self.thread)
+
+        self.progress_dialog.canceled.connect(self.worker.cancel)
 
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.tasks_finished)
-        tasks = [
-            (filename, folder + "/" + filename.split("/")[-1].split(".")[0])
-            for filename in filenames
-        ]
+
         self.thread.started.connect(
-            partial(self.worker.run_tasks, self.save_image, tasks, **kwargs)
+            partial(
+                self.worker.run_tasks,
+                self.save_image,
+                tasks,
+                **kwargs,
+            )
         )
+
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
-        self.tasks_done = 0
 
-    def update_progress(self, value):
-        self.tasks_done += 1
-        self.progress_dialog.setValue(self.tasks_done)
-        self.progress_dialog.setLabelText(
-            f"{value} ({self.tasks_done}/{self.task_count})"
-        )
+    def update_progress(self, message, value):
+        self.progress_dialog.setLabelText(message)
+        self.progress_dialog.setValue(value)
 
     def tasks_finished(self):
         self.active = True
@@ -2254,13 +2234,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Resolution:"))
         layout.addWidget(resolution_field)
 
-        thread_slider = Slider()
-        cpu_count = os.cpu_count()
-        thread_slider.setMinMaxTicks(1, os.cpu_count())
-        thread_slider.setValue(max(cpu_count // 2, 1))
-        layout.addWidget(QLabel("Threads:"))
-        layout.addWidget(thread_slider)
-
         # Buttons
         button_layout = QHBoxLayout()
         ok_button = AnimatedButton("OK", parent=self)
@@ -2287,7 +2260,6 @@ class MainWindow(QMainWindow):
                 "quality": int(quality_slider.getValue()),
                 "add_date": sort_by_date.isChecked(),
                 "resolution": resolution,
-                "max_workers": int(thread_slider.getValue()),
             }
             return True, kwargs
         else:

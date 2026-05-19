@@ -306,3 +306,139 @@ def apply_lut_tetrahedral_float(
             out[y, x, 2] = np.uint8(c[2] // scale)
 
     return out
+
+
+@njit(parallel=True)
+def apply_lut_tetrahedral(
+    image: np.ndarray,  # float32 image in [0, 1], shape (H, W, 3)
+    lut: np.ndarray,  # float32 LUT in [0, 1], shape (size, size, size, 3)
+    scale: float = 1.0,
+) -> np.ndarray:
+    h, w, _ = image.shape
+    size = lut.shape[0]
+
+    out = np.empty((h, w, 3), dtype=np.float32)
+
+    scale *= size - 1
+
+    for y in prange(h):
+        for x in range(w):
+            # Continuous LUT coordinates
+            r = image[y, x, 0] * scale
+            g = image[y, x, 1] * scale
+            b = image[y, x, 2] * scale
+
+            # Base indices
+            r0 = int(r)
+            g0 = int(g)
+            b0 = int(b)
+
+            # Clamp upper edge
+            if r0 >= size - 1:
+                r0 = size - 2
+                dr = 1.0
+            else:
+                dr = r - r0
+
+            if g0 >= size - 1:
+                g0 = size - 2
+                dg = 1.0
+            else:
+                dg = g - g0
+
+            if b0 >= size - 1:
+                b0 = size - 2
+                db = 1.0
+            else:
+                db = b - b0
+
+            r1 = r0 + 1
+            g1 = g0 + 1
+            b1 = b0 + 1
+
+            c000 = lut[r0, g0, b0]
+
+            # Tetrahedral interpolation
+            if dr >= dg:
+                if dg >= db:
+                    # dr >= dg >= db
+                    c100 = lut[r1, g0, b0]
+                    c110 = lut[r1, g1, b0]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + dr * (c100 - c000)
+                        + dg * (c110 - c100)
+                        + db * (c111 - c110)
+                    )
+
+                elif dr >= db:
+                    # dr >= db > dg
+                    c100 = lut[r1, g0, b0]
+                    c101 = lut[r1, g0, b1]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + dr * (c100 - c000)
+                        + db * (c101 - c100)
+                        + dg * (c111 - c101)
+                    )
+
+                else:
+                    # db > dr >= dg
+                    c001 = lut[r0, g0, b1]
+                    c101 = lut[r1, g0, b1]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + db * (c001 - c000)
+                        + dr * (c101 - c001)
+                        + dg * (c111 - c101)
+                    )
+
+            else:
+                if db >= dg:
+                    # db >= dg > dr
+                    c001 = lut[r0, g0, b1]
+                    c011 = lut[r0, g1, b1]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + db * (c001 - c000)
+                        + dg * (c011 - c001)
+                        + dr * (c111 - c011)
+                    )
+
+                elif db >= dr:
+                    # dg > db >= dr
+                    c010 = lut[r0, g1, b0]
+                    c011 = lut[r0, g1, b1]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + dg * (c010 - c000)
+                        + db * (c011 - c010)
+                        + dr * (c111 - c011)
+                    )
+
+                else:
+                    # dg > dr > db
+                    c010 = lut[r0, g1, b0]
+                    c110 = lut[r1, g1, b0]
+                    c111 = lut[r1, g1, b1]
+
+                    c = (
+                        c000
+                        + dg * (c010 - c000)
+                        + dr * (c110 - c010)
+                        + db * (c111 - c110)
+                    )
+
+            out[y, x] = c
+
+    return out
