@@ -1,93 +1,105 @@
 struct Params {
     xp_min: f32,
     xp_max: f32,
-    channels: u32,
-    _pad: u32,
-}
+    _pad1: u32,
+    _pad2: u32,
+};
 
 @group(0) @binding(0)
 var input_tex: texture_2d<f32>;
 
 @group(0) @binding(1)
-var lut_tex: texture_2d<f32>;
+var output_tex: texture_storage_2d<rgba32float, write>;
 
 @group(0) @binding(2)
-var out_tex: texture_storage_2d<rgba32float, write>;
+var lut_tex: texture_2d<f32>;
 
 @group(0) @binding(3)
 var<uniform> params: Params;
 
-fn safe_log10(x: f32) -> f32 {
-    let v = max(x, 1e-16);
-    return log(v) / log(10.0);
-}
+fn interp_channel(
+    value: f32,
+    channel: u32
+) -> f32 {
 
+    let xp_min = params.xp_min;
+    let xp_max = params.xp_max;
+    let lut_size = textureDimensions(lut_tex).x;
 
-fn lut_interp(x: f32, ch: u32) -> f32 {
+    if (value <= xp_min) {
+        return textureLoad(
+            lut_tex,
+            vec2<i32>(0, 0),
+            0
+        )[channel];
+    }
 
-    let xmin = params.xp_min;
-    let xmax = params.xp_max;
+    if (value >= xp_max) {
+        return textureLoad(
+            lut_tex,
+            vec2<i32>(i32(lut_size - 1u), 0),
+            0
+        )[channel];
+    }
 
-    let dims = textureDimensions(lut_tex);
-
-    let size = dims.x;
-
-    let xc = clamp(x, xmin, xmax);
+    let bin_width =
+        (xp_max - xp_min) /
+        f32(lut_size - 1u);
 
     let pos =
-        (xc - xmin) /
-        (xmax - xmin) *
-        f32(size - 1u);
+        (value - xp_min) /
+        bin_width;
 
     let idx = u32(floor(pos));
 
-    let idx1 = min(idx + 1u, size - 1u);
-
-    let f = pos - f32(idx);
+    let f =  pos - f32(idx);
 
     let y0 = textureLoad(
         lut_tex,
-        vec2<i32>(i32(idx), i32(ch)),
+        vec2<i32>(i32(idx), 0),
         0
-    ).r;
+    )[channel];
 
     let y1 = textureLoad(
         lut_tex,
-        vec2<i32>(i32(idx1), i32(ch)),
+        vec2<i32>(i32(idx + 1u), 0),
         0
-    ).r;
+    )[channel];
 
     return y0 + f * (y1 - y0);
 }
 
-
-@compute @workgroup_size(16, 16)
+@compute
+@workgroup_size(8, 8)
 fn main(
     @builtin(global_invocation_id)
     gid: vec3<u32>
 ) {
 
-    let dims = textureDimensions(out_tex);
+    let x = gid.x;
+    let y = gid.y;
 
-    if (gid.x >= dims.x || gid.y >= dims.y) {
+    let dims = textureDimensions(input_tex);
+    if (x >= dims.x || y >= dims.y) {
         return;
     }
 
-    let coord = vec2<i32>(gid.xy);
-
-    let color = textureLoad(
+    let pixel = textureLoad(
         input_tex,
-        coord,
+        vec2<i32>(i32(x), i32(y)),
         0
     );
 
-    let r = lut_interp(safe_log10(color.r), 0u);
-    let g = lut_interp(safe_log10(color.g), 1u);
-    let b = lut_interp(safe_log10(color.b), 2u);
+    let out_color = vec4<f32>(
+        interp_channel(pixel.r, 0u),
+        interp_channel(pixel.g, 1u),
+        interp_channel(pixel.b, 2u),
+        pixel.a
+    );
 
     textureStore(
-        out_tex,
-        coord,
-        vec4<f32>(r, g, b, color.a)
+        output_tex,
+        vec2<i32>(i32(x), i32(y)),
+        out_color
     );
 }

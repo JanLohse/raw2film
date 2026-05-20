@@ -1,20 +1,54 @@
+import struct
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import wgpu
+from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.utils import create_lut, log_clip, multi_channel_interp
-from spectral_film_lut.xy_lut import apply_2d_lut
-from wgpu import get_default_device
+from spectral_film_lut.utils import create_lut
+from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
-from raw2film.raw_conversion import crop_rotate_zoom, raw_to_linear
+from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
-    apply_lut_tetrahedral_float,
     load_metadata,
     resolution_scaling,
 )
+
+
+class GpuTexture:
+    def __init__(self, device, size, format=wgpu.TextureFormat.rgba32float):
+        self.device = device
+        self.size = size
+
+        self.texture = device.create_texture(
+            size={"width": size[0], "height": size[1], "depth_or_array_layers": 1},
+            format=format,
+            usage=(
+                TextureUsage.TEXTURE_BINDING
+                | TextureUsage.COPY_DST
+                | TextureUsage.RENDER_ATTACHMENT
+                | TextureUsage.STORAGE_BINDING
+            ),
+        )
+
+        self.view = self.texture.create_view()
+
+    def upload(self, queue, data: np.ndarray):
+        """Upload RGBA float texture."""
+        data = np.ascontiguousarray(data)
+        queue.write_texture(
+            {"texture": self.texture},
+            data,
+            {"bytes_per_row": data.strides[0], "rows_per_image": data.shape[0]},
+            {
+                "width": data.shape[1],
+                "height": data.shape[0],
+                "depth_or_array_layers": 1,
+            },
+        )
 
 
 class GpuProcessor:
@@ -31,9 +65,20 @@ class GpuProcessor:
         lut_2d_shader_code = lut_2d_shader_path.read_text()
         self.lut_2d_shader = self.device.create_shader_module(code=lut_2d_shader_code)
 
-        lut_3d_shader_path = Path(__file__).parent / "shaders/lut_tetrahedral.wgsl"
+        lut_3d_shader_path = Path(__file__).parent / "shaders/lut_3d.wgsl"
         lut_3d_shader_code = lut_3d_shader_path.read_text()
         self.lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
+
+        # create pipelines
+        self.pipeline_lut_1d = self.device.create_compute_pipeline(
+            layout="auto", compute={"module": self.lut_1d_shader, "entry_point": "main"}
+        )
+        self.pipeline_lut_2d = self.device.create_compute_pipeline(
+            layout="auto", compute={"module": self.lut_2d_shader, "entry_point": "main"}
+        )
+        self.pipeline_lut_3d = self.device.create_compute_pipeline(
+            layout="auto", compute={"module": self.lut_3d_shader, "entry_point": "main"}
+        )
 
         # Init gpu textures
         self.tex_input = None
@@ -44,6 +89,8 @@ class GpuProcessor:
         self.tex_lut_1d = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
+
+        self.buffer_params_lut_1d = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -56,8 +103,11 @@ class GpuProcessor:
         self.lenses = lenses
 
     @lru_cache
-    def load_raw_image(self, src, cam=None, lens=None):
-        image = raw_to_linear(src)
+    def load_raw_image_cached(self, src, cam=None, lens=None, half_size=True):
+        return self.load_raw_image(src, cam, lens, half_size)
+
+    def load_raw_image(self, src, cam=None, lens=None, half_size=True):
+        image = raw_to_linear(src, half_size=half_size)
 
         if cam is not None and lens is not None:
             cam = self.cameras[cam]
@@ -66,6 +116,105 @@ class GpuProcessor:
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
         return image
+
+    def _ensure_image_texture(self, image: np.ndarray):
+        h, w = image.shape[:2]
+
+        if self.tex_input is None or self.tex_input.size != (w, h):
+            self.tex_input = GpuTexture(self.device, (w, h))
+            self.tex_a = GpuTexture(self.device, (w, h))
+            self.tex_b = GpuTexture(self.device, (w, h))
+            self.tex_output = GpuTexture(self.device, (w, h))
+
+        self.tex_input.upload(self.queue, image)
+
+    def _ensure_lut_1d(self, lut: np.ndarray):
+        size = lut.shape[1]
+        if self.tex_lut_1d is None or size != self.tex_lut_1d.size[0]:
+            self.tex_lut_1d = self.device.create_texture(
+                size=(size, 1, 1),
+                format=wgpu.TextureFormat.rgba32float,
+                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+            )
+        lut_rgba = np.ones((size, 4), dtype=np.float32)
+        lut_rgba[..., 0:3] = lut[1:, ...].T
+
+        params_lut_1d = struct.pack("ff2f", lut[0, 0], lut[0, -1], 0.0, 0.0)
+
+        self.buffer_params_lut_1d = self.device.create_buffer_with_data(
+            data=params_lut_1d,
+            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+        )
+
+        self.queue.write_texture(
+            {"texture": self.tex_lut_1d},
+            lut_rgba,
+            {
+                "bytes_per_row": size * 4 * 4,
+                "rows_per_image": 1,
+            },
+            {
+                "width": size,
+                "height": 1,
+                "depth_or_array_layers": 1,
+            },
+        )
+
+    def _ensure_lut_2d(self, lut: np.ndarray):
+        size = lut.shape[0]
+        if self.tex_lut_2d is None or size != self.tex_lut_2d.size[0]:
+            self.tex_lut_2d = self.device.create_texture(
+                size=(size, size, 1),
+                format=wgpu.TextureFormat.rgba32float,
+                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+            )
+
+        lut_rgba = np.ones((size, size, 4), dtype=np.float32)
+
+        lut_rgba[..., 0:3] = lut
+
+        self.queue.write_texture(
+            {"texture": self.tex_lut_2d},
+            lut_rgba,
+            {
+                "bytes_per_row": size * 4 * 4,
+                "rows_per_image": size,
+            },
+            {
+                "width": size,
+                "height": size,
+                "depth_or_array_layers": 1,
+            },
+        )
+
+    def _ensure_lut_3d(self, lut: np.ndarray):
+        size = lut.shape[0]
+        if self.tex_lut_3d is None or size != self.tex_lut_3d.size[0]:
+            self.tex_lut_3d = self.device.create_texture(
+                size=(size, size, size),
+                dimension=wgpu.TextureDimension.d3,
+                format=wgpu.TextureFormat.rgba32float,
+                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+            )
+
+        lut_rgba = np.ones((size, size, size, 4), dtype=np.float32)
+        lut_rgba[..., 0:3] = lut
+
+        self.queue.write_texture(
+            {
+                "texture": self.tex_lut_3d,
+            },
+            lut_rgba,
+            {
+                "bytes_per_row": size * 4 * 4,
+                "rows_per_image": size,
+            },
+            {
+                "width": size,
+                "height": size,
+                "depth_or_array_layers": size,
+            },
+        )
 
     def load_image_texture(
         self,
@@ -80,6 +229,8 @@ class GpuProcessor:
         rotate_times: int,
         flip: bool,
         resolution: None | tuple[int, int] = None,
+        half_size: bool = True,
+        cache: bool = True,
     ):
         new_param_dict = {
             "src": src,
@@ -93,15 +244,19 @@ class GpuProcessor:
             "rotate_times": rotate_times,
             "flip": flip,
             "resolution": resolution,
+            "half_size": half_size,
         }
 
         if new_param_dict == self.image_param_dict:
             return
 
-        if lens_correction:
-            image = self.load_raw_image(src, cam, lens)
+        if not lens_correction:
+            cam, lens = None, None
+
+        if cache:
+            image = self.load_raw_image_cached(src, cam, lens, half_size)
         else:
-            image = self.load_raw_image(src)
+            image = self.load_raw_image(src, cam, lens, half_size)
 
         image = crop_rotate_zoom(
             image, frame_width, frame_height, rotation, zoom, rotate_times, flip
@@ -110,9 +265,11 @@ class GpuProcessor:
         if resolution is not None:
             image = resolution_scaling(image, resolution)
 
-        self.tex_input = image  # TODO
+        self._ensure_image_texture(image)
 
         self.image_param_dict = new_param_dict
+
+        return image.shape[:2]
 
     def load_input_lut(
         self,
@@ -133,7 +290,7 @@ class GpuProcessor:
 
         input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
 
-        self.tex_lut_2d = input_lut  # TODO
+        self._ensure_lut_2d(input_lut)
 
         self.input_param_dict = new_param_dict
 
@@ -144,9 +301,8 @@ class GpuProcessor:
             return
 
         density_curve = negative_film.get_density_curve(push_pull=push_pull)
-        density_curve[1:] /= 4.0
 
-        self.tex_lut_1d = density_curve
+        self._ensure_lut_1d(density_curve)
 
         self.curve_param_dict = new_param_dict
 
@@ -166,6 +322,7 @@ class GpuProcessor:
         inversion: bool = False,
         white_balance: bool = False,
         white_clip: bool = False,
+        icc_transform=None,
     ):
         new_param_dict = {
             "negative_film": negative_film.name,
@@ -182,6 +339,7 @@ class GpuProcessor:
             "inversion": inversion,
             "white_balance": white_balance,
             "white_clip": white_clip,
+            "icc_transform": icc_transform,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -208,16 +366,81 @@ class GpuProcessor:
             white_clip=white_clip,
             linear_scaling=4.0,
         )
-        lut = (lut * (2**8 - 1)).astype(np.uint8)  # TODO
 
-        self.tex_lut_3d = lut  # TODO
+        if icc_transform is not None:
+            lut = (lut * 255).astype(np.uint8)
+            lut_shape = lut.shape
+            lut = lut.reshape(lut_shape[0], -1, lut_shape[-1])
+            lut = Image.fromarray(lut)
+            ImageCms.applyTransform(lut, icc_transform, inPlace=True)
+            lut = np.array(lut, np.uint8)
+            lut = lut.reshape(lut_shape)
+            lut = (lut / 255.0).astype(np.float32)
+
+        self._ensure_lut_3d(lut)
 
         self.output_param_dict = new_param_dict
+
+    def _bind_lut_2d(self):
+        return self.device.create_bind_group(
+            layout=self.pipeline_lut_2d.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.tex_input.view},
+                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 2, "resource": self.tex_lut_2d.create_view()},
+            ],
+        )
+
+    def _bind_lut_1d(self):
+        return self.device.create_bind_group(
+            layout=self.pipeline_lut_1d.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.tex_a.view},
+                {"binding": 1, "resource": self.tex_b.view},
+                {"binding": 2, "resource": self.tex_lut_1d.create_view()},
+                {
+                    "binding": 3,
+                    "resource": {
+                        "buffer": self.buffer_params_lut_1d,
+                        "offset": 0,
+                        "size": self.buffer_params_lut_1d.size,
+                    },
+                },
+            ],
+        )
+
+    def _bind_lut_3d(self):
+        return self.device.create_bind_group(
+            layout=self.pipeline_lut_3d.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.tex_b.view},
+                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 2, "resource": self.tex_lut_3d.create_view()},
+            ],
+        )
+
+    def _dispatch(self, pipeline, bind_group, size):
+        encoder = self.device.create_command_encoder()
+
+        pass_enc = encoder.begin_compute_pass()
+        pass_enc.set_pipeline(pipeline)
+        pass_enc.set_bind_group(0, bind_group)
+
+        # Workgroup sizing (assumes 8x8)
+        gx = (size[0] + 7) // 8
+        gy = (size[1] + 7) // 8
+
+        pass_enc.dispatch_workgroups(gx, gy, 1)
+        pass_enc.end()
+
+        self.queue.submit([encoder.finish()])
 
     def process(
         self,
         src: str,
         negative_film: FilmSpectral,
+        grain_size: float,
+        grain_sigma: float,
         lens_correction: bool = True,
         print_film: FilmSpectral | None = None,
         exp_comp: float = 0.0,
@@ -236,8 +459,7 @@ class GpuProcessor:
         push_pull: float = 0.0,
         white_balance: bool = False,
         white_clip: bool = False,
-        icc_transform=None,  # TODO
-        lut_size: int = 33,  # TODO
+        icc_transform=None,
         resolution: None | tuple[int, int] = None,
         frame_width: int | float = 36,
         frame_height: int | float = 24,
@@ -247,9 +469,25 @@ class GpuProcessor:
         flip: bool = False,
         cam: str | None = None,
         lens: str | None = None,
+        half_res: bool = False,
+        canvas_mode: CANVAS_MODES = "No",
+        canvas_scale: float = 1.0,
+        canvas_ratio: float = 1.0,
+        halation_intensity: float = 1.0,
+        halation: bool = True,
+        halation_size: float = 1.0,
+        halation_green_factor: float = 0.4,
+        sharpness: bool = True,
+        chroma_nr: int = 0,
+        grain: int = 2,
+        highlight_burn: float = 0.0,
+        burn_scale: float = 50.0,
+        half_size: bool = True,
+        cache: bool = True,
         **_,
     ):
-        self.load_image_texture(
+        # Update textures
+        w, h = self.load_image_texture(
             src,
             cam,
             lens,
@@ -261,6 +499,8 @@ class GpuProcessor:
             rotate_times,
             flip,
             resolution,
+            half_size,
+            cache,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull)
@@ -279,14 +519,40 @@ class GpuProcessor:
             inversion,
             white_balance,
             white_clip,
+            icc_transform,
         )
 
-        self.tex_a = apply_2d_lut(self.tex_input, self.tex_lut_2d)
+        self._dispatch(self.pipeline_lut_2d, self._bind_lut_2d(), (w, h))
+        self._dispatch(self.pipeline_lut_1d, self._bind_lut_1d(), (w, h))
+        self._dispatch(self.pipeline_lut_3d, self._bind_lut_3d(), (w, h))
 
-        log_clip(self.tex_a)
-
-        self.tex_b = multi_channel_interp(self.tex_a, self.tex_lut_1d)
-
-        self.tex_output = apply_lut_tetrahedral_float(self.tex_b, self.tex_lut_3d)
-
-        return self.tex_output
+        # image = (image * (2**8 - 1)).astype(np.uint8)
+        #
+        # # post-processing (canvas, scaling)
+        # if canvas_mode != "No":
+        #     if "white" in canvas_mode:
+        #         canvas_color = (255, 255, 255)
+        #     elif "black" in canvas_mode:
+        #         canvas_color = (0, 0, 0)
+        #     else:
+        #         canvas_color = (128, 128, 128)
+        #     if "Proportional" in canvas_mode:
+        #         canvas_ratio = image.shape[1] / image.shape[0]
+        #         image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
+        #     elif "Fixed" in canvas_mode:
+        #         image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
+        #     elif "Uniform" in canvas_mode:
+        #         image = add_canvas_uniform(image, canvas_scale, canvas_color)
+        #     if resolution is not None:
+        #         image = resolution_scaling(image, resolution)
+        #
+        # if half_res:
+        #     image = cv.resize(
+        #         image,
+        #         None,
+        #         fx=2,
+        #         fy=2,
+        #         interpolation=cv.INTER_CUBIC,
+        #     )
+        #
+        # return image
