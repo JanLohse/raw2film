@@ -31,6 +31,7 @@ class GpuTexture:
                 | TextureUsage.COPY_DST
                 | TextureUsage.RENDER_ATTACHMENT
                 | TextureUsage.STORAGE_BINDING
+                | TextureUsage.COPY_SRC
             ),
         )
 
@@ -84,7 +85,6 @@ class GpuProcessor:
         self.tex_input = None
         self.tex_a = None
         self.tex_b = None
-        self.tex_output = None
 
         self.tex_lut_1d = None
         self.tex_lut_2d = None
@@ -97,6 +97,9 @@ class GpuProcessor:
         self.input_param_dict = None
         self.curve_param_dict = None
         self.output_param_dict = None
+
+        self.width = None
+        self.height = None
 
         # Init lens correction data
         self.cameras = cameras
@@ -124,7 +127,6 @@ class GpuProcessor:
             self.tex_input = GpuTexture(self.device, (w, h))
             self.tex_a = GpuTexture(self.device, (w, h))
             self.tex_b = GpuTexture(self.device, (w, h))
-            self.tex_output = GpuTexture(self.device, (w, h))
 
         self.tex_input.upload(self.queue, image)
 
@@ -269,7 +271,7 @@ class GpuProcessor:
 
         self.image_param_dict = new_param_dict
 
-        return image.shape[:2]
+        self.height, self.width = image.shape[:2]
 
     def load_input_lut(
         self,
@@ -435,6 +437,54 @@ class GpuProcessor:
 
         self.queue.submit([encoder.finish()])
 
+    def read_texture(self, texture, width, height):
+        import numpy as np
+        import wgpu
+
+        bytes_per_pixel = 16  # rgba32float
+        row_bytes = width * bytes_per_pixel
+        padded_row_bytes = ((row_bytes + 255) // 256) * 256
+        buffer_size = padded_row_bytes * height
+
+        readback_buffer = self.device.create_buffer(
+            size=buffer_size,
+            usage=wgpu.BufferUsage.COPY_DST | wgpu.BufferUsage.MAP_READ,
+        )
+
+        encoder = self.device.create_command_encoder()
+
+        encoder.copy_texture_to_buffer(
+            {
+                "texture": texture,
+                "mip_level": 0,
+                "origin": (0, 0, 0),
+            },
+            {
+                "buffer": readback_buffer,
+                "offset": 0,
+                "bytes_per_row": padded_row_bytes,
+                "rows_per_image": height,
+            },
+            {
+                "width": width,
+                "height": height,
+                "depth_or_array_layers": 1,
+            },
+        )
+
+        self.queue.submit([encoder.finish()])
+        readback_buffer.map_sync(wgpu.MapMode.READ)
+        data = readback_buffer.read_mapped()
+        readback_buffer.unmap()
+
+        # Reshape: height rows, each row has padded_row_bytes // 4 float32 values
+        array = np.frombuffer(data, dtype=np.float32)
+        array = array.reshape((height, padded_row_bytes // 4))
+        # Each pixel is 4 floats (RGBA), so reshape and crop to actual width
+        array = array.reshape((height, padded_row_bytes // 16, 4))[:, :width, :]
+
+        return array
+
     def process(
         self,
         src: str,
@@ -487,7 +537,7 @@ class GpuProcessor:
         **_,
     ):
         # Update textures
-        w, h = self.load_image_texture(
+        self.load_image_texture(
             src,
             cam,
             lens,
@@ -522,37 +572,18 @@ class GpuProcessor:
             icc_transform,
         )
 
-        self._dispatch(self.pipeline_lut_2d, self._bind_lut_2d(), (w, h))
-        self._dispatch(self.pipeline_lut_1d, self._bind_lut_1d(), (w, h))
-        self._dispatch(self.pipeline_lut_3d, self._bind_lut_3d(), (w, h))
+        self._dispatch(
+            self.pipeline_lut_2d, self._bind_lut_2d(), (self.width, self.height)
+        )
+        self._dispatch(
+            self.pipeline_lut_1d, self._bind_lut_1d(), (self.width, self.height)
+        )
+        self._dispatch(
+            self.pipeline_lut_3d, self._bind_lut_3d(), (self.width, self.height)
+        )
 
-        # image = (image * (2**8 - 1)).astype(np.uint8)
-        #
-        # # post-processing (canvas, scaling)
-        # if canvas_mode != "No":
-        #     if "white" in canvas_mode:
-        #         canvas_color = (255, 255, 255)
-        #     elif "black" in canvas_mode:
-        #         canvas_color = (0, 0, 0)
-        #     else:
-        #         canvas_color = (128, 128, 128)
-        #     if "Proportional" in canvas_mode:
-        #         canvas_ratio = image.shape[1] / image.shape[0]
-        #         image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
-        #     elif "Fixed" in canvas_mode:
-        #         image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
-        #     elif "Uniform" in canvas_mode:
-        #         image = add_canvas_uniform(image, canvas_scale, canvas_color)
-        #     if resolution is not None:
-        #         image = resolution_scaling(image, resolution)
-        #
-        # if half_res:
-        #     image = cv.resize(
-        #         image,
-        #         None,
-        #         fx=2,
-        #         fy=2,
-        #         interpolation=cv.INTER_CUBIC,
-        #     )
-        #
-        # return image
+        image = self.read_texture(self.tex_a.texture, self.width, self.height)[..., 0:3]
+
+        image = (np.clip(image, 0.0, 1.0) * (2**8 - 1)).astype(np.uint8)
+
+        return image
