@@ -10,7 +10,7 @@ var lut_tex: texture_2d<f32>;
 fn lut_fetch(x: i32, y: i32) -> vec3<f32> {
     return textureLoad(
         lut_tex,
-        vec2<i32>(x, y),
+        vec2<i32>(y, x),
         0
     ).rgb;
 }

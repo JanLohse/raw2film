@@ -4,6 +4,7 @@ import cv2 as cv
 import numpy as np
 from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
+from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.utils import create_lut, log_clip, multi_channel_interp
 from spectral_film_lut.xy_lut import apply_2d_lut
@@ -56,6 +57,8 @@ class CpuProcessor:
             lens = self.lenses[lens]
 
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
+
+        image = image.astype(DEFAULT_DTYPE)
 
         return image
 
