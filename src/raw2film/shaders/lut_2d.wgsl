@@ -7,11 +7,7 @@ var output_tex: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(2)
 var lut_tex: texture_2d<f32>;
 
-fn lut_fetch(
-    x: i32,
-    y: i32
-) -> vec3<f32> {
-
+fn lut_fetch(x: i32, y: i32) -> vec3<f32> {
     return textureLoad(
         lut_tex,
         vec2<i32>(x, y),
@@ -40,11 +36,11 @@ fn main(
         0
     );
 
-    var X = pixel.r;
-    var Y = pixel.g;
-    var Z = pixel.b;
+    var r = pixel.r;
+    var g = pixel.g;
+    var b = pixel.b;
 
-    let S = X + Y + Z;
+    let S = r + g + b;
 
     if (S < 1e-12) {
 
@@ -64,68 +60,44 @@ fn main(
 
     let inv_sum = scaling / S;
 
-    X *= inv_sum;
-    Y *= inv_sum;
+    r *= inv_sum;
+    g *= inv_sum;
 
-    var xi = i32(floor(X));
+    var r_ind = i32(floor(r));
+    var g_ind = i32(floor(g));
 
-    var yi = i32(floor(Y));
+    r_ind = clamp(r_ind, 0, max_idx);
+    g_ind = clamp(g_ind, 0, max_idx);
 
-    xi = clamp(xi, 0, max_idx);
-    yi = clamp(yi, 0, max_idx);
+    let r_factor = fract(r);
+    let g_factor = fract(g);
 
-    let xf =
-        fract(X);
-
-    let yf =
-        fract(Y);
-
-    let factor_sum = xf + yf;
+    let factor_sum = r_factor + g_factor;
 
     var result: vec3<f32>;
 
     if (factor_sum <= 1.0) {
 
-        let s_factor =
-            1.0 - factor_sum;
+        let s_factor = 1.0 - factor_sum;
 
-        let r_val =
-            lut_fetch(xi + 1, yi);
+        let r_val = lut_fetch(r_ind + 1, g_ind);
+        let g_val = lut_fetch(r_ind, g_ind + 1);
+        let s_val = lut_fetch(r_ind, g_ind);
 
-        let g_val =
-            lut_fetch(xi, yi + 1);
-
-        let s_val =
-            lut_fetch(xi, yi);
-
-        result =
-            (
-                r_val * xf +
-                g_val * yf +
-                s_val * s_factor
-            ) * S;
+        result = (r_val * r_factor + g_val * g_factor + s_val * s_factor) * S;
 
     } else {
 
-        let s_factor =
-            factor_sum - 1.0;
+        let s_factor = factor_sum - 1.0;
 
-        let xf2 = 1.0 - yf;
+        let r_factor2 = 1.0 - g_factor;
+        let g_factor2 = 1.0 - r_factor;
 
-        let yf2 = 1.0 - xf;
+        let r_val = lut_fetch(r_ind + 1, g_ind);
+        let g_val = lut_fetch(r_ind, g_ind + 1);
+        let s_val = lut_fetch(r_ind + 1, g_ind + 1);
 
-        let r_val = lut_fetch(xi + 1, yi);
-
-        let g_val = lut_fetch(xi, yi + 1);
-
-        let s_val = lut_fetch(xi + 1, yi + 1);
-
-        result =
-            (
-                r_val * xf2 +
-                g_val * yf2 +
-                s_val * s_factor
-            ) * S;
+        result = (r_val * r_factor2 + g_val * g_factor2 + s_val * s_factor) * S;
     }
 
     textureStore(

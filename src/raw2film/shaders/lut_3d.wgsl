@@ -12,7 +12,7 @@ var lut_tex: texture_3d<f32>;
 fn lut_fetch(r: i32, g: i32, b: i32) -> vec3<f32> {
     let c = textureLoad(
         lut_tex,
-        vec3<i32>(r, g, b),
+        vec3<i32>(b, g, r),
         0
     );
 

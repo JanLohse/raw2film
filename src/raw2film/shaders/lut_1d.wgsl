@@ -69,6 +69,12 @@ fn interp_channel(
     return y0 + f * (y1 - y0);
 }
 
+fn safe_log10(x: f32) -> f32 {
+    // avoid -inf / NaN
+    let eps = 1e-6;
+    return log2(max(x, eps)) / log2(10.0);
+}
+
 @compute
 @workgroup_size(8, 8)
 fn main(
@@ -90,10 +96,16 @@ fn main(
         0
     );
 
+    let log_pixel = vec3<f32>(
+        safe_log10(pixel.r),
+        safe_log10(pixel.g),
+        safe_log10(pixel.b)
+    );
+
     let out_color = vec4<f32>(
-        interp_channel(pixel.r, 0u),
-        interp_channel(pixel.g, 1u),
-        interp_channel(pixel.b, 2u),
+        interp_channel(log_pixel.r, 0u),
+        interp_channel(log_pixel.g, 1u),
+        interp_channel(log_pixel.b, 2u),
         pixel.a
     );
 

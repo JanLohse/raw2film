@@ -424,6 +424,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.full_preview)
         self.gpu_processing = QAction("GPU rendering", self)
         self.gpu_processing.setCheckable(True)
+        self.gpu_processing.setChecked(True)
         view_menu.addAction(self.gpu_processing)
         self.half_res_preview = QAction("Half res. preview", self)
         self.half_res_preview.setCheckable(True)

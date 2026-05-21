@@ -131,7 +131,7 @@ class CpuProcessor:
 
         input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
 
-        self.tex_lut_2d = input_lut  # TODO
+        self.tex_lut_2d = input_lut
 
         self.input_param_dict = new_param_dict
 
@@ -219,7 +219,7 @@ class CpuProcessor:
             lut = lut.reshape(lut_shape)
             lut = (lut / 255.0).astype(np.float32)
 
-        self.tex_lut_3d = lut  # TODO
+        self.tex_lut_3d = lut
 
         self.output_param_dict = new_param_dict
 

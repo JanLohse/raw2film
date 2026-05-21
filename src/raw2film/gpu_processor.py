@@ -267,7 +267,8 @@ class GpuProcessor:
         if resolution is not None:
             image = resolution_scaling(image, resolution)
 
-        self._ensure_image_texture(image)
+        # self._ensure_image_texture(image) TODO
+        self.tex_input = image
 
         self.image_param_dict = new_param_dict
 
@@ -293,6 +294,7 @@ class GpuProcessor:
         input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
 
         self._ensure_lut_2d(input_lut)
+        # self.tex_lut_2d = input_lut
 
         self.input_param_dict = new_param_dict
 
@@ -383,22 +385,22 @@ class GpuProcessor:
 
         self.output_param_dict = new_param_dict
 
-    def _bind_lut_2d(self):
+    def _bind_lut_2d(self, input_texture, output_texture):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_2d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_input.view},
-                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 0, "resource": input_texture.create_view()},
+                {"binding": 1, "resource": output_texture.create_view()},
                 {"binding": 2, "resource": self.tex_lut_2d.create_view()},
             ],
         )
 
-    def _bind_lut_1d(self):
+    def _bind_lut_1d(self, input_tex, output_tex):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_1d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_a.view},
-                {"binding": 1, "resource": self.tex_b.view},
+                {"binding": 0, "resource": input_tex.create_view()},
+                {"binding": 1, "resource": output_tex.create_view()},
                 {"binding": 2, "resource": self.tex_lut_1d.create_view()},
                 {
                     "binding": 3,
@@ -411,12 +413,12 @@ class GpuProcessor:
             ],
         )
 
-    def _bind_lut_3d(self):
+    def _bind_lut_3d(self, input_tex, output_tex):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_3d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_b.view},
-                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 0, "resource": input_tex.create_view()},
+                {"binding": 1, "resource": output_tex.create_view()},
                 {"binding": 2, "resource": self.tex_lut_3d.create_view()},
             ],
         )
@@ -572,17 +574,48 @@ class GpuProcessor:
             icc_transform,
         )
 
+        # image = apply_2d_lut(self.tex_input, self.tex_lut_2d)
+        image = self.tex_input
+
+        image = np.dstack((image, np.ones_like(image[..., :1])))
+
+        input_tex = GpuTexture(self.device, (self.width, self.height))
+        input_tex.upload(self.queue, image)
+        a_tex = GpuTexture(self.device, (self.width, self.height))
+        b_tex = GpuTexture(self.device, (self.width, self.height))
+        output_tex = GpuTexture(self.device, (self.width, self.height))
+
         self._dispatch(
-            self.pipeline_lut_2d, self._bind_lut_2d(), (self.width, self.height)
+            self.pipeline_lut_2d,
+            self._bind_lut_2d(input_tex.texture, a_tex.texture),
+            (self.width, self.height),
         )
         self._dispatch(
-            self.pipeline_lut_1d, self._bind_lut_1d(), (self.width, self.height)
+            self.pipeline_lut_1d,
+            self._bind_lut_1d(a_tex.texture, b_tex.texture),
+            (self.width, self.height),
         )
         self._dispatch(
-            self.pipeline_lut_3d, self._bind_lut_3d(), (self.width, self.height)
+            self.pipeline_lut_3d,
+            self._bind_lut_3d(b_tex.texture, output_tex.texture),
+            (self.width, self.height),
         )
 
-        image = self.read_texture(self.tex_a.texture, self.width, self.height)[..., 0:3]
+        image = self.read_texture(output_tex.texture, self.width, self.height)[..., 0:3]
+
+        # self._dispatch(
+        #     self.pipeline_lut_2d, self._bind_lut_2d(), (self.width, self.height)
+        # )
+        # self._dispatch(
+        #     self.pipeline_lut_1d, self._bind_lut_1d(), (self.width, self.height)
+        # )
+        # self._dispatch(
+        #     self.pipeline_lut_3d, self._bind_lut_3d(), (self.width, self.height)
+        # )
+        #
+        # image = self.read_texture(self.tex_a.texture, self.width, self.height)[
+        #     ..., 0:3
+        # ]
 
         image = (np.clip(image, 0.0, 1.0) * (2**8 - 1)).astype(np.uint8)
 
