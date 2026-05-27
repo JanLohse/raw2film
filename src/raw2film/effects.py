@@ -13,7 +13,6 @@ from lensfunpy import util as lensfunpy_util
 from numba import njit, prange
 from scipy import ndimage
 from spectral_film_lut.config import DEFAULT_DTYPE
-from spectral_film_lut.densiometry import adx16_decode
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.grain_generation import generate_grain
 
@@ -337,12 +336,10 @@ def burn(
     the contrast and brightness of highlights. Similar to modern local tone-mapping
     techniques.
     """
-    highlight_burn *= 8000.0 / 65535.0
 
     def func(x):
         return np.clip(
-            adx16_decode(x)
-            - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0],
+            x - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0],
             0,
             None,
         )
@@ -351,6 +348,8 @@ def burn(
         image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func)
     else:
         image = image - highlight_burn * down_up_blur(image, burn_scale, func)
+
+    image = np.clip(image, 0, None)
 
     return image
 
