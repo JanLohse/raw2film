@@ -189,6 +189,7 @@ def process_image(
             bw_grain=grain == 1,
             adx=False,
         )
+        np.clip(image, 0, None, out=image)
 
     if highlight_burn and (
         print_film is not None or negative_film.density_measure in ["status_m", "bw"]
