@@ -4,6 +4,7 @@ import time
 import traceback
 
 import numpy as np
+import wgpu
 from PyQt6.QtCore import (
     QObject,
     QRunnable,
@@ -16,6 +17,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -25,6 +27,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from wgpu import TextureUsage, get_default_device
 
 
 class WorkerSignals(QObject):
@@ -67,9 +70,230 @@ class CpuGenerator:
         assert not self.running, "Multiple generations triggered at once."
         self.running = True
         time.sleep(sleep_time)
-        image = self.rng.integers(0, 255, (width, height, 3), dtype=np.uint8)
+        start = time.time()
+        # Use (height, width, channels) — height first
+        image = self.rng.integers(0, 255, (height, width, 3), dtype=np.uint8)
+        print(f"cpu: {time.time() - start:.4f}s")
         self.running = False
         return image
+
+
+class GpuGenerator:
+    def __init__(self):
+        self.rng = np.random.default_rng()
+        self.running = False
+        self.device = get_default_device()
+        self.queue = self.device.queue
+        self.texture = None
+        self.texture_view = None
+        self.width = None
+        self.height = None
+        self.pipeline = None
+        self.bind_group = None
+        self.seed_buffer = None
+        self.seed = 0
+
+        self.setup_shader()
+        self.update_seed_buffer()
+
+    def setup_shader(self):
+        shader_source = """
+        @group(0) @binding(0)
+        var outputTex : texture_storage_2d<rgba8unorm, write>;
+
+        @group(0) @binding(1)
+        var<uniform> seed : u32;
+
+        fn hash(x: u32) -> u32 {
+            var v = x;
+            v ^= v >> 16u;
+            v *= 0x7feb352du;
+            v ^= v >> 15u;
+            v *= 0x846ca68bu;
+            v ^= v >> 16u;
+            return v;
+        }
+
+        fn randomFloat(seed: u32) -> f32 {
+            return f32(hash(seed)) / 4294967296.0;
+        }
+
+        @compute @workgroup_size(8, 8)
+        fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+            let size = textureDimensions(outputTex);
+
+            if (gid.x >= size.x || gid.y >= size.y) {
+                return;
+            }
+
+            let pixelIndex = gid.y * size.x + gid.x;
+
+            let base = pixelIndex * 3u;
+
+            let r = randomFloat(base + 0u + seed);
+            let g = randomFloat(base + 1u + seed);
+            let b = randomFloat(base + 2u + seed);
+
+            textureStore(
+                outputTex,
+                vec2<i32>(gid.xy),
+                vec4<f32>(r, g, b, 1.0)
+            );
+        }
+        """
+
+        shader = self.device.create_shader_module(code=shader_source)
+
+        self.pipeline = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={
+                "module": shader,
+                "entry_point": "main",
+            },
+        )
+
+    def setup_bind_group(self):
+        self.bind_group = self.device.create_bind_group(
+            layout=self.pipeline.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.texture_view},
+                {"binding": 1, "resource": {"buffer": self.seed_buffer}},
+            ],
+        )
+
+    def run_shader(self):
+        command_encoder = self.device.create_command_encoder()
+
+        compute_pass = command_encoder.begin_compute_pass()
+
+        compute_pass.set_pipeline(self.pipeline)
+        compute_pass.set_bind_group(0, self.bind_group)
+
+        workgroup_size = 8
+
+        compute_pass.dispatch_workgroups(
+            (self.width + workgroup_size - 1) // workgroup_size,
+            (self.height + workgroup_size - 1) // workgroup_size,
+            1,
+        )
+
+        compute_pass.end()
+
+        self.queue.submit([command_encoder.finish()])
+
+    def update_seed_buffer(self):
+        self.seed_buffer = self.device.create_buffer(
+            size=4,
+            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+        )
+
+    def generate_new(self, width, height, sleep_time=0.5):
+        assert not self.running, "Multiple generations triggered at once."
+        self.running = True
+        time.sleep(sleep_time)
+
+        start_total = time.time()
+
+        # Create texture sized width x height with RGBA8 format
+        self.prepare_texture(width, height)
+
+        self.seed = np.random.randint(0, 2**32 - 1, dtype=np.uint32)
+
+        self.queue.write_buffer(self.seed_buffer, 0, self.seed.tobytes())
+        print(f"prepare: {time.time() - start_total:.4f}s")
+        start = time.time()
+        self.run_shader()
+        print(f"shader:  {time.time() - start:.4f}s")
+        start = time.time()
+
+        # Read back the texture into an array of uint8 and drop alpha
+        image_rgba = self.read_texture(
+            self.texture, width, height
+        )  # returns uint8 HxWx4
+        image_rgb = image_rgba[..., 0:3]  # H x W x 3
+        print(f"read:    {time.time() - start:.4f}s")
+
+        print(f"total:   {time.time() - start_total:.4f}s")
+
+        self.running = False
+        return image_rgb
+
+    def prepare_texture(self, width, height):
+        if self.width == width and self.height == height:
+            return
+
+        self.texture = self.device.create_texture(
+            size={
+                "width": width,
+                "height": height,
+                "depth_or_array_layers": 1,
+            },
+            format=wgpu.TextureFormat.rgba8unorm,
+            usage=(
+                TextureUsage.STORAGE_BINDING
+                | TextureUsage.TEXTURE_BINDING
+                | TextureUsage.COPY_SRC
+            ),
+        )
+
+        self.texture_view = self.texture.create_view()
+
+        self.width = width
+        self.height = height
+
+        self.setup_bind_group()
+
+    def read_texture(self, texture, width, height):
+        # For an 8-bit RGBA texture, bytes_per_pixel = 4
+        bytes_per_pixel = 4
+        row_bytes = width * bytes_per_pixel
+        # GPU copy-to-buffer often requires rows to be 256-byte-aligned
+        padded_row_bytes = ((row_bytes + 255) // 256) * 256
+        buffer_size = padded_row_bytes * height
+
+        readback_buffer = self.device.create_buffer(
+            size=buffer_size,
+            usage=wgpu.BufferUsage.COPY_DST | wgpu.BufferUsage.MAP_READ,
+        )
+
+        encoder = self.device.create_command_encoder()
+
+        encoder.copy_texture_to_buffer(
+            {
+                "texture": texture,
+                "mip_level": 0,
+                "origin": (0, 0, 0),
+            },
+            {
+                "buffer": readback_buffer,
+                "offset": 0,
+                "bytes_per_row": padded_row_bytes,
+                "rows_per_image": height,
+            },
+            {
+                "width": width,
+                "height": height,
+                "depth_or_array_layers": 1,
+            },
+        )
+
+        self.queue.submit([encoder.finish()])
+
+        readback_buffer.map_sync(wgpu.MapMode.READ)
+        data = readback_buffer.read_mapped()
+        readback_buffer.unmap()
+
+        # Interpret as uint8
+        array = np.frombuffer(data, dtype=np.uint8)
+
+        # Each mapped row has padded_row_bytes bytes; reshape to
+        # (height, padded_row_bytes)
+        array = array.reshape((height, padded_row_bytes))
+
+        # Now reshape to (height, padded_row_bytes//4, 4) and slice to actual width
+        array = array.reshape((height, padded_row_bytes // 4, 4))[:, :width, :]
+
+        return array  # dtype=uint8, shape (height, width, 4)
 
 
 class MainWindow(QMainWindow):
@@ -90,15 +314,20 @@ class MainWindow(QMainWindow):
         refresh_slider.setFixedHeight(25)
         refresh_slider.valueChanged.connect(self.trigger_update)
 
+        self.gpu_checker = QCheckBox("GPU")
+        self.gpu_checker.checkStateChanged.connect(self.trigger_update)
+
         side_bar = QVBoxLayout()
         side_bar.addWidget(refresh_button)
         side_bar.addWidget(refresh_slider)
+        side_bar.addWidget(self.gpu_checker)
         side_bar.addStretch()
 
         side_bar_widget = QWidget()
         side_bar_widget.setLayout(side_bar)
 
         self.cpu_generator = CpuGenerator()
+        self.gpu_generator = GpuGenerator()
 
         page_splitter = QSplitter()
         page_splitter.addWidget(self.image)
@@ -145,7 +374,14 @@ class MainWindow(QMainWindow):
         width = min(width, math.floor(height * ratio))
         height = min(height, math.floor(width // ratio))
 
-        image = self.cpu_generator.generate_new(width, height)
+        if self.gpu_checker.isChecked():
+            generator = self.gpu_generator
+        else:
+            generator = self.cpu_generator
+
+        image = generator.generate_new(width, height, sleep_time=0.0)
+
+        image = np.ascontiguousarray(image)
 
         image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(image)

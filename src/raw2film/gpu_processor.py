@@ -449,9 +449,6 @@ class GpuProcessor:
         self.queue.submit([encoder.finish()])
 
     def read_texture(self, texture, width, height):
-        import numpy as np
-        import wgpu
-
         bytes_per_pixel = 16  # rgba32float
         row_bytes = width * bytes_per_pixel
         padded_row_bytes = ((row_bytes + 255) // 256) * 256
