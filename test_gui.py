@@ -69,10 +69,8 @@ class CpuGenerator:
         assert not self.running, "Multiple generations triggered at once."
         self.running = True
         time.sleep(sleep_time)
-        start = time.time()
         # Use (height, width, channels) — height first
         image = self.rng.integers(0, 255, (height, width, 3), dtype=np.uint8)
-        print(f"cpu: {time.time() - start:.4f}s")
         self.running = False
         return image
 
@@ -151,11 +149,11 @@ class GpuGenerator:
             },
         )
 
-    def setup_bind_group(self):
+    def setup_bind_group(self, texture):
         self.bind_group = self.device.create_bind_group(
             layout=self.pipeline.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.texture_view},
+                {"binding": 0, "resource": texture.create_view()},
                 {"binding": 1, "resource": {"buffer": self.seed_buffer}},
             ],
         )
@@ -186,33 +184,34 @@ class GpuGenerator:
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
-    def generate_new(self, width, height, sleep_time=0.5):
+    def generate_new(self, width, height, sleep_time=0.5, target_texture=None):
         assert not self.running, "Multiple generations triggered at once."
         self.running = True
         time.sleep(sleep_time)
 
-        start_total = time.time()
-
         # Create texture sized width x height with RGBA8 format
-        self.prepare_texture(width, height)
+        if target_texture is None:
+            self.prepare_texture(width, height)
+
+            self.setup_bind_group(self.texture)
+        else:
+            self.width, self.height, _ = target_texture.size
+            self.setup_bind_group(target_texture)
 
         self.seed = np.random.randint(0, 2**32 - 1, dtype=np.uint32)
 
         self.queue.write_buffer(self.seed_buffer, 0, self.seed.tobytes())
-        print(f"prepare: {time.time() - start_total:.4f}s")
-        start = time.time()
         self.run_shader()
-        print(f"shader:  {time.time() - start:.4f}s")
-        start = time.time()
+
+        if target_texture is not None:
+            self.running = False
+            return
 
         # Read back the texture into an array of uint8 and drop alpha
         image_rgba = self.read_texture(
             self.texture, width, height
         )  # returns uint8 HxWx4
         image_rgb = image_rgba[..., 0:3]  # H x W x 3
-        print(f"read:    {time.time() - start:.4f}s")
-
-        print(f"total:   {time.time() - start_total:.4f}s")
 
         self.running = False
         return image_rgb
@@ -235,12 +234,8 @@ class GpuGenerator:
             ),
         )
 
-        self.texture_view = self.texture.create_view()
-
         self.width = width
         self.height = height
-
-        self.setup_bind_group()
 
     def read_texture(self, texture, width, height):
         # For an 8-bit RGBA texture, bytes_per_pixel = 4
@@ -304,7 +299,8 @@ class MainWindow(QMainWindow):
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
         self.image.setMinimumSize(QSize(256, 256))
-        self.image_bitmap_context = self.image.get_bitmap_context()
+        self.image_context = None
+        self.context_mode = None
 
         refresh_button = QPushButton("press me")
         refresh_button.setFixedHeight(25)
@@ -329,13 +325,13 @@ class MainWindow(QMainWindow):
         self.cpu_generator = CpuGenerator()
         self.gpu_generator = GpuGenerator()
 
-        page_splitter = QSplitter()
-        page_splitter.addWidget(self.image)
-        page_splitter.addWidget(side_bar_widget)
-        page_splitter.setStretchFactor(0, 1)
-        page_splitter.setStretchFactor(1, 0)
+        self.page_splitter = QSplitter()
+        self.page_splitter.addWidget(self.image)
+        self.page_splitter.addWidget(side_bar_widget)
+        self.page_splitter.setStretchFactor(0, 1)
+        self.page_splitter.setStretchFactor(1, 0)
 
-        self.setCentralWidget(page_splitter)
+        self.setCentralWidget(self.page_splitter)
 
         self.running = False
         self.waiting = False
@@ -360,47 +356,84 @@ class MainWindow(QMainWindow):
 
         if self.waiting:
             self.waiting = False
-            self.start_worker(self.update_image)
+            self.trigger_update()
 
     def trigger_update(self):
+        self.create_context()
         self.start_worker(self.update_image)
 
     def resizeEvent(self, a0):
         self.trigger_update()
         super().resizeEvent(a0)
 
+    def create_context(self):
+        target_mode = "wgpu" if self.gpu_checker.isChecked() else "bitmap"
+        if self.context_mode == target_mode:
+            return
+        self.context_mode = target_mode
+        old_image = self.image
+        self.image = QRenderWidget(update_mode="ondemand")
+        self.page_splitter.insertWidget(0, self.image)
+        old_image.setParent(None)
+        old_image.deleteLater()
+        self.image.setSizePolicy(
+            QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        )
+        self.image.setMinimumSize(QSize(256, 256))
+        if self.context_mode == "wgpu":
+            self.image_context = self.image.get_wgpu_context()
+            self.image_context.configure(
+                device=self.gpu_generator.device,
+                format=wgpu.TextureFormat.rgba8unorm,
+                usage=TextureUsage.STORAGE_BINDING,
+            )
+        elif self.context_mode == "bitmap":
+            self.image_context = self.image.get_bitmap_context()
+
     def update_image(self, ratio=1.5, **_):
         """Runs inside the background Worker thread"""
-        full_width, full_height = self.image_bitmap_context.physical_size
+        start = time.time()
+
+        full_width, full_height = self.image_context.physical_size
 
         if full_width <= 0 or full_height <= 0:
             return
 
-        canvas_rgba = np.zeros((full_height, full_width, 4), dtype=np.uint8)
-
         img_width = min(full_width, math.floor(full_height * ratio))
         img_height = min(full_height, math.floor(full_width // ratio))
 
-        if self.gpu_checker.isChecked():
-            generator = self.gpu_generator
-        else:
-            generator = self.cpu_generator
+        if self.context_mode == "wgpu":
+            self.gpu_generator.generate_new(
+                img_width,
+                img_height,
+                sleep_time=0.0,
+                target_texture=self.image_context.get_current_texture(),
+            )
+        elif self.context_mode == "bitmap":
+            canvas_rgba = np.zeros((full_height, full_width, 4), dtype=np.uint8)
 
-        image = generator.generate_new(img_width, img_height, sleep_time=0.0)
-        image = np.ascontiguousarray(image)
+            image = self.cpu_generator.generate_new(
+                img_width,
+                img_height,
+                sleep_time=0.0,
+            )
+            image = np.ascontiguousarray(image)
 
-        y_offset = (full_height - img_height) // 2
-        x_offset = (full_width - img_width) // 2
+            y_offset = (full_height - img_height) // 2
+            x_offset = (full_width - img_width) // 2
 
-        canvas_rgba[
-            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 0:3
-        ] = image
-        canvas_rgba[
-            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 3
-        ] = 255
+            canvas_rgba[
+                y_offset : y_offset + img_height, x_offset : x_offset + img_width, 0:3
+            ] = image
+            canvas_rgba[
+                y_offset : y_offset + img_height, x_offset : x_offset + img_width, 3
+            ] = 255
 
-        self.image_bitmap_context.set_bitmap(canvas_rgba)
+            self.image_context.set_bitmap(canvas_rgba)
+
         self.image.request_draw()
+
+        print(f"{time.time() - start:.4f}s")
 
 
 if __name__ == "__main__":
