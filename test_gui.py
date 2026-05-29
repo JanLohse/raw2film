@@ -14,11 +14,9 @@ from PyQt6.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QLabel,
     QMainWindow,
     QPushButton,
     QSizePolicy,
@@ -27,6 +25,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from rendercanvas.qt import QRenderWidget
 from wgpu import TextureUsage, get_default_device
 
 
@@ -300,11 +299,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.image = QLabel("show some image")
+        self.image = QRenderWidget(update_mode="ondemand")
         self.image.setSizePolicy(
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
         self.image.setMinimumSize(QSize(256, 256))
+        self.image_bitmap_context = self.image.get_bitmap_context()
 
         refresh_button = QPushButton("press me")
         refresh_button.setFixedHeight(25)
@@ -355,7 +355,9 @@ class MainWindow(QMainWindow):
         self.threadpool.start(worker)
 
     def update_finished(self):
+        """Runs safely on the Main GUI Thread when the worker finishes"""
         self.running = False
+
         if self.waiting:
             self.waiting = False
             self.start_worker(self.update_image)
@@ -368,25 +370,37 @@ class MainWindow(QMainWindow):
         super().resizeEvent(a0)
 
     def update_image(self, ratio=1.5, **_):
-        pixel_ratio = self.devicePixelRatioF()
-        width = math.floor(self.image.width() * pixel_ratio)
-        height = math.floor(self.image.height() * pixel_ratio)
-        width = min(width, math.floor(height * ratio))
-        height = min(height, math.floor(width // ratio))
+        """Runs inside the background Worker thread"""
+        full_width, full_height = self.image_bitmap_context.physical_size
+
+        if full_width <= 0 or full_height <= 0:
+            return
+
+        canvas_rgba = np.zeros((full_height, full_width, 4), dtype=np.uint8)
+
+        img_width = min(full_width, math.floor(full_height * ratio))
+        img_height = min(full_height, math.floor(full_width // ratio))
 
         if self.gpu_checker.isChecked():
             generator = self.gpu_generator
         else:
             generator = self.cpu_generator
 
-        image = generator.generate_new(width, height, sleep_time=0.0)
-
+        image = generator.generate_new(img_width, img_height, sleep_time=0.0)
         image = np.ascontiguousarray(image)
 
-        image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(image)
-        pixmap.setDevicePixelRatio(pixel_ratio)
-        self.image.setPixmap(pixmap)
+        y_offset = (full_height - img_height) // 2
+        x_offset = (full_width - img_width) // 2
+
+        canvas_rgba[
+            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 0:3
+        ] = image
+        canvas_rgba[
+            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 3
+        ] = 255
+
+        self.image_bitmap_context.set_bitmap(canvas_rgba)
+        self.image.request_draw()
 
 
 if __name__ == "__main__":
