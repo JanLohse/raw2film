@@ -1,5 +1,4 @@
 import struct
-import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -72,6 +71,12 @@ class GpuProcessor:
         lut_3d_shader_code = lut_3d_shader_path.read_text()
         self.lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
 
+        copy_to_int_shader_path = Path(__file__).parent / "shaders/copy_to_int.wgsl"
+        copy_to_int_shader_code = copy_to_int_shader_path.read_text()
+        self.copy_to_int_shader = self.device.create_shader_module(
+            code=copy_to_int_shader_code
+        )
+
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": self.lut_1d_shader, "entry_point": "main"}
@@ -81,6 +86,10 @@ class GpuProcessor:
         )
         self.pipeline_lut_3d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": self.lut_3d_shader, "entry_point": "main"}
+        )
+        self.pipeline_copy_to_int = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": self.copy_to_int_shader, "entry_point": "main"},
         )
 
         # Init gpu textures
@@ -493,12 +502,66 @@ class GpuProcessor:
 
         return array
 
+    def copy_to_dst(self, src_texture, dst_texture):
+        src_w, src_h, _ = src_texture.size
+        dst_w, dst_h, _ = dst_texture.size
+        offset_x = (dst_w - src_w) // 2
+        offset_y = (dst_h - src_h) // 2
+
+        encoder = self.device.create_command_encoder()
+
+        view = dst_texture.create_view()
+        render_pass = encoder.begin_render_pass(
+            color_attachments=[
+                {
+                    "view": view,
+                    "clear_value": (0.0, 0.0, 0.0, 0.0),
+                    "load_op": wgpu.LoadOp.clear,
+                    "store_op": wgpu.StoreOp.store,
+                }
+            ]
+        )
+        render_pass.end()
+
+        offset_data = struct.pack("ii", offset_x, offset_y)
+        uniform_buffer = self.device.create_buffer_with_data(
+            data=offset_data, usage=wgpu.BufferUsage.UNIFORM
+        )
+
+        bind_group = self.device.create_bind_group(
+            layout=self.pipeline_copy_to_int.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": src_texture.create_view()},
+                {"binding": 1, "resource": view},
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": uniform_buffer,
+                        "offset": 0,
+                        "size": len(offset_data),
+                    },
+                },
+            ],
+        )
+
+        compute_pass = encoder.begin_compute_pass()
+        compute_pass.set_pipeline(self.pipeline_copy_to_int)
+        compute_pass.set_bind_group(0, bind_group)
+
+        dispatch_x = (src_w + 15) // 16
+        dispatch_y = (src_h + 15) // 16
+        compute_pass.dispatch_workgroups(dispatch_x, dispatch_y)
+        compute_pass.end()
+
+        self.device.queue.submit([encoder.finish()])
+
     def process(
         self,
         src: str,
         negative_film: FilmSpectral,
         grain_size: float,
         grain_sigma: float,
+        dst_texture: None,
         lens_correction: bool = True,
         print_film: FilmSpectral | None = None,
         exp_comp: float = 0.0,
@@ -543,9 +606,8 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         **_,
-    ):
+    ) -> np.ndarray | None:
         # Update textures
-        start = time.time()
         self.load_image_texture(
             src,
             cam,
@@ -580,8 +642,6 @@ class GpuProcessor:
             white_clip,
             icc_transform,
         )
-        print(f"loading {time.time() - start:.4f}s")
-        start = time.time()
         self._dispatch(
             self.pipeline_lut_2d,
             self._bind_lut_2d(),
@@ -597,12 +657,16 @@ class GpuProcessor:
             self._bind_lut_3d(),
             (self.width, self.height),
         )
-        print(f"dispatch {time.time() - start:.4f}s")
-        start = time.time()
 
-        image = self.read_texture(self.tex_a.texture, self.width, self.height)[..., 0:3]
+        if dst_texture is None:
+            image = self.read_texture(self.tex_a.texture, self.width, self.height)[
+                ..., 0:3
+            ]
 
-        image = (np.clip(image, 0.0, 1.0) * (2**8 - 1)).astype(np.uint8)
-        print(f"read {time.time() - start:.4f}s")
+            image = (np.clip(image, 0.0, 1.0) * (2**8 - 1)).astype(np.uint8)
 
-        return image
+            return image
+        else:
+            self.copy_to_dst(self.tex_a.texture, dst_texture)
+
+            return None

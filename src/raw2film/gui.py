@@ -3,7 +3,6 @@ The main gui implementation.
 """
 
 import json
-import math
 import os
 import shutil
 import time
@@ -15,6 +14,7 @@ import imageio
 import lensfunpy
 import numpy as np
 import PIL.ImageCms
+import wgpu
 from PIL import ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
@@ -39,7 +39,6 @@ from PyQt6.QtGui import (
     QImage,
     QIntValidator,
     QKeySequence,
-    QPixmap,
     QRegularExpressionValidator,
     QShortcut,
 )
@@ -62,6 +61,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from rendercanvas.qt import QRenderWidget
 from spectral_film_lut import BASE_DIR
 from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
@@ -80,7 +80,7 @@ from raw2film.cpu_processor import CpuProcessor
 from raw2film.gpu_processor import GpuProcessor
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import raw_to_linear
-from raw2film.utils import add_metadata, generate_histogram, load_metadata
+from raw2film.utils import add_metadata, load_metadata
 
 
 class MultiWorker(QObject):
@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
         self.histogram.setMinimumSize(0, 80)
 
         page_splitter = QSplitter(Qt.Orientation.Vertical)
-        top_splitter = QSplitter()
+        self.top_splitter = QSplitter()
         sidebar_widget = QWidget()
         sidebar_layout = QVBoxLayout(sidebar_widget)
         sidebar_layout.addWidget(self.histogram)
@@ -340,12 +340,13 @@ class MainWindow(QMainWindow):
         scroll_area.setMinimumWidth(280)
         sidebar_container_layout.addWidget(scroll_area)
 
-        self.image = QLabel("Select a reference image for the preview")
-        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image = QRenderWidget(update_mode="ondemand")
         self.image.setSizePolicy(
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
         self.image.setMinimumSize(QSize(256, 256))
+        self.image_context = None
+        self.context_mode = None
 
         self.image_bar = ImageBar()
         image_bar_container = QFrame(self)
@@ -354,20 +355,20 @@ class MainWindow(QMainWindow):
         image_bar_container_layout.setContentsMargins(4, 4, 4, 4)
         image_bar_container_layout.addWidget(self.image_bar)
 
-        page_splitter.addWidget(top_splitter)
+        page_splitter.addWidget(self.top_splitter)
         page_splitter.addWidget(image_bar_container)
         page_splitter.setContentsMargins(8, 8, 8, 8)
-        top_splitter.setContentsMargins(0, 0, 0, 0)
+        self.top_splitter.setContentsMargins(0, 0, 0, 0)
 
         page_splitter.setStretchFactor(0, 1)
         page_splitter.setStretchFactor(1, 0)
 
-        top_splitter.addWidget(self.image)
+        self.top_splitter.addWidget(self.image)
         sidebar_layout.addWidget(sidebar_container)
-        top_splitter.addWidget(sidebar_widget)
-        top_splitter.setStretchFactor(0, 1)
-        top_splitter.setStretchFactor(1, 0)
-        top_splitter.setSizes([100, 320])
+        self.top_splitter.addWidget(sidebar_widget)
+        self.top_splitter.setStretchFactor(0, 1)
+        self.top_splitter.setStretchFactor(1, 0)
+        self.top_splitter.setSizes([100, 320])
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
@@ -424,7 +425,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.full_preview)
         self.gpu_processing = QAction("GPU rendering", self)
         self.gpu_processing.setCheckable(True)
-        self.gpu_processing.setChecked(True)
+        self.gpu_processing.setChecked(False)
         view_menu.addAction(self.gpu_processing)
         self.half_res_preview = QAction("Half res. preview", self)
         self.half_res_preview.setCheckable(True)
@@ -1522,9 +1523,35 @@ class MainWindow(QMainWindow):
 
         self.load_profile_params()
 
-        print(scroll_area.styleSheet())
-
         QTimer.singleShot(0, self.test_exiftool)
+
+    def create_context(self):
+        target_mode = "wgpu" if self.gpu_processing.isChecked() else "bitmap"
+        if self.context_mode == target_mode:
+            return
+        self.context_mode = target_mode
+        old_image = self.image
+        self.image = QRenderWidget(update_mode="ondemand")
+        self.top_splitter.insertWidget(0, self.image)
+        old_image.setParent(None)
+        old_image.deleteLater()
+        self.image.setSizePolicy(
+            QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        )
+        self.image.setMinimumSize(QSize(256, 256))
+        if self.context_mode == "wgpu":
+            self.image_context = self.image.get_wgpu_context()
+            self.image_context.configure(
+                device=self.gpu_processor.device,
+                format=wgpu.TextureFormat.rgba8unorm,
+                usage=(
+                    wgpu.TextureUsage.COPY_DST
+                    | wgpu.TextureUsage.RENDER_ATTACHMENT
+                    | wgpu.TextureUsage.STORAGE_BINDING
+                ),
+            )
+        elif self.context_mode == "bitmap":
+            self.image_context = self.image.get_bitmap_context()
 
     def test_exiftool(self):
         try:
@@ -1948,6 +1975,7 @@ class MainWindow(QMainWindow):
         self.running = False
         if self.waiting:
             self.waiting = False
+            self.create_context()
             self.start_worker(self.update_preview)
 
     def progress_fn(self, n):
@@ -1955,6 +1983,7 @@ class MainWindow(QMainWindow):
 
     def parameter_changed(self, src=None):
         if self.active:
+            self.create_context()
             self.start_worker(self.update_preview, src=src)
 
     def start_worker(self, function, semaphore=True, *args, **kwargs):
@@ -1969,7 +1998,32 @@ class MainWindow(QMainWindow):
             worker.signals.finished.connect(self.update_finished)
         self.threadpool.start(worker)
 
+    def numpy_to_canvas(
+        self,
+        image: np.ndarray,
+        full_height: int,
+        full_width: int,
+        img_height: int,
+        img_width: int,
+    ):
+        canvas_rgba = np.zeros((full_height, full_width, 4), dtype=np.uint8)
+
+        image = np.ascontiguousarray(image)
+
+        y_offset = (full_height - img_height) // 2
+        x_offset = (full_width - img_width) // 2
+
+        canvas_rgba[
+            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 0:3
+        ] = image
+        canvas_rgba[
+            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 3
+        ] = 255
+
+        self.image_context.set_bitmap(canvas_rgba)
+
     def update_preview(self, src=None, *args, **kwargs):
+        start = time.time()
         if src is None:
             if self.image_bar.current_image() is None:
                 return
@@ -1981,6 +2035,9 @@ class MainWindow(QMainWindow):
             return
         else:
             self.load_image_params(src_short)
+
+        full_width, full_height = self.image_context.physical_size
+
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
@@ -1997,16 +2054,16 @@ class MainWindow(QMainWindow):
                 processing_args["print_film"]
             ]
 
-        pixel_ratio = self.devicePixelRatioF()
         processing_args["resolution"] = (
-            math.floor(self.image.height() * pixel_ratio),
-            math.floor(self.image.width() * pixel_ratio),
+            full_height,
+            full_width,
         )
-        if self.half_res_preview.isChecked():
-            processing_args["resolution"] = tuple(
-                x // 2 for x in processing_args["resolution"]
-            )
-            processing_args["half_res"] = True
+        # TODO: restore half res preview
+        # if self.half_res_preview.isChecked():
+        #     processing_args["resolution"] = tuple(
+        #         x // 2 for x in processing_args["resolution"]
+        #     )
+        #     processing_args["half_res"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False
@@ -2014,34 +2071,40 @@ class MainWindow(QMainWindow):
             processing_args["chroma_nr"] = 0
 
         if self.gpu_processing.isChecked():
-            processor = self.gpu_processor
-        else:
-            processor = self.cpu_processor
-
-        image = processor.process(
-            src,
-            icc_transform=self.icc_transform,
-            **processing_args,
-        )
-        height, width, _ = image.shape
-        histogram = generate_histogram(image, height=80)
-        histogram = QPixmap.fromImage(
-            QImage(
-                histogram,
-                histogram.shape[1],
-                histogram.shape[0],
-                3 * histogram.shape[1],
-                QImage.Format.Format_RGB888,
+            self.gpu_processor.process(
+                src,
+                icc_transform=self.icc_transform,
+                dst_texture=self.image_context.get_current_texture(),
+                **processing_args,
             )
-        )
-        self.histogram.setPixmap(histogram)
+        else:
+            image = self.cpu_processor.process(
+                src,
+                icc_transform=self.icc_transform,
+                **processing_args,
+            )
+            img_height, img_width, _ = image.shape
+            self.numpy_to_canvas(image, full_height, full_width, img_height, img_width)
 
-        image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(image)
-        pixmap.setDevicePixelRatio(pixel_ratio)
-
-        self.image.setPixmap(pixmap)
+        self.image.request_draw()
         self.image.setToolTip(src)
+        # TODO: restore histogram
+        # histogram = generate_histogram(image, height=80)
+        # histogram = QPixmap.fromImage(
+        #     QImage(
+        #         histogram,
+        #         histogram.shape[1],
+        #         histogram.shape[0],
+        #         3 * histogram.shape[1],
+        #         QImage.Format.Format_RGB888,
+        #     )
+        # )
+        # self.histogram.setPixmap(histogram)
+        #
+        # image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
+        # pixmap = QPixmap.fromImage(image)
+        # pixmap.setDevicePixelRatio(pixel_ratio)
+        print(f"{time.time() - start:.4f}s")
 
     def setup_image_params(self, src):
         image_params = {**self.dflt_img_params, **self.image_params[src]}
@@ -2060,6 +2123,7 @@ class MainWindow(QMainWindow):
         resolution=None,
         **kwargs,
     ):
+        # TODO: fix/test for gpu pipeline
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
