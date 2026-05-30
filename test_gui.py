@@ -184,19 +184,46 @@ class GpuGenerator:
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
+    def copy_to_dst(self, src_texture, dst_texture):
+        src_w, src_h, _ = src_texture.size
+        dst_w, dst_h, _ = dst_texture.size
+        offset_x = (dst_w - src_w) // 2
+        offset_y = (dst_h - src_h) // 2
+
+        encoder = self.device.create_command_encoder()
+
+        view = dst_texture.create_view()
+
+        render_pass = encoder.begin_render_pass(
+            color_attachments=[
+                {
+                    "view": view,
+                    "clear_value": (0.0, 0.0, 0.0, 0.0),
+                    "load_op": wgpu.LoadOp.clear,
+                    "store_op": wgpu.StoreOp.store,
+                }
+            ]
+        )
+        render_pass.end()
+
+        encoder.copy_texture_to_texture(
+            {
+                "texture": src_texture,
+                "origin": (0, 0, 0),
+            },
+            {"texture": dst_texture, "origin": (offset_x, offset_y, 0)},
+            (src_w, src_h, 1),
+        )
+
+        self.device.queue.submit([encoder.finish()])
+
     def generate_new(self, width, height, sleep_time=0.5, target_texture=None):
         assert not self.running, "Multiple generations triggered at once."
         self.running = True
         time.sleep(sleep_time)
 
-        # Create texture sized width x height with RGBA8 format
-        if target_texture is None:
-            self.prepare_texture(width, height)
-
-            self.setup_bind_group(self.texture)
-        else:
-            self.width, self.height, _ = target_texture.size
-            self.setup_bind_group(target_texture)
+        self.prepare_texture(width, height)
+        self.setup_bind_group(self.texture)
 
         self.seed = np.random.randint(0, 2**32 - 1, dtype=np.uint32)
 
@@ -204,17 +231,19 @@ class GpuGenerator:
         self.run_shader()
 
         if target_texture is not None:
+            self.copy_to_dst(self.texture, target_texture)
+
             self.running = False
-            return
 
-        # Read back the texture into an array of uint8 and drop alpha
-        image_rgba = self.read_texture(
-            self.texture, width, height
-        )  # returns uint8 HxWx4
-        image_rgb = image_rgba[..., 0:3]  # H x W x 3
+        else:
+            # Read back the texture into an array of uint8 and drop alpha
+            image_rgba = self.read_texture(
+                self.texture, width, height
+            )  # returns uint8 HxWx4
+            image_rgb = image_rgba[..., 0:3]  # H x W x 3
 
-        self.running = False
-        return image_rgb
+            self.running = False
+            return image_rgb
 
     def prepare_texture(self, width, height):
         if self.width == width and self.height == height:
@@ -385,7 +414,7 @@ class MainWindow(QMainWindow):
             self.image_context.configure(
                 device=self.gpu_generator.device,
                 format=wgpu.TextureFormat.rgba8unorm,
-                usage=TextureUsage.STORAGE_BINDING,
+                usage=(TextureUsage.COPY_DST | TextureUsage.RENDER_ATTACHMENT),
             )
         elif self.context_mode == "bitmap":
             self.image_context = self.image.get_bitmap_context()
