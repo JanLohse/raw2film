@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.full_preview)
         self.gpu_processing = QAction("GPU rendering", self)
         self.gpu_processing.setCheckable(True)
-        self.gpu_processing.setChecked(False)
+        self.gpu_processing.setChecked(True)
         view_menu.addAction(self.gpu_processing)
         self.half_res_preview = QAction("Half res. preview", self)
         self.half_res_preview.setCheckable(True)
@@ -2104,7 +2104,7 @@ class MainWindow(QMainWindow):
         # image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
         # pixmap = QPixmap.fromImage(image)
         # pixmap.setDevicePixelRatio(pixel_ratio)
-        print(f"{time.time() - start:.4f}s")
+        print(f"total {time.time() - start:.4f}s")
 
     def setup_image_params(self, src):
         image_params = {**self.dflt_img_params, **self.image_params[src]}
@@ -2123,7 +2123,7 @@ class MainWindow(QMainWindow):
         resolution=None,
         **kwargs,
     ):
-        # TODO: fix/test for gpu pipeline
+        start = time.time()
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -2192,6 +2192,7 @@ class MainWindow(QMainWindow):
         add_metadata(path + filename, metadata, exp_comp=processing_args["exp_comp"])
         if close:
             self.image_bar.close_single_image(src)
+        print(f"exported {time.time() - start:.4f}s")
         return f"exported {filename}"
 
     def save_image_dialog(self):

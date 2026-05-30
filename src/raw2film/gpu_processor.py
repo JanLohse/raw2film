@@ -1,4 +1,5 @@
 import struct
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -96,6 +97,7 @@ class GpuProcessor:
         self.tex_input = None
         self.tex_a = None
         self.tex_b = None
+        self.tex_int_out = None
 
         self.tex_lut_1d = None
         self.tex_lut_2d = None
@@ -140,6 +142,9 @@ class GpuProcessor:
             self.tex_input = GpuTexture(self.device, (w, h))
             self.tex_a = GpuTexture(self.device, (w, h))
             self.tex_b = GpuTexture(self.device, (w, h))
+            self.tex_int_out = GpuTexture(
+                self.device, (w, h), format=wgpu.TextureFormat.rgba8unorm
+            )
 
         self.tex_input.upload(self.queue, image)
 
@@ -403,22 +408,22 @@ class GpuProcessor:
 
         self.output_param_dict = new_param_dict
 
-    def _bind_lut_2d(self):
+    def _bind_lut_2d(self, tex_a, tex_b):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_2d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_input.view},
-                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 0, "resource": tex_a.view},
+                {"binding": 1, "resource": tex_b.view},
                 {"binding": 2, "resource": self.tex_lut_2d_view},
             ],
         )
 
-    def _bind_lut_1d(self):
+    def _bind_lut_1d(self, tex_a, tex_b):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_1d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_a.view},
-                {"binding": 1, "resource": self.tex_b.view},
+                {"binding": 0, "resource": tex_a.view},
+                {"binding": 1, "resource": tex_b.view},
                 {"binding": 2, "resource": self.tex_lut_1d_view},
                 {
                     "binding": 3,
@@ -431,12 +436,12 @@ class GpuProcessor:
             ],
         )
 
-    def _bind_lut_3d(self):
+    def _bind_lut_3d(self, tex_a, tex_b):
         return self.device.create_bind_group(
             layout=self.pipeline_lut_3d.get_bind_group_layout(0),
             entries=[
-                {"binding": 0, "resource": self.tex_b.view},
-                {"binding": 1, "resource": self.tex_a.view},
+                {"binding": 0, "resource": tex_a.view},
+                {"binding": 1, "resource": tex_b.view},
                 {"binding": 2, "resource": self.tex_lut_3d.create_view()},
             ],
         )
@@ -458,7 +463,8 @@ class GpuProcessor:
         self.queue.submit([encoder.finish()])
 
     def read_texture(self, texture, width, height):
-        bytes_per_pixel = 16  # rgba32float
+        # rgba8unorm uses 4 bytes per pixel (1 byte per channel)
+        bytes_per_pixel = 4
         row_bytes = width * bytes_per_pixel
         padded_row_bytes = ((row_bytes + 255) // 256) * 256
         buffer_size = padded_row_bytes * height
@@ -494,11 +500,11 @@ class GpuProcessor:
         data = readback_buffer.read_mapped()
         readback_buffer.unmap()
 
-        # Reshape: height rows, each row has padded_row_bytes // 4 float32 values
-        array = np.frombuffer(data, dtype=np.float32)
-        array = array.reshape((height, padded_row_bytes // 4))
-        # Each pixel is 4 floats (RGBA), so reshape and crop to actual width
-        array = array.reshape((height, padded_row_bytes // 16, 4))[:, :width, :]
+        array = np.frombuffer(data, dtype=np.uint8)
+
+        array = array.reshape((height, padded_row_bytes))
+
+        array = array.reshape((height, padded_row_bytes // 4, 4))[:, :width, :]
 
         return array
 
@@ -561,7 +567,7 @@ class GpuProcessor:
         negative_film: FilmSpectral,
         grain_size: float,
         grain_sigma: float,
-        dst_texture: None,
+        dst_texture=None,
         lens_correction: bool = True,
         print_film: FilmSpectral | None = None,
         exp_comp: float = 0.0,
@@ -607,6 +613,7 @@ class GpuProcessor:
         cache: bool = True,
         **_,
     ) -> np.ndarray | None:
+        start = time.time()
         # Update textures
         self.load_image_texture(
             src,
@@ -642,31 +649,47 @@ class GpuProcessor:
             white_clip,
             icc_transform,
         )
+
+        ping_pong_tex = [self.tex_a, self.tex_b]
+        idx = 1
+
+        print(f"loading {time.time() - start:.4f}s")
+        start = time.time()
         self._dispatch(
             self.pipeline_lut_2d,
-            self._bind_lut_2d(),
+            self._bind_lut_2d(self.tex_input, ping_pong_tex[1 - idx]),
             (self.width, self.height),
         )
+        idx = 1 - idx
+
         self._dispatch(
             self.pipeline_lut_1d,
-            self._bind_lut_1d(),
+            self._bind_lut_1d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
             (self.width, self.height),
         )
+        idx = 1 - idx
+
         self._dispatch(
             self.pipeline_lut_3d,
-            self._bind_lut_3d(),
+            self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
             (self.width, self.height),
         )
+        idx = 1 - idx
 
+        print(f"shaders {time.time() - start:.4f}s")
+        start = time.time()
         if dst_texture is None:
-            image = self.read_texture(self.tex_a.texture, self.width, self.height)[
-                ..., 0:3
-            ]
+            self.copy_to_dst(ping_pong_tex[idx].texture, self.tex_int_out.texture)
+            print(f"to int {time.time() - start:.4f}s")
+            start = time.time()
+            image = self.read_texture(
+                self.tex_int_out.texture, self.width, self.height
+            )[..., 0:3]
 
-            image = (np.clip(image, 0.0, 1.0) * (2**8 - 1)).astype(np.uint8)
-
+            print(f"to numpy {time.time() - start:.4f}s")
             return image
         else:
-            self.copy_to_dst(self.tex_a.texture, dst_texture)
+            self.copy_to_dst(ping_pong_tex[idx].texture, dst_texture)
+            print(f"to int {time.time() - start:.4f}s")
 
             return None
