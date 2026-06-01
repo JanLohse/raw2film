@@ -13,6 +13,7 @@ from spectral_film_lut.utils import create_lut
 from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
+from raw2film.effects import mtf_kernel
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
     load_metadata,
@@ -78,6 +79,12 @@ class GpuProcessor:
             code=copy_to_int_shader_code
         )
 
+        convolution_shader_path = Path(__file__).parent / "shaders/convolution.wgsl"
+        convolution_shader_code = convolution_shader_path.read_text()
+        self.convolution_shader = self.device.create_shader_module(
+            code=convolution_shader_code
+        )
+
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": self.lut_1d_shader, "entry_point": "main"}
@@ -92,6 +99,10 @@ class GpuProcessor:
             layout="auto",
             compute={"module": self.copy_to_int_shader, "entry_point": "main"},
         )
+        self.pipeline_convolution = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": self.convolution_shader, "entry_point": "main"},
+        )
 
         # Init gpu textures
         self.tex_input = None
@@ -102,6 +113,7 @@ class GpuProcessor:
         self.tex_lut_1d = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
+        self.tex_mtf_kernel = None
 
         self.buffer_params_lut_1d = None
 
@@ -110,6 +122,7 @@ class GpuProcessor:
         self.input_param_dict = None
         self.curve_param_dict = None
         self.output_param_dict = None
+        self.mtf_param_dict = None
 
         self.width = None
         self.height = None
@@ -240,6 +253,34 @@ class GpuProcessor:
             },
         )
 
+    def _ensure_mtf_kernel(self, kernel: np.ndarray):
+        size = kernel.shape[0]
+        if self.tex_mtf_kernel is None or size != self.tex_mtf_kernel.size[0]:
+            self.tex_mtf_kernel = self.device.create_texture(
+                size=(size, size, 1),
+                format=wgpu.TextureFormat.rgba32float,
+                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+            )
+            self.tex_mtf_kernel_view = self.tex_mtf_kernel.create_view()
+
+        lut_rgba = np.ones((size, size, 4), dtype=np.float32)
+
+        lut_rgba[..., 0:3] = kernel
+
+        self.queue.write_texture(
+            {"texture": self.tex_mtf_kernel},
+            lut_rgba,
+            {
+                "bytes_per_row": size * 4 * 4,
+                "rows_per_image": size,
+            },
+            {
+                "width": size,
+                "height": size,
+                "depth_or_array_layers": 1,
+            },
+        )
+
     def load_image_texture(
         self,
         src: str,
@@ -297,6 +338,27 @@ class GpuProcessor:
 
         self.height, self.width = image.shape[:2]
 
+    def load_mtf_kernel(self, negative_film: FilmSpectral, scale: float):
+        new_param_dict = {
+            "negative_film": negative_film.name,
+            "scale": scale,
+        }
+
+        if new_param_dict == self.mtf_param_dict:
+            return
+
+        mtf_kernel_np = np.stack(
+            [mtf_kernel(logf, vals, scale) for logf, vals in negative_film.mtf],
+            axis=-1,
+            dtype=DEFAULT_DTYPE,
+        )
+
+        print(mtf_kernel_np.shape)
+
+        self._ensure_mtf_kernel(mtf_kernel_np)
+
+        self.mtf_param_dict = new_param_dict
+
     def load_input_lut(
         self,
         negative_film: FilmSpectral,
@@ -317,7 +379,6 @@ class GpuProcessor:
         input_lut = negative_film.get_input_lut(exp_kelvin, tint, exp_comp)
 
         self._ensure_lut_2d(input_lut)
-        # self.tex_lut_2d = input_lut
 
         self.input_param_dict = new_param_dict
 
@@ -442,7 +503,17 @@ class GpuProcessor:
             entries=[
                 {"binding": 0, "resource": tex_a.view},
                 {"binding": 1, "resource": tex_b.view},
-                {"binding": 2, "resource": self.tex_lut_3d.create_view()},
+                {"binding": 2, "resource": self.tex_lut_3d_view},
+            ],
+        )
+
+    def _bind_mtf_kernel(self, tex_a, tex_b):
+        return self.device.create_bind_group(
+            layout=self.pipeline_convolution.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": tex_a.view},
+                {"binding": 1, "resource": tex_b.view},
+                {"binding": 2, "resource": self.tex_mtf_kernel_view},
             ],
         )
 
@@ -650,6 +721,9 @@ class GpuProcessor:
             icc_transform,
         )
 
+        scale = max(self.width, self.height) / max(
+            frame_width, frame_height
+        )  # pixels per mm
         ping_pong_tex = [self.tex_a, self.tex_b]
         idx = 1
 
@@ -668,6 +742,16 @@ class GpuProcessor:
             (self.width, self.height),
         )
         idx = 1 - idx
+
+        if sharpness and negative_film.mtf is not None:
+            self.load_mtf_kernel(negative_film, scale)
+
+            self._dispatch(
+                self.pipeline_convolution,
+                self._bind_mtf_kernel(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
+                (self.width, self.height),
+            )
+            idx = 1 - idx
 
         self._dispatch(
             self.pipeline_lut_3d,
