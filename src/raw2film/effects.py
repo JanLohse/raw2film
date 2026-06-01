@@ -145,7 +145,7 @@ def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
 def mtf_kernel(logf, vals, scale):
     """Cache a mtf convolution kernel."""
     mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
-    kernel = compute_kernel_from_function(mtf_func, 1.0, 1 / scale)
+    kernel = compute_kernel_from_function(mtf_func, 0.1, 1 / scale)
     return kernel
 
 

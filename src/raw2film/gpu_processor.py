@@ -113,9 +113,10 @@ class GpuProcessor:
         self.tex_lut_1d = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
-        self.tex_mtf_kernel = None
 
         self.buffer_params_lut_1d = None
+        self.buf_mtf_kernel = None
+        self.buf_mtf_kernel_size = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -254,31 +255,48 @@ class GpuProcessor:
         )
 
     def _ensure_mtf_kernel(self, kernel: np.ndarray):
-        size = kernel.shape[0]
-        if self.tex_mtf_kernel is None or size != self.tex_mtf_kernel.size[0]:
-            self.tex_mtf_kernel = self.device.create_texture(
-                size=(size, size, 1),
-                format=wgpu.TextureFormat.rgba32float,
-                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+        h, w = kernel.shape[:2]
+
+        kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
+
+        if kernel.ndim == 2:
+            kernel_rgba[..., :3] = kernel[..., None]
+        elif kernel.ndim == 3 and kernel.shape[2] == 3:
+            kernel_rgba[..., :3] = kernel
+        elif kernel.ndim == 3 and kernel.shape[2] == 4:
+            kernel_rgba = kernel.astype(np.float32, copy=False)
+        else:
+            raise ValueError(f"Unexpected kernel shape {kernel.shape}")
+
+        flat = kernel_rgba.reshape(-1, 4)
+
+        if self.buf_mtf_kernel is None or self.buf_mtf_kernel.size < flat.nbytes:
+            self.buf_mtf_kernel = self.device.create_buffer(
+                size=flat.nbytes,
+                usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
             )
-            self.tex_mtf_kernel_view = self.tex_mtf_kernel.create_view()
 
-        lut_rgba = np.ones((size, size, 4), dtype=np.float32)
+        self.queue.write_buffer(
+            self.buf_mtf_kernel,
+            0,
+            flat.tobytes(),
+        )
 
-        lut_rgba[..., 0:3] = kernel
+        self.kernel_size_data = np.array(
+            [h, w],
+            dtype=np.uint32,
+        )
 
-        self.queue.write_texture(
-            {"texture": self.tex_mtf_kernel},
-            lut_rgba,
-            {
-                "bytes_per_row": size * 4 * 4,
-                "rows_per_image": size,
-            },
-            {
-                "width": size,
-                "height": size,
-                "depth_or_array_layers": 1,
-            },
+        if self.buf_mtf_kernel_size is None:
+            self.buf_mtf_kernel_size = self.device.create_buffer(
+                size=16,  # uniform alignment
+                usage=(wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST),
+            )
+
+        self.queue.write_buffer(
+            self.buf_mtf_kernel_size,
+            0,
+            self.kernel_size_data.tobytes(),
         )
 
     def load_image_texture(
@@ -513,7 +531,18 @@ class GpuProcessor:
             entries=[
                 {"binding": 0, "resource": tex_a.view},
                 {"binding": 1, "resource": tex_b.view},
-                {"binding": 2, "resource": self.tex_mtf_kernel_view},
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": self.buf_mtf_kernel,
+                    },
+                },
+                {
+                    "binding": 3,
+                    "resource": {
+                        "buffer": self.buf_mtf_kernel_size,
+                    },
+                },
             ],
         )
 
