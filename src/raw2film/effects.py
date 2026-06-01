@@ -237,6 +237,7 @@ def halation(
     halation_intensity: float = 1.0,
 ) -> np.ndarray:
     """A halation image processing effect."""
+    # TODO: simplify like in gpu_processor.py
     kernel = np.asarray(
         exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
     )

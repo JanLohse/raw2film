@@ -13,12 +13,14 @@ from spectral_film_lut.utils import create_lut
 from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
-from raw2film.effects import mtf_kernel
+from raw2film.effects import exponential_blur_kernel, mtf_kernel
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
     load_metadata,
     resolution_scaling,
 )
+
+# TODO: fix BW for convolution effects
 
 
 class GpuTexture:
@@ -63,45 +65,45 @@ class GpuProcessor:
         # Load shaders
         lut_1d_shader_path = Path(__file__).parent / "shaders/lut_1d.wgsl"
         lut_1d_shader_code = lut_1d_shader_path.read_text()
-        self.lut_1d_shader = self.device.create_shader_module(code=lut_1d_shader_code)
+        lut_1d_shader = self.device.create_shader_module(code=lut_1d_shader_code)
 
         lut_2d_shader_path = Path(__file__).parent / "shaders/lut_2d.wgsl"
         lut_2d_shader_code = lut_2d_shader_path.read_text()
-        self.lut_2d_shader = self.device.create_shader_module(code=lut_2d_shader_code)
+        lut_2d_shader = self.device.create_shader_module(code=lut_2d_shader_code)
 
         lut_3d_shader_path = Path(__file__).parent / "shaders/lut_3d.wgsl"
         lut_3d_shader_code = lut_3d_shader_path.read_text()
-        self.lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
+        lut_3d_shader = self.device.create_shader_module(code=lut_3d_shader_code)
 
         copy_to_int_shader_path = Path(__file__).parent / "shaders/copy_to_int.wgsl"
         copy_to_int_shader_code = copy_to_int_shader_path.read_text()
-        self.copy_to_int_shader = self.device.create_shader_module(
+        copy_to_int_shader = self.device.create_shader_module(
             code=copy_to_int_shader_code
         )
 
         convolution_shader_path = Path(__file__).parent / "shaders/convolution.wgsl"
         convolution_shader_code = convolution_shader_path.read_text()
-        self.convolution_shader = self.device.create_shader_module(
+        convolution_shader = self.device.create_shader_module(
             code=convolution_shader_code
         )
 
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
-            layout="auto", compute={"module": self.lut_1d_shader, "entry_point": "main"}
+            layout="auto", compute={"module": lut_1d_shader, "entry_point": "main"}
         )
         self.pipeline_lut_2d = self.device.create_compute_pipeline(
-            layout="auto", compute={"module": self.lut_2d_shader, "entry_point": "main"}
+            layout="auto", compute={"module": lut_2d_shader, "entry_point": "main"}
         )
         self.pipeline_lut_3d = self.device.create_compute_pipeline(
-            layout="auto", compute={"module": self.lut_3d_shader, "entry_point": "main"}
+            layout="auto", compute={"module": lut_3d_shader, "entry_point": "main"}
         )
         self.pipeline_copy_to_int = self.device.create_compute_pipeline(
             layout="auto",
-            compute={"module": self.copy_to_int_shader, "entry_point": "main"},
+            compute={"module": copy_to_int_shader, "entry_point": "main"},
         )
         self.pipeline_convolution = self.device.create_compute_pipeline(
             layout="auto",
-            compute={"module": self.convolution_shader, "entry_point": "main"},
+            compute={"module": convolution_shader, "entry_point": "main"},
         )
 
         # Init gpu textures
@@ -115,8 +117,10 @@ class GpuProcessor:
         self.tex_lut_3d = None
 
         self.buffer_params_lut_1d = None
-        self.buf_mtf_kernel = None
-        self.buf_mtf_kernel_size = None
+        self.buffer_mtf_kernel = None
+        self.buffer_mtf_kernel_size = None
+        self.buffer_halation_kernel = None
+        self.buffer_halation_kernel_size = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -124,6 +128,7 @@ class GpuProcessor:
         self.curve_param_dict = None
         self.output_param_dict = None
         self.mtf_param_dict = None
+        self.halation_param_dict = None
 
         self.width = None
         self.height = None
@@ -256,6 +261,7 @@ class GpuProcessor:
 
     def _ensure_mtf_kernel(self, kernel: np.ndarray):
         h, w = kernel.shape[:2]
+        print(f"mtf kernel: {kernel.shape}")
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
 
@@ -270,14 +276,14 @@ class GpuProcessor:
 
         flat = kernel_rgba.reshape(-1, 4)
 
-        if self.buf_mtf_kernel is None or self.buf_mtf_kernel.size < flat.nbytes:
-            self.buf_mtf_kernel = self.device.create_buffer(
+        if self.buffer_mtf_kernel is None or self.buffer_mtf_kernel.size < flat.nbytes:
+            self.buffer_mtf_kernel = self.device.create_buffer(
                 size=flat.nbytes,
                 usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
             )
 
         self.queue.write_buffer(
-            self.buf_mtf_kernel,
+            self.buffer_mtf_kernel,
             0,
             flat.tobytes(),
         )
@@ -287,14 +293,64 @@ class GpuProcessor:
             dtype=np.uint32,
         )
 
-        if self.buf_mtf_kernel_size is None:
-            self.buf_mtf_kernel_size = self.device.create_buffer(
+        if self.buffer_mtf_kernel_size is None:
+            self.buffer_mtf_kernel_size = self.device.create_buffer(
                 size=16,  # uniform alignment
                 usage=(wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST),
             )
 
         self.queue.write_buffer(
-            self.buf_mtf_kernel_size,
+            self.buffer_mtf_kernel_size,
+            0,
+            self.kernel_size_data.tobytes(),
+        )
+
+    def _ensure_halation_kernel(self, kernel: np.ndarray):
+        h, w = kernel.shape[:2]
+
+        print(f"halation kernel: {kernel.shape}")
+
+        kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
+
+        if kernel.ndim == 2:
+            kernel_rgba[..., :3] = kernel[..., None]
+        elif kernel.ndim == 3 and kernel.shape[2] == 3:
+            kernel_rgba[..., :3] = kernel
+        elif kernel.ndim == 3 and kernel.shape[2] == 4:
+            kernel_rgba = kernel.astype(np.float32, copy=False)
+        else:
+            raise ValueError(f"Unexpected kernel shape {kernel.shape}")
+
+        flat = kernel_rgba.reshape(-1, 4)
+
+        if (
+            self.buffer_halation_kernel is None
+            or self.buffer_halation_kernel.size < flat.nbytes
+        ):
+            self.buffer_halation_kernel = self.device.create_buffer(
+                size=flat.nbytes,
+                usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
+            )
+
+        self.queue.write_buffer(
+            self.buffer_halation_kernel,
+            0,
+            flat.tobytes(),
+        )
+
+        self.kernel_size_data = np.array(
+            [h, w],
+            dtype=np.uint32,
+        )
+
+        if self.buffer_halation_kernel_size is None:
+            self.buffer_halation_kernel_size = self.device.create_buffer(
+                size=16,  # uniform alignment
+                usage=(wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST),
+            )
+
+        self.queue.write_buffer(
+            self.buffer_halation_kernel_size,
             0,
             self.kernel_size_data.tobytes(),
         )
@@ -371,11 +427,47 @@ class GpuProcessor:
             dtype=DEFAULT_DTYPE,
         )
 
-        print(mtf_kernel_np.shape)
-
         self._ensure_mtf_kernel(mtf_kernel_np)
 
         self.mtf_param_dict = new_param_dict
+
+    def load_halation_kernel(
+        self,
+        scale: float,
+        halation_size: float = 1.0,
+        halation_red_factor: float = 1.0,
+        halation_green_factor: float = 0.4,
+        halation_blue_factor: float = 0.0,
+        halation_intensity: float = 1.0,
+    ):
+        new_param_dict = {
+            "scale": scale,
+            "halation_size": halation_size,
+            "halation_red_factor": halation_red_factor,
+            "halation_green_factor": halation_green_factor,
+            "halation_blue_factor": halation_blue_factor,
+            "halation_intensity": halation_intensity,
+        }
+
+        if new_param_dict == self.halation_param_dict:
+            return
+
+        kernel = np.asarray(
+            exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+        )
+        kernel = np.dstack([kernel] * 3)
+        color_factors = halation_intensity * np.array(
+            [halation_red_factor, halation_green_factor, halation_blue_factor],
+            dtype=DEFAULT_DTYPE,
+        )
+        kernel *= color_factors
+        size = kernel.shape[0]
+        kernel[size // 2, size // 2, :] += 1.0
+        kernel /= color_factors + 1.0
+
+        self._ensure_halation_kernel(kernel)
+
+        self.halation_param_dict = new_param_dict
 
     def load_input_lut(
         self,
@@ -525,7 +617,7 @@ class GpuProcessor:
             ],
         )
 
-    def _bind_mtf_kernel(self, tex_a, tex_b):
+    def _bind_convolution(self, tex_a, tex_b, buffer, buffer_size):
         return self.device.create_bind_group(
             layout=self.pipeline_convolution.get_bind_group_layout(0),
             entries=[
@@ -534,13 +626,13 @@ class GpuProcessor:
                 {
                     "binding": 2,
                     "resource": {
-                        "buffer": self.buf_mtf_kernel,
+                        "buffer": buffer,
                     },
                 },
                 {
                     "binding": 3,
                     "resource": {
-                        "buffer": self.buf_mtf_kernel_size,
+                        "buffer": buffer_size,
                     },
                 },
             ],
@@ -765,6 +857,26 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
+        if halation:
+            self.load_halation_kernel(
+                scale,
+                halation_size=halation_size,
+                halation_green_factor=halation_green_factor,
+                halation_intensity=halation_intensity,
+            )
+
+            self._dispatch(
+                self.pipeline_convolution,
+                self._bind_convolution(
+                    ping_pong_tex[idx],
+                    ping_pong_tex[1 - idx],
+                    self.buffer_halation_kernel,
+                    self.buffer_halation_kernel_size,
+                ),
+                (self.width, self.height),
+            )
+            idx = 1 - idx
+
         self._dispatch(
             self.pipeline_lut_1d,
             self._bind_lut_1d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
@@ -777,7 +889,12 @@ class GpuProcessor:
 
             self._dispatch(
                 self.pipeline_convolution,
-                self._bind_mtf_kernel(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
+                self._bind_convolution(
+                    ping_pong_tex[idx],
+                    ping_pong_tex[1 - idx],
+                    self.buffer_mtf_kernel,
+                    self.buffer_mtf_kernel_size,
+                ),
                 (self.width, self.height),
             )
             idx = 1 - idx
