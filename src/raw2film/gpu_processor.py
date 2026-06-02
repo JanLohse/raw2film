@@ -136,14 +136,20 @@ class GpuProcessor:
         self.width = None
         self.height = None
 
-        self.lut_sampler = self.device.create_sampler(
+        self.lut_1d_sampler = self.device.create_sampler(
             mag_filter=wgpu.FilterMode.linear,
             min_filter=wgpu.FilterMode.linear,
             address_mode_u=wgpu.AddressMode.clamp_to_edge,
             address_mode_v=wgpu.AddressMode.clamp_to_edge,
         )
+        self.lut_3d_sampler = self.device.create_sampler(
+            mag_filter=wgpu.FilterMode.linear,
+            min_filter=wgpu.FilterMode.linear,
+            address_mode_u=wgpu.AddressMode.clamp_to_edge,
+            address_mode_v=wgpu.AddressMode.clamp_to_edge,
+            address_mode_w=wgpu.AddressMode.clamp_to_edge,
+        )
 
-        # Init lens correction data
         self.cameras = cameras
         self.lenses = lenses
 
@@ -186,13 +192,6 @@ class GpuProcessor:
                 usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
             )
             self.tex_lut_1d_view = self.tex_lut_1d.create_view()
-
-            self.lut_sampler = self.device.create_sampler(
-                mag_filter=wgpu.FilterMode.linear,
-                min_filter=wgpu.FilterMode.linear,
-                address_mode_u=wgpu.AddressMode.clamp_to_edge,
-                address_mode_v=wgpu.AddressMode.clamp_to_edge,
-            )
 
         lut_rgba = np.ones((size, 4), dtype=np.float32)
         lut_rgba[..., 0:3] = lut[1:, ...].T
@@ -259,7 +258,7 @@ class GpuProcessor:
             self.tex_lut_3d = self.device.create_texture(
                 size=(size, size, size),
                 dimension=wgpu.TextureDimension.d3,
-                format=wgpu.TextureFormat.rgba32float,
+                format=wgpu.TextureFormat.rgba16float,
                 usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
             )
             self.tex_lut_3d_view = self.tex_lut_3d.create_view()
@@ -267,13 +266,15 @@ class GpuProcessor:
         lut_rgba = np.ones((size, size, size, 4), dtype=np.float32)
         lut_rgba[..., 0:3] = lut
 
+        lut_rgba_16 = lut_rgba.astype(np.float16)
+
         self.queue.write_texture(
             {
                 "texture": self.tex_lut_3d,
             },
-            lut_rgba,
+            lut_rgba_16,
             {
-                "bytes_per_row": size * 4 * 4,
+                "bytes_per_row": size * 4 * 2,
                 "rows_per_image": size,
             },
             {
@@ -610,7 +611,7 @@ class GpuProcessor:
                 {"binding": 2, "resource": self.tex_lut_1d_view},
                 {
                     "binding": 3,
-                    "resource": self.lut_sampler,
+                    "resource": self.lut_1d_sampler,
                 },
                 {
                     "binding": 4,
@@ -630,6 +631,10 @@ class GpuProcessor:
                 {"binding": 0, "resource": tex_a.view},
                 {"binding": 1, "resource": tex_b.view},
                 {"binding": 2, "resource": self.tex_lut_3d_view},
+                {
+                    "binding": 3,
+                    "resource": self.lut_3d_sampler,
+                },
             ],
         )
 
