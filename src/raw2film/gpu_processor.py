@@ -13,7 +13,10 @@ from spectral_film_lut.utils import create_lut
 from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
-from raw2film.effects import exponential_blur_kernel, mtf_kernel
+from raw2film.effects import (
+    compute_halation_kernel,
+    mtf_kernel,
+)
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
     load_metadata,
@@ -261,18 +264,13 @@ class GpuProcessor:
 
     def _ensure_mtf_kernel(self, kernel: np.ndarray):
         h, w = kernel.shape[:2]
-        print(f"mtf kernel: {kernel.shape}")
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
 
         if kernel.ndim == 2:
             kernel_rgba[..., :3] = kernel[..., None]
-        elif kernel.ndim == 3 and kernel.shape[2] == 3:
-            kernel_rgba[..., :3] = kernel
-        elif kernel.ndim == 3 and kernel.shape[2] == 4:
-            kernel_rgba = kernel.astype(np.float32, copy=False)
         else:
-            raise ValueError(f"Unexpected kernel shape {kernel.shape}")
+            kernel_rgba[..., :3] = kernel
 
         flat = kernel_rgba.reshape(-1, 4)
 
@@ -307,8 +305,6 @@ class GpuProcessor:
 
     def _ensure_halation_kernel(self, kernel: np.ndarray):
         h, w = kernel.shape[:2]
-
-        print(f"halation kernel: {kernel.shape}")
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
 
@@ -421,11 +417,7 @@ class GpuProcessor:
         if new_param_dict == self.mtf_param_dict:
             return
 
-        mtf_kernel_np = np.stack(
-            [mtf_kernel(logf, vals, scale) for logf, vals in negative_film.mtf],
-            axis=-1,
-            dtype=DEFAULT_DTYPE,
-        )
+        mtf_kernel_np = mtf_kernel(negative_film, scale)
 
         self._ensure_mtf_kernel(mtf_kernel_np)
 
@@ -439,6 +431,7 @@ class GpuProcessor:
         halation_green_factor: float = 0.4,
         halation_blue_factor: float = 0.0,
         halation_intensity: float = 1.0,
+        bw: bool = False,
     ):
         new_param_dict = {
             "scale": scale,
@@ -447,23 +440,21 @@ class GpuProcessor:
             "halation_green_factor": halation_green_factor,
             "halation_blue_factor": halation_blue_factor,
             "halation_intensity": halation_intensity,
+            "bw": bw,
         }
 
         if new_param_dict == self.halation_param_dict:
             return
 
-        kernel = np.asarray(
-            exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+        kernel = compute_halation_kernel(
+            scale,
+            halation_size,
+            halation_red_factor,
+            halation_green_factor,
+            halation_blue_factor,
+            halation_intensity,
+            bw=bw,
         )
-        kernel = np.dstack([kernel] * 3)
-        color_factors = halation_intensity * np.array(
-            [halation_red_factor, halation_green_factor, halation_blue_factor],
-            dtype=DEFAULT_DTYPE,
-        )
-        kernel *= color_factors
-        size = kernel.shape[0]
-        kernel[size // 2, size // 2, :] += 1.0
-        kernel /= color_factors + 1.0
 
         self._ensure_halation_kernel(kernel)
 
@@ -863,6 +854,7 @@ class GpuProcessor:
                 halation_size=halation_size,
                 halation_green_factor=halation_green_factor,
                 halation_intensity=halation_intensity,
+                bw=negative_film.density_measure == "bw",
             )
 
             self._dispatch(
@@ -905,6 +897,12 @@ class GpuProcessor:
             (self.width, self.height),
         )
         idx = 1 - idx
+
+        # TODO: grain
+        # TODO: chroma NR
+        # TODO: highlight burn
+        # TODO: canvas_mode
+        # TODO: half res
 
         print(f"shaders {time.time() - start:.4f}s")
         start = time.time()

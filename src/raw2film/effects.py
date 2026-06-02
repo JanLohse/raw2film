@@ -141,30 +141,40 @@ def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
     return kernel
 
 
-@lru_cache(maxsize=50)
-def mtf_kernel(logf, vals, scale):
-    """Cache a mtf convolution kernel."""
-    mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
-    kernel = compute_kernel_from_function(mtf_func, 0.1, 1 / scale)
-    return kernel
-
-
-def film_sharpness(rgb: np.ndarray, stock: FilmSpectral, scale: float):
-    """Apply the sharpness and micro-contrast of a film stock ot an image."""
-    kernel = np.stack(
-        [mtf_kernel(logf, vals, scale) for logf, vals in stock.mtf],
-        axis=-1,
-        dtype=DEFAULT_DTYPE,
-    )
-    size = kernel.shape[0]
-    if len(kernel.shape) == 2 or size >= 13:
+def convolve_2d(rgb: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    if len(kernel.shape) == 2:
         rgb = cv.filter2D(rgb, -1, kernel)
+    elif rgb.shape[-1] == 1:
+        rgb = cv.filter2D(rgb, -1, kernel[..., 0])
     elif len(kernel.shape) == 3:
         for c in range(kernel.shape[-1]):
             rgb[..., c] = cv.filter2D(rgb[..., c], -1, kernel[..., c])
     if len(rgb.shape) == 2:
         rgb = rgb[..., np.newaxis]
     return rgb
+
+
+def mtf_kernel_layer(logf, vals, scale):
+    mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
+    kernel = compute_kernel_from_function(mtf_func, 0.1, 1 / scale)
+    return kernel
+
+
+@lru_cache(maxsize=50)
+def mtf_kernel(stock, scale):
+    """Cache a mtf convolution kernel."""
+    kernel = np.stack(
+        [mtf_kernel_layer(logf, vals, scale) for logf, vals in stock.mtf],
+        axis=-1,
+        dtype=DEFAULT_DTYPE,
+    )
+    return kernel
+
+
+def film_sharpness(rgb: np.ndarray, stock: FilmSpectral, scale: float):
+    """Apply the sharpness and micro-contrast of a film stock ot an image."""
+    kernel = mtf_kernel(stock, scale)
+    return convolve_2d(rgb, kernel)
 
 
 @njit
@@ -206,25 +216,31 @@ def apply_grain(
     return rgb
 
 
-@njit
-def apply_halation_inplace(
-    rgb: np.ndarray, blured: np.ndarray, color_factors: np.ndarray
+def compute_halation_kernel(
+    scale: float,
+    halation_size: float = 1.0,
+    halation_red_factor: float = 1.0,
+    halation_green_factor: float = 0.4,
+    halation_blue_factor: float = 0.0,
+    halation_intensity: float = 1.0,
+    bw: bool = False,
 ):
-    """Adds halation inplace."""
-    for i in range(rgb.shape[0]):
-        for j in range(rgb.shape[1]):
-            for c in range(rgb.shape[2]):
-                rgb[i, j, c] += blured[i, j, c] * color_factors[c]
-                rgb[i, j, c] /= color_factors[c] + 1.0
-
-
-@njit
-def apply_halation_bw(rgb: np.ndarray, blured: np.ndarray, intensity: float):
-    """Adds halation to a black and white image."""
-    for i in range(rgb.shape[0]):
-        for j in range(rgb.shape[1]):
-            rgb[i, j] += blured[i, j] * intensity
-            rgb[i, j] /= intensity + 1.0
+    if bw:
+        halation_red_factor = halation_green_factor
+        halation_blue_factor = halation_green_factor
+    kernel = np.asarray(
+        exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+    )
+    kernel = np.dstack([kernel] * 3)
+    color_factors = halation_intensity * np.array(
+        [halation_red_factor, halation_green_factor, halation_blue_factor],
+        dtype=DEFAULT_DTYPE,
+    )
+    kernel *= color_factors
+    size = kernel.shape[0]
+    kernel[size // 2, size // 2, :] += 1.0
+    kernel /= color_factors + 1.0
+    return kernel
 
 
 def halation(
@@ -235,21 +251,19 @@ def halation(
     halation_green_factor: float = 0.4,
     halation_blue_factor: float = 0.0,
     halation_intensity: float = 1.0,
+    bw: bool = False,
 ) -> np.ndarray:
     """A halation image processing effect."""
-    # TODO: simplify like in gpu_processor.py
-    kernel = np.asarray(
-        exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+    kernel = compute_halation_kernel(
+        scale,
+        halation_size,
+        halation_red_factor,
+        halation_green_factor,
+        halation_blue_factor,
+        halation_intensity,
+        bw,
     )
-    blured = cv.filter2D(rgb, -1, kernel)
-    color_factors = halation_intensity * np.array(
-        [halation_red_factor, halation_green_factor, halation_blue_factor],
-        dtype=DEFAULT_DTYPE,
-    )
-    if rgb.shape[-1] == 1:
-        apply_halation_bw(rgb, blured, color_factors[0])
-    else:
-        apply_halation_inplace(rgb, blured, color_factors)  # TODO: test if inplace
+    rgb = convolve_2d(rgb, kernel)
     return rgb
 
 

@@ -328,6 +328,7 @@ class CpuProcessor:
                 halation_size=halation_size,
                 halation_green_factor=halation_green_factor,
                 halation_intensity=halation_intensity,
+                bw=negative_film.density_measure == "bw",
             )
 
         log_clip(image)
