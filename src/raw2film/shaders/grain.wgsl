@@ -33,27 +33,34 @@ fn pcg_3d(p: vec3<u32>) -> vec3<u32> {
     return v;
 }
 
-// 2. Generates two uniform random float numbers in the range [0.0, 1.0)
-fn rand_uniform_2d(seed: vec3<u32>) -> vec2<f32> {
+// 2. Generates three uniform random float numbers in the range [0.0, 1.0)
+fn rand_uniform_3d(seed: vec3<u32>) -> vec3<f32> {
     let hashed = pcg_3d(seed);
-    // Convert 32-bit uint bits uniformly into a float interval [0, 1)
-    return vec2<f32>(hashed.xy) * (1.0 / f32(0xffffffffu));
+    // Convert all 32-bit uint bits uniformly into float interval [0, 1)
+    return vec3<f32>(hashed) * (1.0 / f32(0xffffffffu));
 }
 
-// 3. Applies Box-Muller Transform to yield a Gaussian distributed sample
-// Returns two independent Gaussian samples: x and y components.
-fn sample_gaussian(seed: vec3<u32>) -> vec2<f32> {
-    let u = rand_uniform_2d(seed);
+// 3. Yields 3 independent Gaussian samples using Box-Muller
+fn sample_gaussian(seed: vec3<u32>) -> vec3<f32> {
+    let u = rand_uniform_3d(seed);
 
-    // Guard against log(0) which causes NaN/Inf
+    // Guard against log(0)
     let u1 = max(u.x, 1e-7);
     let u2 = u.y;
 
-    let r = sqrt(-2.0 * log(u1));
-    let theta = 2.0 * 3.14159265359 * u2;
+    // First pair gives us 2 independent samples
+    let r1 = sqrt(-2.0 * log(u1));
+    let theta1 = 2.0 * 3.14159265359 * u2;
+    let noise_r = r1 * cos(theta1);
+    let noise_g = r1 * sin(theta1);
 
-    // Both outputs are independent, valid standard Gaussian variables
-    return vec2<f32>(r * cos(theta), r * sin(theta));
+    // Use the 3rd random float for a second Box-Muller pair (we only need 1 more)
+    let u3 = max(u.z, 1e-7);
+    // Use a deterministic scramble of the seed or coordinates for the second angle
+    let theta2 = 2.0 * 3.14159265359 * fract(u1 + u2);
+    let noise_b = sqrt(-2.0 * log(u3)) * cos(theta2);
+
+    return vec3<f32>(noise_r, noise_g, noise_b);
 }
 
 @compute
@@ -77,11 +84,11 @@ fn main(
         vec3<f32>(1.0)
     );
     let seed = vec3<u32>(gid.x, gid.y, params.seed);
-    let noise = sample_gaussian(seed).x;
+    let noise = sample_gaussian(seed);
 
-    let out_r = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0).r * noise;
-    let out_g = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0).g * noise;
-    let out_b = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0).b * noise;
+    let out_r = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0).r * noise.r;
+    let out_g = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0).g * noise.g;
+    let out_b = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0).b * noise.g;
 
     let out_color = vec4<f32>(pixel.r + out_r, pixel.g + out_g, pixel.b + out_b, pixel.a);
 
