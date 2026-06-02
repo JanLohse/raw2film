@@ -136,6 +136,13 @@ class GpuProcessor:
         self.width = None
         self.height = None
 
+        self.lut_sampler = self.device.create_sampler(
+            mag_filter=wgpu.FilterMode.linear,
+            min_filter=wgpu.FilterMode.linear,
+            address_mode_u=wgpu.AddressMode.clamp_to_edge,
+            address_mode_v=wgpu.AddressMode.clamp_to_edge,
+        )
+
         # Init lens correction data
         self.cameras = cameras
         self.lenses = lenses
@@ -175,15 +182,29 @@ class GpuProcessor:
         if self.tex_lut_1d is None or size != self.tex_lut_1d.size[0]:
             self.tex_lut_1d = self.device.create_texture(
                 size=(size, 1, 1),
-                format=wgpu.TextureFormat.rgba32float,
+                format=wgpu.TextureFormat.rgba16float,
                 usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
             )
             self.tex_lut_1d_view = self.tex_lut_1d.create_view()
 
+            self.lut_sampler = self.device.create_sampler(
+                mag_filter=wgpu.FilterMode.linear,
+                min_filter=wgpu.FilterMode.linear,
+                address_mode_u=wgpu.AddressMode.clamp_to_edge,
+                address_mode_v=wgpu.AddressMode.clamp_to_edge,
+            )
+
         lut_rgba = np.ones((size, 4), dtype=np.float32)
         lut_rgba[..., 0:3] = lut[1:, ...].T
 
-        params_lut_1d = struct.pack("ff2f", lut[0, 0], lut[0, -1], 0.0, 0.0)
+        lut_rgba_16 = lut_rgba.astype(np.float16)
+
+        xp_min = lut[0, 0]
+        xp_max = lut[0, -1]
+        denom = xp_max - xp_min
+        inv_range = 1.0 / denom if denom != 0.0 else 0.0
+
+        params_lut_1d = struct.pack("ffff", xp_min, xp_max, inv_range, 0.0)
 
         self.buffer_params_lut_1d = self.device.create_buffer_with_data(
             data=params_lut_1d,
@@ -192,9 +213,9 @@ class GpuProcessor:
 
         self.queue.write_texture(
             {"texture": self.tex_lut_1d},
-            lut_rgba,
+            lut_rgba_16,
             {
-                "bytes_per_row": size * 4 * 4,
+                "bytes_per_row": size * 4 * 2,
                 "rows_per_image": 1,
             },
             {
@@ -589,6 +610,10 @@ class GpuProcessor:
                 {"binding": 2, "resource": self.tex_lut_1d_view},
                 {
                     "binding": 3,
+                    "resource": self.lut_sampler,
+                },
+                {
+                    "binding": 4,
                     "resource": {
                         "buffer": self.buffer_params_lut_1d,
                         "offset": 0,
