@@ -1,3 +1,4 @@
+import random
 import struct
 import time
 from functools import lru_cache
@@ -90,6 +91,10 @@ class GpuProcessor:
             code=convolution_shader_code
         )
 
+        grain_shader_path = Path(__file__).parent / "shaders/grain.wgsl"
+        grain_shader_code = grain_shader_path.read_text()
+        grain_shader = self.device.create_shader_module(code=grain_shader_code)
+
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": lut_1d_shader, "entry_point": "main"}
@@ -108,6 +113,10 @@ class GpuProcessor:
             layout="auto",
             compute={"module": convolution_shader, "entry_point": "main"},
         )
+        self.pipeline_grain = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": grain_shader, "entry_point": "main"},
+        )
 
         # Init gpu textures
         self.tex_input = None
@@ -118,8 +127,10 @@ class GpuProcessor:
         self.tex_lut_1d = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
+        self.tex_lut_grain = None
 
         self.buffer_params_lut_1d = None
+        self.buffer_params_grain = None
         self.buffer_mtf_kernel = None
         self.buffer_mtf_kernel_size = None
         self.buffer_halation_kernel = None
@@ -373,6 +384,49 @@ class GpuProcessor:
             self.kernel_size_data.tobytes(),
         )
 
+    def _ensure_lut_grain(self, lut: np.ndarray):
+        size = lut.shape[1]
+        if self.tex_lut_grain is None or size != self.tex_lut_grain.size[0]:
+            self.tex_lut_grain = self.device.create_texture(
+                size=(size, 1, 1),
+                format=wgpu.TextureFormat.rgba16float,
+                usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
+            )
+            self.tex_lut_grain_view = self.tex_lut_grain.create_view()
+
+        lut_rgba = np.ones((size, 4), dtype=np.float32)
+        lut_rgba[..., 0:3] = lut[1:, ...].T
+
+        lut_rgba_16 = lut_rgba.astype(np.float16)
+
+        xp_min = lut[0, 0]
+        xp_max = lut[0, -1]
+        denom = xp_max - xp_min
+        inv_range = 1.0 / denom if denom != 0.0 else 0.0
+
+        params_lut_1d = struct.pack(
+            "ffff", xp_min, xp_max, inv_range, random.randint(0, 10000000000)
+        )
+
+        self.buffer_params_grain = self.device.create_buffer_with_data(
+            data=params_lut_1d,
+            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+        )
+
+        self.queue.write_texture(
+            {"texture": self.tex_lut_grain},
+            lut_rgba_16,
+            {
+                "bytes_per_row": size * 4 * 2,
+                "rows_per_image": 1,
+            },
+            {
+                "width": size,
+                "height": 1,
+                "depth_or_array_layers": 1,
+            },
+        )
+
     def load_image_texture(
         self,
         src: str,
@@ -504,6 +558,21 @@ class GpuProcessor:
         self._ensure_lut_2d(input_lut)
 
         self.input_param_dict = new_param_dict
+
+    def load_grain(
+        self,
+        negative_film: FilmSpectral,
+        scale: float,
+        grain_size_mm: float = 0.01,
+        grain_sigma: float = 0.4,
+        bw_grain: bool = False,
+    ):
+        # TODO: color mode
+        # TODO: convolution filter
+
+        input_lut = negative_film.get_grain_curve(scale, adx=False)
+
+        self._ensure_lut_grain(input_lut)
 
     def load_density_curve(self, negative_film: FilmSpectral, push_pull: float | int):
         new_param_dict = {"negative_film": negative_film.name, "push_pull": push_pull}
@@ -654,6 +723,28 @@ class GpuProcessor:
                     "binding": 3,
                     "resource": {
                         "buffer": buffer_size,
+                    },
+                },
+            ],
+        )
+
+    def _bind_grain(self, tex_a, tex_b):
+        return self.device.create_bind_group(
+            layout=self.pipeline_grain.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": tex_a.view},
+                {"binding": 1, "resource": tex_b.view},
+                {"binding": 2, "resource": self.tex_lut_grain_view},
+                {
+                    "binding": 3,
+                    "resource": self.lut_1d_sampler,
+                },
+                {
+                    "binding": 4,
+                    "resource": {
+                        "buffer": self.buffer_params_grain,
+                        "offset": 0,
+                        "size": self.buffer_params_grain.size,
                     },
                 },
             ],
@@ -921,6 +1012,18 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        if grain and negative_film.rms_density is not None:
+            self.load_grain(
+                negative_film, scale, grain_size / 1000, grain_sigma, grain == 1
+            )
+
+            self._dispatch(
+                self.pipeline_grain,
+                self._bind_grain(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
+                (self.width, self.height),
+            )
+            idx = 1 - idx
+
         self._dispatch(
             self.pipeline_lut_3d,
             self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
@@ -928,7 +1031,6 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
-        # TODO: grain
         # TODO: chroma NR
         # TODO: highlight burn
         # TODO: canvas_mode
