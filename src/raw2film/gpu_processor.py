@@ -28,7 +28,7 @@ from raw2film.utils import (
 
 
 class GpuTexture:
-    def __init__(self, device, size, format=wgpu.TextureFormat.rgba32float):
+    def __init__(self, device, size, format=wgpu.TextureFormat.rgba16float):
         self.device = device
         self.size = size
 
@@ -178,6 +178,9 @@ class GpuProcessor:
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
         image = image.astype(DEFAULT_DTYPE)
+        start = time.time()
+        np.clip(image, 0, 65504, out=image)
+        print(f"clipping: {time.time() - start:.4f}s")
 
         return image
 
@@ -185,7 +188,9 @@ class GpuProcessor:
         h, w = image.shape[:2]
 
         if self.tex_input is None or self.tex_input.size != (w, h):
-            self.tex_input = GpuTexture(self.device, (w, h))
+            self.tex_input = GpuTexture(
+                self.device, (w, h), format=wgpu.TextureFormat.rgba32float
+            )
             self.tex_a = GpuTexture(self.device, (w, h))
             self.tex_b = GpuTexture(self.device, (w, h))
             self.tex_int_out = GpuTexture(

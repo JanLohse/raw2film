@@ -9,7 +9,7 @@ struct Params {
 var input_tex: texture_2d<f32>;
 
 @group(0) @binding(1)
-var output_tex: texture_storage_2d<rgba32float, write>;
+var output_tex: texture_storage_2d<rgba16float, write>;
 
 @group(0) @binding(2)
 var lut_tex: texture_2d<f32>;
