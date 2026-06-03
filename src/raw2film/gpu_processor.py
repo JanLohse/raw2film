@@ -24,8 +24,6 @@ from raw2film.utils import (
     resolution_scaling,
 )
 
-# TODO: fix BW for convolution effects
-
 
 class GpuTexture:
     def __init__(self, device, size, format=wgpu.TextureFormat.rgba16float):
@@ -91,6 +89,10 @@ class GpuProcessor:
             code=convolution_shader_code
         )
 
+        noise_shader_path = Path(__file__).parent / "shaders/noise.wgsl"
+        noise_shader_code = noise_shader_path.read_text()
+        noise_shader = self.device.create_shader_module(code=noise_shader_code)
+
         grain_shader_path = Path(__file__).parent / "shaders/grain.wgsl"
         grain_shader_code = grain_shader_path.read_text()
         grain_shader = self.device.create_shader_module(code=grain_shader_code)
@@ -113,6 +115,10 @@ class GpuProcessor:
             layout="auto",
             compute={"module": convolution_shader, "entry_point": "main"},
         )
+        self.pipeline_noise = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": noise_shader, "entry_point": "main"},
+        )
         self.pipeline_grain = self.device.create_compute_pipeline(
             layout="auto",
             compute={"module": grain_shader, "entry_point": "main"},
@@ -122,6 +128,7 @@ class GpuProcessor:
         self.tex_input = None
         self.tex_a = None
         self.tex_b = None
+        self.tex_temp = None
         self.tex_int_out = None
 
         self.tex_lut_1d = None
@@ -193,6 +200,7 @@ class GpuProcessor:
             )
             self.tex_a = GpuTexture(self.device, (w, h))
             self.tex_b = GpuTexture(self.device, (w, h))
+            self.tex_temp = GpuTexture(self.device, (w, h))
             self.tex_int_out = GpuTexture(
                 self.device, (w, h), format=wgpu.TextureFormat.rgba8unorm
             )
@@ -733,7 +741,23 @@ class GpuProcessor:
             ],
         )
 
-    def _bind_grain(self, tex_a, tex_b):
+    def _bind_noise(self, tex_out):
+        return self.device.create_bind_group(
+            layout=self.pipeline_noise.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": tex_out.view},
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": self.buffer_params_grain,
+                        "offset": 0,
+                        "size": self.buffer_params_grain.size,
+                    },
+                },
+            ],
+        )
+
+    def _bind_grain(self, tex_a, tex_b, tex_noise):
         return self.device.create_bind_group(
             layout=self.pipeline_grain.get_bind_group_layout(0),
             entries=[
@@ -752,6 +776,7 @@ class GpuProcessor:
                         "size": self.buffer_params_grain.size,
                     },
                 },
+                {"binding": 5, "resource": tex_noise.view},
             ],
         )
 
@@ -1023,8 +1048,16 @@ class GpuProcessor:
             )
 
             self._dispatch(
+                self.pipeline_noise,
+                self._bind_noise(self.tex_temp),
+                (self.width, self.height),
+            )
+
+            self._dispatch(
                 self.pipeline_grain,
-                self._bind_grain(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
+                self._bind_grain(
+                    ping_pong_tex[idx], ping_pong_tex[1 - idx], self.tex_temp
+                ),
                 (self.width, self.height),
             )
             idx = 1 - idx
