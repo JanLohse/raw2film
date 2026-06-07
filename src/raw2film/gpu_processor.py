@@ -665,13 +665,24 @@ class GpuProcessor:
 
         self.grain_kernel_param_dict = new_kernel_dict
 
-    def load_density_curve(self, negative_film: FilmSpectral, push_pull: float | int):
-        new_param_dict = {"negative_film": negative_film.name, "push_pull": push_pull}
+    def load_density_curve(
+        self,
+        negative_film: FilmSpectral,
+        push_pull: float | int,
+        color_masking: float | None = None,
+    ):
+        new_param_dict = {
+            "negative_film": negative_film.name,
+            "push_pull": push_pull,
+            "color_masking": color_masking,
+        }
 
         if new_param_dict == self.curve_param_dict:
             return
 
-        density_curve = negative_film.get_density_curve(push_pull=push_pull)
+        density_curve = negative_film.get_density_curve(
+            push_pull=push_pull, color_masking=color_masking
+        )
 
         self._ensure_lut_1d(density_curve)
 
@@ -694,6 +705,7 @@ class GpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
+        color_masking: float | None = None,
     ):
         new_param_dict = {
             "negative_film": negative_film.name,
@@ -711,6 +723,7 @@ class GpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
+            "color_masking": color_masking,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -736,6 +749,7 @@ class GpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
+            color_masking=color_masking,
         )
 
         if icc_transform is not None:
@@ -1025,6 +1039,7 @@ class GpuProcessor:
         burn_scale: float = 50.0,
         half_size: bool = True,
         cache: bool = True,
+        color_masking: float | None = None,
         **_,
     ) -> np.ndarray | None:
         start = time.time()
@@ -1045,7 +1060,7 @@ class GpuProcessor:
             cache,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
-        self.load_density_curve(negative_film, push_pull)
+        self.load_density_curve(negative_film, push_pull, color_masking)
         self.load_output_lut(
             negative_film,
             print_film,
@@ -1062,6 +1077,7 @@ class GpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
+            color_masking,
         )
 
         scale = max(self.width, self.height) / max(
