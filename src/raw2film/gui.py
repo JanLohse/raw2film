@@ -2072,7 +2072,6 @@ class MainWindow(QMainWindow):
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
-            processing_args["chroma_nr"] = 0
 
         if self.gpu_processing.isChecked():
             self.gpu_processor.process(

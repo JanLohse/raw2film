@@ -77,6 +77,7 @@ class CpuProcessor:
         resolution: None | tuple[int, int] = None,
         half_size: bool = True,
         cache: bool = True,
+        chroma_nr: int = 0,
     ):
         new_param_dict = {
             "src": src,
@@ -91,6 +92,7 @@ class CpuProcessor:
             "flip": flip,
             "resolution": resolution,
             "half_size": half_size,
+            "chroma_nr": chroma_nr,
         }
 
         if new_param_dict == self.image_param_dict:
@@ -107,6 +109,9 @@ class CpuProcessor:
         image = crop_rotate_zoom(
             image, frame_width, frame_height, rotation, zoom, rotate_times, flip
         )
+
+        if chroma_nr:
+            image = chroma_nr_filter(image, chroma_nr)
 
         if resolution is not None:
             image = resolution_scaling(image, resolution)
@@ -306,6 +311,7 @@ class CpuProcessor:
             resolution,
             half_size,
             cache,
+            chroma_nr,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
@@ -330,9 +336,6 @@ class CpuProcessor:
 
         # process image
         image = apply_2d_lut(self.tex_input, self.tex_lut_2d)
-
-        if chroma_nr:
-            image = chroma_nr_filter(image, chroma_nr)
 
         scale = max(image.shape) / max(frame_width, frame_height)  # pixels per mm
 

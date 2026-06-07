@@ -16,6 +16,7 @@ from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
 from raw2film.effects import (
+    chroma_nr_filter,
     compute_halation_kernel,
     mtf_kernel,
 )
@@ -515,6 +516,7 @@ class GpuProcessor:
         resolution: None | tuple[int, int] = None,
         half_size: bool = True,
         cache: bool = True,
+        chroma_nr: int = 0,
     ):
         new_param_dict = {
             "src": src,
@@ -529,6 +531,7 @@ class GpuProcessor:
             "flip": flip,
             "resolution": resolution,
             "half_size": half_size,
+            "chroma_nr": chroma_nr,
         }
 
         if new_param_dict == self.image_param_dict:
@@ -545,6 +548,9 @@ class GpuProcessor:
         image = crop_rotate_zoom(
             image, frame_width, frame_height, rotation, zoom, rotate_times, flip
         )
+
+        if chroma_nr:
+            image = chroma_nr_filter(image, chroma_nr)
 
         if resolution is not None:
             image = resolution_scaling(image, resolution)
@@ -1058,6 +1064,7 @@ class GpuProcessor:
             resolution,
             half_size,
             cache,
+            chroma_nr,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
@@ -1170,7 +1177,6 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
-        # TODO: chroma NR
         # TODO: highlight burn
         # TODO: canvas_mode
         # TODO: half res
