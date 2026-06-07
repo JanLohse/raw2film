@@ -1,3 +1,4 @@
+import random
 import struct
 import time
 from functools import lru_cache
@@ -477,7 +478,7 @@ class GpuProcessor:
             xp_min,
             xp_max,
             inv_range,
-            42,
+            random.randint(0, 100000000),
         )
 
         self.buffer_params_grain = self.device.create_buffer_with_data(

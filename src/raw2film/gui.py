@@ -19,6 +19,7 @@ from PIL import ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
+    QEvent,
     QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
@@ -1525,6 +1526,12 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, self.test_exiftool)
 
+    def eventFilter(self, watched, event):
+        if watched == self.image and event.type() == QEvent.Type.Resize:
+            self.parameter_changed()
+
+        return super().eventFilter(watched, event)
+
     def create_context(self):
         target_mode = "wgpu" if self.gpu_processing.isChecked() else "bitmap"
         if self.context_mode == target_mode:
@@ -1532,6 +1539,7 @@ class MainWindow(QMainWindow):
         self.context_mode = target_mode
         old_image = self.image
         self.image = QRenderWidget(update_mode="ondemand")
+        self.image.installEventFilter(self)
         self.top_splitter.insertWidget(0, self.image)
         old_image.setParent(None)
         old_image.deleteLater()
@@ -1769,10 +1777,6 @@ class MainWindow(QMainWindow):
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
         return image
-
-    def resizeEvent(self, event):
-        self.parameter_changed()
-        super().resizeEvent(event)
 
     def changed_wb_mode(self, mode):
         if mode != "Custom":
