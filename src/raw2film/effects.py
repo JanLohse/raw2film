@@ -210,7 +210,7 @@ def apply_grain(
     grain = generate_grain(
         rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma
     )
-    grain_factors = stock.grain_transform(rgb, scale, adx=adx)
+    grain_factors = stock.grain_transform(rgb, scale, adx=adx, bw_grain=bw_grain)
     grain = grain * grain_factors
     rgb += grain
     return rgb

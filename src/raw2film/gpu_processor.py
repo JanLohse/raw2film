@@ -1,4 +1,3 @@
-import random
 import struct
 import time
 from functools import lru_cache
@@ -10,6 +9,7 @@ from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
 from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
+from spectral_film_lut.grain_generation import grain_kernel
 from spectral_film_lut.utils import create_lut
 from wgpu import TextureUsage, get_default_device
 
@@ -93,6 +93,10 @@ class GpuProcessor:
         noise_shader_code = noise_shader_path.read_text()
         noise_shader = self.device.create_shader_module(code=noise_shader_code)
 
+        noise_bw_shader_path = Path(__file__).parent / "shaders/noise_bw.wgsl"
+        noise_bw_shader_code = noise_bw_shader_path.read_text()
+        noise_bw_shader = self.device.create_shader_module(code=noise_bw_shader_code)
+
         grain_shader_path = Path(__file__).parent / "shaders/grain.wgsl"
         grain_shader_code = grain_shader_path.read_text()
         grain_shader = self.device.create_shader_module(code=grain_shader_code)
@@ -119,6 +123,10 @@ class GpuProcessor:
             layout="auto",
             compute={"module": noise_shader, "entry_point": "main"},
         )
+        self.pipeline_noise_bw = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": noise_bw_shader, "entry_point": "main"},
+        )
         self.pipeline_grain = self.device.create_compute_pipeline(
             layout="auto",
             compute={"module": grain_shader, "entry_point": "main"},
@@ -142,6 +150,8 @@ class GpuProcessor:
         self.buffer_mtf_kernel_size = None
         self.buffer_halation_kernel = None
         self.buffer_halation_kernel_size = None
+        self.buffer_grain_kernel = None
+        self.buffer_grain_kernel_size = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -150,6 +160,7 @@ class GpuProcessor:
         self.output_param_dict = None
         self.mtf_param_dict = None
         self.halation_param_dict = None
+        self.grain_kernel_param_dict = None
 
         self.width = None
         self.height = None
@@ -349,6 +360,50 @@ class GpuProcessor:
             self.kernel_size_data.tobytes(),
         )
 
+    def _ensure_grain_kernel(self, kernel: np.ndarray):
+        h, w = kernel.shape[:2]
+
+        kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
+
+        if kernel.ndim == 2:
+            kernel_rgba[..., :3] = kernel[..., None]
+        else:
+            kernel_rgba[..., :3] = kernel
+
+        flat = kernel_rgba.reshape(-1, 4)
+
+        if (
+            self.buffer_grain_kernel is None
+            or self.buffer_grain_kernel.size < flat.nbytes
+        ):
+            self.buffer_grain_kernel = self.device.create_buffer(
+                size=flat.nbytes,
+                usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
+            )
+
+        self.queue.write_buffer(
+            self.buffer_grain_kernel,
+            0,
+            flat.tobytes(),
+        )
+
+        self.kernel_size_data = np.array(
+            [h, w],
+            dtype=np.uint32,
+        )
+
+        if self.buffer_grain_kernel_size is None:
+            self.buffer_grain_kernel_size = self.device.create_buffer(
+                size=16,  # uniform alignment
+                usage=(wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST),
+            )
+
+        self.queue.write_buffer(
+            self.buffer_grain_kernel_size,
+            0,
+            self.kernel_size_data.tobytes(),
+        )
+
     def _ensure_halation_kernel(self, kernel: np.ndarray):
         h, w = kernel.shape[:2]
 
@@ -397,7 +452,7 @@ class GpuProcessor:
             self.kernel_size_data.tobytes(),
         )
 
-    def _ensure_lut_grain(self, lut: np.ndarray):
+    def _ensure_grain_lut(self, lut: np.ndarray):
         size = lut.shape[1]
         if self.tex_lut_grain is None or size != self.tex_lut_grain.size[0]:
             self.tex_lut_grain = self.device.create_texture(
@@ -418,7 +473,11 @@ class GpuProcessor:
         inv_range = 1.0 / denom if denom != 0.0 else 0.0
 
         params_lut_1d = struct.pack(
-            "ffff", xp_min, xp_max, inv_range, random.randint(0, 10000000000)
+            "ffff",
+            xp_min,
+            xp_max,
+            inv_range,
+            42,
         )
 
         self.buffer_params_grain = self.device.create_buffer_with_data(
@@ -580,12 +639,30 @@ class GpuProcessor:
         grain_sigma: float = 0.4,
         bw_grain: bool = False,
     ):
-        # TODO: color mode
-        # TODO: convolution filter
+        input_lut = negative_film.get_grain_curve(scale, adx=False, bw_grain=bw_grain)
 
-        input_lut = negative_film.get_grain_curve(scale, adx=False)
+        self._ensure_grain_lut(input_lut)
 
-        self._ensure_lut_grain(input_lut)
+        new_kernel_dict = {
+            "scale": scale,
+            "grain_size_mm": grain_size_mm,
+            "grain_sigma": grain_sigma,
+            "bw_grain": bw_grain,
+        }
+
+        if new_kernel_dict == self.grain_kernel_param_dict:
+            return
+
+        kernel = grain_kernel(
+            1 / scale, grain_size_mm=grain_size_mm, grain_sigma=grain_sigma
+        )
+
+        if kernel is None:
+            kernel = np.ones((1, 1), dtype=DEFAULT_DTYPE)
+
+        self._ensure_grain_kernel(kernel)
+
+        self.grain_kernel_param_dict = new_kernel_dict
 
     def load_density_curve(self, negative_film: FilmSpectral, push_pull: float | int):
         new_param_dict = {"negative_film": negative_film.name, "push_pull": push_pull}
@@ -741,9 +818,9 @@ class GpuProcessor:
             ],
         )
 
-    def _bind_noise(self, tex_out):
+    def _bind_noise(self, tex_out, pipeline):
         return self.device.create_bind_group(
-            layout=self.pipeline_noise.get_bind_group_layout(0),
+            layout=pipeline.get_bind_group_layout(0),
             entries=[
                 {"binding": 0, "resource": tex_out.view},
                 {
@@ -777,6 +854,8 @@ class GpuProcessor:
                     },
                 },
                 {"binding": 5, "resource": tex_noise.view},
+                {"binding": 6, "resource": {"buffer": self.buffer_grain_kernel}},
+                {"binding": 7, "resource": {"buffer": self.buffer_grain_kernel_size}},
             ],
         )
 
@@ -1043,13 +1122,18 @@ class GpuProcessor:
             idx = 1 - idx
 
         if grain and negative_film.rms_density is not None:
+            bw_grain = grain == 1
             self.load_grain(
-                negative_film, scale, grain_size / 1000, grain_sigma, grain == 1
+                negative_film, scale, grain_size / 1000, grain_sigma, bw_grain
+            )
+
+            noise_pipeline = (
+                self.pipeline_noise if not bw_grain else self.pipeline_noise_bw
             )
 
             self._dispatch(
-                self.pipeline_noise,
-                self._bind_noise(self.tex_temp),
+                noise_pipeline,
+                self._bind_noise(self.tex_temp, noise_pipeline),
                 (self.width, self.height),
             )
 
@@ -1073,6 +1157,8 @@ class GpuProcessor:
         # TODO: highlight burn
         # TODO: canvas_mode
         # TODO: half res
+        # TODO: histogram
+        # TODO: auto downscale when needed
 
         print(f"shaders {time.time() - start:.4f}s")
         start = time.time()
