@@ -81,7 +81,7 @@ from raw2film.cpu_processor import CpuProcessor
 from raw2film.gpu_processor import GpuProcessor
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import raw_to_linear
-from raw2film.utils import add_metadata, load_metadata
+from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
 
 class MultiWorker(QObject):
@@ -284,21 +284,22 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
-        self.histogram = QLabel()
-        self.histogram.setScaledContents(True)
+        self.histogram = QRenderWidget(update_mode="ondemand")
+        self.histogram.setMinimumSize(QSize(256, 256))
         self.histogram.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
         self.histogram.setMinimumSize(0, 80)
+        self.histogram_context = None
 
         page_splitter = QSplitter(Qt.Orientation.Vertical)
         self.top_splitter = QSplitter()
         sidebar_widget = QWidget()
-        sidebar_layout = QVBoxLayout(sidebar_widget)
-        sidebar_layout.addWidget(self.histogram)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        self.sidebar_layout = QVBoxLayout(sidebar_widget)
+        self.sidebar_layout.addWidget(self.histogram)
+        self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.histogram.setContentsMargins(BORDER_RADIUS - 1, 0, BORDER_RADIUS - 1, 0)
-        sidebar_layout.setSpacing(0)
+        self.sidebar_layout.setSpacing(0)
         sidebar_settings = QWidget()
         side_layout = QVBoxLayout()
         sidebar_settings.setLayout(side_layout)
@@ -365,7 +366,7 @@ class MainWindow(QMainWindow):
         page_splitter.setStretchFactor(1, 0)
 
         self.top_splitter.addWidget(self.image)
-        sidebar_layout.addWidget(sidebar_container)
+        self.sidebar_layout.addWidget(sidebar_container)
         self.top_splitter.addWidget(sidebar_widget)
         self.top_splitter.setStretchFactor(0, 1)
         self.top_splitter.setStretchFactor(1, 0)
@@ -1538,15 +1539,25 @@ class MainWindow(QMainWindow):
             return
         self.context_mode = target_mode
         old_image = self.image
+        old_histogram = self.histogram
         self.image = QRenderWidget(update_mode="ondemand")
         self.image.installEventFilter(self)
         self.top_splitter.insertWidget(0, self.image)
+        self.histogram = QRenderWidget(update_mode="ondemand")
+        self.sidebar_layout.insertWidget(0, self.histogram)
+
         old_image.setParent(None)
         old_image.deleteLater()
+        old_histogram.setParent(None)
+        old_histogram.deleteLater()
         self.image.setSizePolicy(
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
+        self.histogram.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
         self.image.setMinimumSize(QSize(256, 256))
+        self.histogram.setMinimumSize(0, 80)
         if self.context_mode == "wgpu":
             self.image_context = self.image.get_wgpu_context()
             self.image_context.configure(
@@ -1558,8 +1569,19 @@ class MainWindow(QMainWindow):
                     | wgpu.TextureUsage.STORAGE_BINDING
                 ),
             )
+            self.histogram_context = self.histogram.get_wgpu_context()
+            self.histogram_context.configure(
+                device=self.gpu_processor.device,
+                format=wgpu.TextureFormat.rgba8unorm,
+                usage=(
+                    wgpu.TextureUsage.COPY_DST
+                    | wgpu.TextureUsage.RENDER_ATTACHMENT
+                    | wgpu.TextureUsage.STORAGE_BINDING
+                ),
+            )
         elif self.context_mode == "bitmap":
             self.image_context = self.image.get_bitmap_context()
+            self.histogram_context = self.histogram.get_bitmap_context()
 
     def test_exiftool(self):
         try:
@@ -2086,6 +2108,9 @@ class MainWindow(QMainWindow):
                 icc_transform=self.icc_transform,
                 **processing_args,
             )
+            histogram = generate_histogram(image, height=80)
+            self.histogram_context.set_bitmap(histogram)
+            self.histogram.request_draw()
             img_height, img_width, _ = image.shape
             self.numpy_to_canvas(image, full_height, full_width, img_height, img_width)
 
