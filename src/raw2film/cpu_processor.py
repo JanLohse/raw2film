@@ -1,6 +1,5 @@
 from functools import lru_cache
 
-import cv2 as cv
 import numpy as np
 from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
@@ -78,7 +77,8 @@ class CpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         chroma_nr: int = 0,
-    ):
+        max_scale: float | None = None,
+    ) -> tuple[int, int]:
         new_param_dict = {
             "src": src,
             "cam": cam,
@@ -113,12 +113,25 @@ class CpuProcessor:
         if chroma_nr:
             image = chroma_nr_filter(image, chroma_nr)
 
+        if resolution is None and max_scale is not None:
+            resolution = image.shape[:2]
+
+        orig_resolution = resolution[:]
+
         if resolution is not None:
+            scale = max(resolution) / max(frame_width, frame_height)
+
+            if max_scale is not None and scale > max_scale:
+                scale_factor = max_scale / scale
+                resolution = [round(x * scale_factor) for x in resolution]
+
             image = resolution_scaling(image, resolution)
 
         self.tex_input = np.ascontiguousarray(image)
 
         self.image_param_dict = new_param_dict
+
+        return orig_resolution
 
     def load_input_lut(
         self,
@@ -294,10 +307,11 @@ class CpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
+        max_scale: float | None = 400.0,
         **_,
     ):
         # Update textures
-        self.load_image_texture(
+        resolution = self.load_image_texture(
             src,
             cam,
             lens,
@@ -312,6 +326,7 @@ class CpuProcessor:
             half_size,
             cache,
             chroma_nr,
+            max_scale,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
@@ -393,16 +408,8 @@ class CpuProcessor:
                 image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
             elif "Uniform" in canvas_mode:
                 image = add_canvas_uniform(image, canvas_scale, canvas_color)
-            if resolution is not None:
-                image = resolution_scaling(image, resolution)
 
-        if half_res:
-            image = cv.resize(
-                image,
-                None,
-                fx=2,
-                fy=2,
-                interpolation=cv.INTER_CUBIC,
-            )
+        if resolution is not None:
+            image = resolution_scaling(image, resolution)
 
         return image

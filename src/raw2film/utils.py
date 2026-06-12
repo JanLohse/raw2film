@@ -231,15 +231,16 @@ def resolution_scaling(image: np.ndarray, resolution) -> np.ndarray:
     if scaling_factor < 1:
         image = cv.resize(
             image,
-            (int(w * scaling_factor), int(h * scaling_factor)),
+            (round(w * scaling_factor), round(h * scaling_factor)),
             interpolation=cv.INTER_AREA,
         )
     elif scaling_factor > 1:
         image = cv.resize(
             image,
-            (int(w * scaling_factor), int(h * scaling_factor)),
+            (round(w * scaling_factor), round(h * scaling_factor)),
             interpolation=cv.INTER_LANCZOS4,
         )
+    print(resolution, image.shape)
     return image
 
 

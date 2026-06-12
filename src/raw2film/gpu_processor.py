@@ -1,7 +1,6 @@
 import math
 import random
 import struct
-import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -262,16 +261,24 @@ class GpuProcessor:
             image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
         image = image.astype(DEFAULT_DTYPE)
-        start = time.time()
         np.clip(image, 0, 65504, out=image)
-        print(f"clipping: {time.time() - start:.4f}s")
 
         return image
 
-    def _ensure_image_texture(self, image: np.ndarray):
+    def _ensure_image_texture(
+        self, image: np.ndarray, scale_factor: float | None = None
+    ):
         h, w = image.shape[:2]
+        h_int, w_int = h, w
+        if scale_factor is not None:
+            w_int = round(w_int / scale_factor)
+            h_int = round(h_int / scale_factor)
 
-        if self.tex_input is None or self.tex_input.size != (w, h):
+        if (
+            self.tex_input is None
+            or self.tex_input.size != (w, h)
+            or self.tex_int_out != (w_int, h_int)
+        ):
             self.tex_input = GpuTexture(
                 self.device, (w, h), format=wgpu.TextureFormat.rgba32float
             )
@@ -279,7 +286,7 @@ class GpuProcessor:
             self.tex_b = GpuTexture(self.device, (w, h))
             self.tex_temp = GpuTexture(self.device, (w, h))
             self.tex_int_out = GpuTexture(
-                self.device, (w, h), format=wgpu.TextureFormat.rgba8unorm
+                self.device, (w_int, h_int), format=wgpu.TextureFormat.rgba8unorm
             )
 
         self.tex_input.upload(self.queue, image)
@@ -626,6 +633,7 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         chroma_nr: int = 0,
+        max_scale: float | None = None,
     ):
         new_param_dict = {
             "src": src,
@@ -642,6 +650,7 @@ class GpuProcessor:
             "half_size": half_size,
             "chroma_nr": chroma_nr,
         }
+        scale_factor = None
 
         if new_param_dict == self.image_param_dict:
             return
@@ -661,12 +670,21 @@ class GpuProcessor:
         if chroma_nr:
             image = chroma_nr_filter(image, chroma_nr)
 
+        if resolution is None and max_scale is not None:
+            resolution = image.shape[:2]
+
         if resolution is not None:
+            scale = max(resolution) / max(frame_width, frame_height)
+
+            if max_scale is not None and scale > max_scale:
+                scale_factor = max_scale / scale
+                resolution = [round(x * scale_factor) for x in resolution]
+
             image = resolution_scaling(image, resolution)
 
         image = np.dstack((image, np.ones_like(image[..., :1])))
 
-        self._ensure_image_texture(image)
+        self._ensure_image_texture(image, scale_factor)
 
         self.image_param_dict = new_param_dict
 
@@ -1175,7 +1193,8 @@ class GpuProcessor:
         if submit_instantly:
             self.queue.submit([encoder.finish()])
 
-    def read_texture(self, texture, width, height):
+    def read_texture(self, texture):
+        width, height, _ = texture.size
         # rgba8unorm uses 4 bytes per pixel (1 byte per channel)
         bytes_per_pixel = 4
         row_bytes = width * bytes_per_pixel
@@ -1369,9 +1388,9 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
+        max_scale: float | None = 400.0,
         **_,
     ) -> np.ndarray | None:
-        start = time.time()
         # Update textures
         self.load_image_texture(
             src,
@@ -1388,6 +1407,7 @@ class GpuProcessor:
             half_size,
             cache,
             chroma_nr,
+            max_scale,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
@@ -1410,14 +1430,12 @@ class GpuProcessor:
             color_masking,
         )
 
-        scale = max(self.width, self.height) / max(
-            frame_width, frame_height
-        )  # pixels per mm
+        # pixels per mm
+        scale = max(self.width, self.height) / max(frame_width, frame_height)
+
         ping_pong_tex = [self.tex_a, self.tex_b]
         idx = 1
 
-        print(f"loading {time.time() - start:.4f}s")
-        start = time.time()
         self._dispatch(
             self.pipeline_lut_2d,
             self._bind_lut_2d(self.tex_input, ping_pong_tex[1 - idx]),
@@ -1512,8 +1530,6 @@ class GpuProcessor:
         # TODO: canvas_mode
         # TODO: auto downscale when needed
 
-        print(f"shaders {time.time() - start:.4f}s")
-        start = time.time()
         if dst_texture is None:
             binding, dst_size = self._bind_copy_to_dst(
                 ping_pong_tex[idx].texture, self.tex_int_out.texture
@@ -1522,13 +1538,8 @@ class GpuProcessor:
             self._dispatch(
                 self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
             )
-            print(f"to int {time.time() - start:.4f}s")
-            start = time.time()
-            image = self.read_texture(
-                self.tex_int_out.texture, self.width, self.height
-            )[..., 0:3]
+            image = self.read_texture(self.tex_int_out.texture)[..., 0:3]
 
-            print(f"to numpy {time.time() - start:.4f}s")
             return image
         else:
             binding, dst_size = self._bind_copy_to_dst(
@@ -1538,7 +1549,6 @@ class GpuProcessor:
             self._dispatch(
                 self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
             )
-            print(f"to int {time.time() - start:.4f}s")
 
             if histogram_texture is not None:
                 self.generate_histogram(ping_pong_tex[idx])
