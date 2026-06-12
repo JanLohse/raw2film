@@ -231,8 +231,8 @@ class GpuProcessor:
             address_mode_w=wgpu.AddressMode.clamp_to_edge,
         )
         self.image_sampler = self.device.create_sampler(
-            mag_filter="nearest",
-            min_filter="nearest",
+            mag_filter="linear",
+            min_filter="linear",
             address_mode_u="clamp-to-edge",
             address_mode_v="clamp-to-edge",
         )
@@ -1269,9 +1269,6 @@ class GpuProcessor:
         src_w, src_h, _ = src_texture.size
         dst_w, dst_h, _ = dst_texture.size
 
-        print(f"{src_w=} {src_h=}")
-        print(f"{dst_w=} {dst_h=}")
-
         # 1. Calculate aspect ratios
         src_aspect = src_w / src_h
         dst_aspect = dst_w / dst_h
@@ -1294,8 +1291,6 @@ class GpuProcessor:
         # space
         scale_x = 1.0 / render_w
         scale_y = 1.0 / render_h
-
-        print(f"{scale_x=} {scale_y=}")
 
         transform_data = struct.pack("ffff", scale_x, scale_y, offset_x, offset_y)
         uniform_buffer = self.device.create_buffer_with_data(
@@ -1320,7 +1315,7 @@ class GpuProcessor:
             ],
         )
 
-        return bind_group, (src_w, src_h)
+        return bind_group, (dst_w, dst_h)
 
     def process(
         self,

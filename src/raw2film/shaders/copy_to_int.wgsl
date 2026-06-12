@@ -19,7 +19,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let dst_coords = vec2<f32>(f32(id.x), f32(id.y));
+    // FIX: Add 0.5 to sample from the center of the destination pixel
+    let dst_coords = vec2<f32>(f32(id.x) + 0.5, f32(id.y) + 0.5);
 
     // Map destination pixel back to normalized source UV coordinates (0.0 to 1.0)
     let src_uv = vec2<f32>(
@@ -31,7 +32,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Only sample if the mapped UV actually falls inside the source image bounds
     if (src_uv.x >= 0.0 && src_uv.x <= 1.0 && src_uv.y >= 0.0 && src_uv.y <= 1.0) {
-        // Use textureSampleLevel for explicit mip level 0 sampling in compute shaders
         color = textureSampleLevel(src_tex, src_sampler, src_uv, 0.0);
     }
 
