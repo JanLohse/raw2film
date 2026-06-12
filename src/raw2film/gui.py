@@ -2085,12 +2085,12 @@ class MainWindow(QMainWindow):
             full_height,
             full_width,
         )
-        # TODO: restore half res preview
-        # if self.half_res_preview.isChecked():
-        #     processing_args["resolution"] = tuple(
-        #         x // 2 for x in processing_args["resolution"]
-        #     )
-        #     processing_args["half_res"] = True
+
+        if self.half_res_preview.isChecked():
+            processing_args["resolution"] = tuple(
+                x // 2 for x in processing_args["resolution"]
+            )
+            processing_args["half_res"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False

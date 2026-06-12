@@ -215,6 +215,12 @@ class GpuProcessor:
             address_mode_v=wgpu.AddressMode.clamp_to_edge,
             address_mode_w=wgpu.AddressMode.clamp_to_edge,
         )
+        self.image_sampler = self.device.create_sampler(
+            mag_filter="linear",
+            min_filter="linear",
+            address_mode_u="clamp-to-edge",
+            address_mode_v="clamp-to-edge",
+        )
 
         self.cameras = cameras
         self.lenses = lenses
@@ -1032,6 +1038,15 @@ class GpuProcessor:
             ],
         )
 
+    def _bind_scale_histogram(self, target_texture):
+        return self.device.create_bind_group(
+            layout=self.pipeline_scale_texture.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.tex_hist_out.view},
+                {"binding": 1, "resource": target_texture.create_view()},
+            ],
+        )
+
     def generate_histogram(self, source_tex):
         """
         Executes the complete multi-pass pipeline chain to draw the output histogram.
@@ -1073,41 +1088,6 @@ class GpuProcessor:
 
         self.queue.submit([encoder.finish()])
         return self.tex_hist_out
-
-    def _dispatch_scale_histogram(self, target_texture):
-        """Scales the internal histogram texture to fit an arbitrary target canvas."""
-        target_w, target_h = target_texture.size[0], target_texture.size[1]
-
-        # Create transient uniform buffer
-        scale_params = np.array([target_w, target_h], dtype=np.uint32)
-        buffer_scale_params = self.device.create_buffer_with_data(
-            data=scale_params, usage=wgpu.BufferUsage.UNIFORM
-        )
-
-        # Build layout entries smoothly
-        bind_group = self.device.create_bind_group(
-            layout=self.pipeline_scale_texture.get_bind_group_layout(0),
-            entries=[
-                {"binding": 0, "resource": self.tex_hist_out.view},
-                {"binding": 1, "resource": target_texture.create_view()},
-                {
-                    "binding": 2,
-                    "resource": {
-                        "buffer": buffer_scale_params,
-                        "offset": 0,
-                        "size": buffer_scale_params.size,
-                    },
-                },
-            ],
-        )
-
-        # Recycle the primary pattern dispatcher completely
-        self._dispatch(
-            pipeline=self.pipeline_scale_texture,
-            bind_group=bind_group,
-            size=(target_w, target_h),
-            wg_size=(16, 16),
-        )
 
     def _dispatch(self, pipeline, bind_group, size, wg_size=(8, 8), encoder=None):
         """
@@ -1180,58 +1160,57 @@ class GpuProcessor:
 
         return array
 
-    def copy_to_dst(self, src_texture, dst_texture):
+    def _bind_copy_to_dst(self, src_texture, dst_texture):
         src_w, src_h, _ = src_texture.size
         dst_w, dst_h, _ = dst_texture.size
-        offset_x = (dst_w - src_w) // 2
-        offset_y = (dst_h - src_h) // 2
 
-        encoder = self.device.create_command_encoder()
+        # 1. Calculate aspect ratios
+        src_aspect = src_w / src_h
+        dst_aspect = dst_w / dst_h
 
-        view = dst_texture.create_view()
-        render_pass = encoder.begin_render_pass(
-            color_attachments=[
-                {
-                    "view": view,
-                    "clear_value": (0.0, 0.0, 0.0, 0.0),
-                    "load_op": wgpu.LoadOp.clear,
-                    "store_op": wgpu.StoreOp.store,
-                }
-            ]
-        )
-        render_pass.end()
+        # 2. Determine scaling factors and offsets to fit aspect ratio
+        if src_aspect > dst_aspect:
+            # Source is wider than destination (Letterbox - bars on top/bottom)
+            render_w = dst_w
+            render_h = dst_w / src_aspect
+            offset_x = 0.0
+            offset_y = (dst_h - render_h) / 2.0
+        else:
+            # Source is taller than destination (Pillarbox - bars on sides)
+            render_w = dst_h * src_aspect
+            render_h = dst_h
+            offset_x = (dst_w - render_w) / 2.0
+            offset_y = 0.0
 
-        offset_data = struct.pack("ii", offset_x, offset_y)
+        # 3. Calculate inverse scale to map from destination pixel space to 0.0-1.0 UV
+        # space
+        scale_x = 1.0 / render_w
+        scale_y = 1.0 / render_h
+
+        transform_data = struct.pack("ffff", scale_x, scale_y, offset_x, offset_y)
         uniform_buffer = self.device.create_buffer_with_data(
-            data=offset_data, usage=wgpu.BufferUsage.UNIFORM
+            data=transform_data, usage=wgpu.BufferUsage.UNIFORM
         )
 
+        # Update Bind Group to include the sampler and new uniform layout
         bind_group = self.device.create_bind_group(
             layout=self.pipeline_copy_to_int.get_bind_group_layout(0),
             entries=[
                 {"binding": 0, "resource": src_texture.create_view()},
-                {"binding": 1, "resource": view},
+                {"binding": 1, "resource": self.image_sampler},
+                {"binding": 2, "resource": dst_texture.create_view()},
                 {
-                    "binding": 2,
+                    "binding": 3,
                     "resource": {
                         "buffer": uniform_buffer,
                         "offset": 0,
-                        "size": len(offset_data),
+                        "size": len(transform_data),
                     },
                 },
             ],
         )
 
-        compute_pass = encoder.begin_compute_pass()
-        compute_pass.set_pipeline(self.pipeline_copy_to_int)
-        compute_pass.set_bind_group(0, bind_group)
-
-        dispatch_x = (src_w + 15) // 16
-        dispatch_y = (src_h + 15) // 16
-        compute_pass.dispatch_workgroups(dispatch_x, dispatch_y)
-        compute_pass.end()
-
-        self.device.queue.submit([encoder.finish()])
+        return bind_group, (dst_w, dst_h)
 
     def process(
         self,
@@ -1418,13 +1397,18 @@ class GpuProcessor:
 
         # TODO: highlight burn
         # TODO: canvas_mode
-        # TODO: half res
         # TODO: auto downscale when needed
 
         print(f"shaders {time.time() - start:.4f}s")
         start = time.time()
         if dst_texture is None:
-            self.copy_to_dst(ping_pong_tex[idx].texture, self.tex_int_out.texture)
+            binding, dst_size = self._bind_copy_to_dst(
+                ping_pong_tex[idx].texture, self.tex_int_out.texture
+            )
+
+            self._dispatch(
+                self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
+            )
             print(f"to int {time.time() - start:.4f}s")
             start = time.time()
             image = self.read_texture(
@@ -1434,12 +1418,23 @@ class GpuProcessor:
             print(f"to numpy {time.time() - start:.4f}s")
             return image
         else:
-            self.copy_to_dst(ping_pong_tex[idx].texture, dst_texture)
+            binding, dst_size = self._bind_copy_to_dst(
+                ping_pong_tex[idx].texture, dst_texture
+            )
+
+            self._dispatch(
+                self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
+            )
             print(f"to int {time.time() - start:.4f}s")
 
             if histogram_texture is not None:
                 self.generate_histogram(ping_pong_tex[idx])
 
-                self._dispatch_scale_histogram(histogram_texture)
+                self._dispatch(
+                    self.pipeline_scale_texture,
+                    self._bind_scale_histogram(histogram_texture),
+                    histogram_texture.size[:2],
+                    wg_size=(16, 16),
+                )
 
             return None

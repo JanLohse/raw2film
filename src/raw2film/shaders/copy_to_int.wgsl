@@ -1,30 +1,40 @@
 @group(0) @binding(0) var src_tex: texture_2d<f32>;
-@group(0) @binding(1) var dst_tex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var src_sampler: sampler;
+@group(0) @binding(2) var dst_tex: texture_storage_2d<rgba8unorm, write>;
 
 struct Uniforms {
-    offset_x: i32,
-    offset_y: i32,
+    scale_x: f32,
+    scale_y: f32,
+    offset_x: f32,
+    offset_y: f32,
 }
-@group(0) @binding(2) var<uniform> u_offsets: Uniforms;
+@group(0) @binding(3) var<uniform> u_transforms: Uniforms;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let src_size = textureDimensions(src_tex);
+    let dst_size = textureDimensions(dst_tex);
 
-    // Check bounds using u32 to keep it clean
-    if (id.x >= src_size.x || id.y >= src_size.y) {
+    // Ensure we don't write out of the destination bounds
+    if (id.x >= dst_size.x || id.y >= dst_size.y) {
         return;
     }
 
-    // Explicitly cast components to i32 for textureLoad
-    let src_coords = vec2<i32>(i32(id.x), i32(id.y));
-    let color: vec4<f32> = textureLoad(src_tex, src_coords, 0);
+    let dst_coords = vec2<f32>(f32(id.x), f32(id.y));
 
-    // Calculate where it belongs in the destination texture
-    let dst_coords = vec2<i32>(
-        i32(id.x) + u_offsets.offset_x,
-        i32(id.y) + u_offsets.offset_y
+    // Map destination pixel back to normalized source UV coordinates (0.0 to 1.0)
+    let src_uv = vec2<f32>(
+        (dst_coords.x - u_transforms.offset_x) * u_transforms.scale_x,
+        (dst_coords.y - u_transforms.offset_y) * u_transforms.scale_y
     );
 
-    textureStore(dst_tex, dst_coords, color);
+    var color: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+    // Only sample if the mapped UV actually falls inside the source image bounds
+    if (src_uv.x >= 0.0 && src_uv.x <= 1.0 && src_uv.y >= 0.0 && src_uv.y <= 1.0) {
+        // Use textureSampleLevel for explicit mip level 0 sampling in compute shaders
+        color = textureSampleLevel(src_tex, src_sampler, src_uv, 0.0);
+    }
+
+    let write_coords = vec2<i32>(i32(id.x), i32(id.y));
+    textureStore(dst_tex, write_coords, color);
 }
