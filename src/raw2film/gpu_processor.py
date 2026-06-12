@@ -1240,7 +1240,15 @@ class GpuProcessor:
 
         return array
 
-    def _dispatch_highlight_burn(self, tex_a, tex_b):
+    def _dispatch_highlight_burn(self, tex_a, tex_b, encoder=None):
+        """
+        Dispatch highlight burn in two passes.
+        """
+        submit_instantly = False
+        if encoder is None:
+            encoder = self.device.create_command_encoder()
+            submit_instantly = True
+
         self._dispatch(
             self.pipeline_highlight_burn_1,
             self.device.create_bind_group(
@@ -1260,6 +1268,7 @@ class GpuProcessor:
                 ],
             ),
             (self.width, self.height),
+            encoder=encoder,
         )
 
         self._dispatch(
@@ -1282,7 +1291,11 @@ class GpuProcessor:
                 ],
             ),
             (self.width, self.height),
+            encoder=encoder,
         )
+
+        if submit_instantly:
+            self.queue.submit([encoder.finish()])
 
     def _bind_copy_to_dst(self, src_texture, dst_texture):
         src_w, src_h, _ = src_texture.size
@@ -1436,10 +1449,13 @@ class GpuProcessor:
         ping_pong_tex = [self.tex_a, self.tex_b]
         idx = 1
 
+        encoder = self.device.create_command_encoder()
+
         self._dispatch(
             self.pipeline_lut_2d,
             self._bind_lut_2d(self.tex_input, ping_pong_tex[1 - idx]),
             (self.width, self.height),
+            encoder=encoder,
         )
         idx = 1 - idx
 
@@ -1461,6 +1477,7 @@ class GpuProcessor:
                     self.buffer_halation_kernel_size,
                 ),
                 (self.width, self.height),
+                encoder=encoder,
             )
             idx = 1 - idx
 
@@ -1468,6 +1485,7 @@ class GpuProcessor:
             self.pipeline_lut_1d,
             self._bind_lut_1d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
             (self.width, self.height),
+            encoder=encoder,
         )
         idx = 1 - idx
 
@@ -1483,6 +1501,7 @@ class GpuProcessor:
                     self.buffer_mtf_kernel_size,
                 ),
                 (self.width, self.height),
+                encoder=encoder,
             )
             idx = 1 - idx
 
@@ -1500,6 +1519,7 @@ class GpuProcessor:
                 noise_pipeline,
                 self._bind_noise(self.tex_temp, noise_pipeline),
                 (self.width, self.height),
+                encoder=encoder,
             )
 
             self._dispatch(
@@ -1508,6 +1528,7 @@ class GpuProcessor:
                     ping_pong_tex[idx], ping_pong_tex[1 - idx], self.tex_temp
                 ),
                 (self.width, self.height),
+                encoder=encoder,
             )
             idx = 1 - idx
 
@@ -1517,18 +1538,20 @@ class GpuProcessor:
         ):
             self.load_highlight_burn(negative_film, highlight_burn, burn_scale)
 
-            self._dispatch_highlight_burn(ping_pong_tex[idx], ping_pong_tex[1 - idx])
+            self._dispatch_highlight_burn(
+                ping_pong_tex[idx], ping_pong_tex[1 - idx], encoder=encoder
+            )
             idx = 1 - idx
 
         self._dispatch(
             self.pipeline_lut_3d,
             self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
             (self.width, self.height),
+            encoder=encoder,
         )
         idx = 1 - idx
 
         # TODO: canvas_mode
-        # TODO: auto downscale when needed
 
         if dst_texture is None:
             binding, dst_size = self._bind_copy_to_dst(
@@ -1536,8 +1559,14 @@ class GpuProcessor:
             )
 
             self._dispatch(
-                self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
+                self.pipeline_copy_to_int,
+                binding,
+                dst_size,
+                wg_size=(16, 16),
+                encoder=encoder,
             )
+
+            self.queue.submit([encoder.finish()])
             image = self.read_texture(self.tex_int_out.texture)[..., 0:3]
 
             return image
@@ -1547,8 +1576,14 @@ class GpuProcessor:
             )
 
             self._dispatch(
-                self.pipeline_copy_to_int, binding, dst_size, wg_size=(16, 16)
+                self.pipeline_copy_to_int,
+                binding,
+                dst_size,
+                wg_size=(16, 16),
+                encoder=encoder,
             )
+
+            self.queue.submit([encoder.finish()])
 
             if histogram_texture is not None:
                 self.generate_histogram(ping_pong_tex[idx])
