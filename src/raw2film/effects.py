@@ -326,7 +326,7 @@ def down_up_blur(image: np.ndarray, scale: int = 50, func: Callable | None = Non
         if func is not None:
             down = func(down)
         # Downsample channel
-        blurred = ndimage.gaussian_filter(down, sigma=3)
+        blurred = ndimage.gaussian_filter(down, sigma=3, truncate=2)
 
         # Upsample back
         up = ndimage.zoom(blurred, scale, order=1)

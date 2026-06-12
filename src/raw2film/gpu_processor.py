@@ -1,3 +1,4 @@
+import math
 import random
 import struct
 import time
@@ -112,6 +113,14 @@ class GpuProcessor:
         scale_shader_code = scale_shader_path.read_text()
         scale_shader = self.device.create_shader_module(code=scale_shader_code)
 
+        highlight_burn_shader_path = (
+            Path(__file__).parent / "shaders/highlight_burn.wgsl"
+        )
+        highlight_burn_shader_code = highlight_burn_shader_path.read_text()
+        highlight_burn_shader = self.device.create_shader_module(
+            code=highlight_burn_shader_code
+        )
+
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": lut_1d_shader, "entry_point": "main"}
@@ -157,6 +166,14 @@ class GpuProcessor:
         self.pipeline_scale_texture = self.device.create_compute_pipeline(
             layout="auto", compute={"module": scale_shader, "entry_point": "main"}
         )
+        self.pipeline_highlight_burn_1 = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": highlight_burn_shader, "entry_point": "downsample_func"},
+        )
+        self.pipeline_highlight_burn_2 = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": highlight_burn_shader, "entry_point": "final_burn"},
+        )
 
         # Init gpu textures
         self.tex_input = None
@@ -164,6 +181,9 @@ class GpuProcessor:
         self.tex_b = None
         self.tex_temp = None
         self.tex_int_out = None
+        self.tex_highlight_burn = None
+        self.tex_highlight_burn_view = None
+        self.tex_hist_out = None
 
         self.tex_lut_1d = None
         self.tex_lut_2d = None
@@ -178,6 +198,11 @@ class GpuProcessor:
         self.buffer_halation_kernel_size = None
         self.buffer_grain_kernel = None
         self.buffer_grain_kernel_size = None
+        self.buffer_hist_counts = None
+        self.buffer_hist_heights = None
+        self.buffer_hist_mix_table = None
+        self.buffer_hist_params = None
+        self.buffer_highlight_burn = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -187,17 +212,7 @@ class GpuProcessor:
         self.mtf_param_dict = None
         self.halation_param_dict = None
         self.grain_kernel_param_dict = None
-
-        # Add these definitions to your existing __init__ method:
-        # --------------------------------------------------------
-        self.tex_hist_out = None
-        self.buffer_hist_counts = None
-        self.buffer_hist_heights = None
-        self.buffer_hist_mix_table = None
-        self.buffer_hist_params = None
-
-        # A cached copy of the flat mix table to avoid re-uploading if unchanged
-        self.mix_table = None
+        self.highlight_burn_param_dict = None
 
         self.width = None
         self.height = None
@@ -216,10 +231,16 @@ class GpuProcessor:
             address_mode_w=wgpu.AddressMode.clamp_to_edge,
         )
         self.image_sampler = self.device.create_sampler(
-            mag_filter="linear",
-            min_filter="linear",
+            mag_filter="nearest",
+            min_filter="nearest",
             address_mode_u="clamp-to-edge",
             address_mode_v="clamp-to-edge",
+        )
+        self.burn_sampler = self.device.create_sampler(
+            mag_filter="linear",
+            min_filter="linear",
+            address_mode_u=wgpu.AddressMode.mirror_repeat,
+            address_mode_v=wgpu.AddressMode.mirror_repeat,
         )
 
         self.cameras = cameras
@@ -497,6 +518,23 @@ class GpuProcessor:
             self.kernel_size_data.tobytes(),
         )
 
+    def _ensure_highlight_burn(
+        self, d_ref: float, highlight_burn: float, lowres_w: int, lowres_h: int
+    ):
+        self.tex_highlight_burn = self.device.create_texture(
+            size=(lowres_w, lowres_h, 1),
+            usage=wgpu.TextureUsage.STORAGE_BINDING | wgpu.TextureUsage.TEXTURE_BINDING,
+            format=wgpu.TextureFormat.rgba16float,  # Change this to match your pipeline
+        )
+
+        self.tex_highlight_burn_view = self.tex_highlight_burn.create_view()
+
+        uniform_data = np.array([highlight_burn, d_ref], dtype=np.float32)
+        self.buffer_highlight_burn = self.device.create_buffer_with_data(
+            data=uniform_data,
+            usage=wgpu.BufferUsage.UNIFORM,
+        )
+
     def _ensure_grain_lut(self, lut: np.ndarray):
         size = lut.shape[1]
         if self.tex_lut_grain is None or size != self.tex_lut_grain.size[0]:
@@ -685,6 +723,29 @@ class GpuProcessor:
         self._ensure_halation_kernel(kernel)
 
         self.halation_param_dict = new_param_dict
+
+    def load_highlight_burn(
+        self, negative_film: FilmSpectral, highlight_burn: float, burn_scale: float
+    ):
+        d_ref = negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0]
+
+        scale_factor = math.ceil(min(self.height, self.width) / burn_scale)
+        lowres_w = max(1, self.width // scale_factor)
+        lowres_h = max(1, self.height // scale_factor)
+
+        new_param_dict = {
+            "d_ref": d_ref,
+            "highlight_burn": highlight_burn,
+            "lowres_w": lowres_w,
+            "lowres_h": lowres_h,
+        }
+
+        if new_param_dict == self.highlight_burn_param_dict:
+            return
+
+        self._ensure_highlight_burn(d_ref, highlight_burn, lowres_w, lowres_h)
+
+        self.highlight_burn_param_dict = new_param_dict
 
     def load_input_lut(
         self,
@@ -1160,9 +1221,56 @@ class GpuProcessor:
 
         return array
 
+    def _dispatch_highlight_burn(self, tex_a, tex_b):
+        self._dispatch(
+            self.pipeline_highlight_burn_1,
+            self.device.create_bind_group(
+                layout=self.pipeline_highlight_burn_1.get_bind_group_layout(0),
+                entries=[
+                    {"binding": 0, "resource": tex_a.view},
+                    {"binding": 1, "resource": self.burn_sampler},
+                    {"binding": 2, "resource": self.tex_highlight_burn_view},
+                    {
+                        "binding": 3,
+                        "resource": {
+                            "buffer": self.buffer_highlight_burn,
+                            "offset": 0,
+                            "size": 8,
+                        },
+                    },
+                ],
+            ),
+            (self.width, self.height),
+        )
+
+        self._dispatch(
+            self.pipeline_highlight_burn_2,
+            self.device.create_bind_group(
+                layout=self.pipeline_highlight_burn_2.get_bind_group_layout(0),
+                entries=[
+                    {"binding": 0, "resource": tex_a.view},
+                    {"binding": 1, "resource": self.tex_highlight_burn_view},
+                    {"binding": 2, "resource": self.burn_sampler},
+                    {"binding": 3, "resource": tex_b.view},
+                    {
+                        "binding": 4,
+                        "resource": {
+                            "buffer": self.buffer_highlight_burn,
+                            "offset": 0,
+                            "size": 8,
+                        },
+                    },
+                ],
+            ),
+            (self.width, self.height),
+        )
+
     def _bind_copy_to_dst(self, src_texture, dst_texture):
         src_w, src_h, _ = src_texture.size
         dst_w, dst_h, _ = dst_texture.size
+
+        print(f"{src_w=} {src_h=}")
+        print(f"{dst_w=} {dst_h=}")
 
         # 1. Calculate aspect ratios
         src_aspect = src_w / src_h
@@ -1187,6 +1295,8 @@ class GpuProcessor:
         scale_x = 1.0 / render_w
         scale_y = 1.0 / render_h
 
+        print(f"{scale_x=} {scale_y=}")
+
         transform_data = struct.pack("ffff", scale_x, scale_y, offset_x, offset_y)
         uniform_buffer = self.device.create_buffer_with_data(
             data=transform_data, usage=wgpu.BufferUsage.UNIFORM
@@ -1210,7 +1320,7 @@ class GpuProcessor:
             ],
         )
 
-        return bind_group, (dst_w, dst_h)
+        return bind_group, (src_w, src_h)
 
     def process(
         self,
@@ -1388,6 +1498,15 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        if highlight_burn and (
+            print_film is not None
+            or negative_film.density_measure in ["status_m", "bw"]
+        ):
+            self.load_highlight_burn(negative_film, highlight_burn, burn_scale)
+
+            self._dispatch_highlight_burn(ping_pong_tex[idx], ping_pong_tex[1 - idx])
+            idx = 1 - idx
+
         self._dispatch(
             self.pipeline_lut_3d,
             self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
@@ -1395,7 +1514,6 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
-        # TODO: highlight burn
         # TODO: canvas_mode
         # TODO: auto downscale when needed
 
