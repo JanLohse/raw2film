@@ -22,6 +22,7 @@ from raw2film.effects import (
 )
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
+    MIX_TABLE,
     load_metadata,
     resolution_scaling,
 )
@@ -103,6 +104,14 @@ class GpuProcessor:
         grain_shader_code = grain_shader_path.read_text()
         grain_shader = self.device.create_shader_module(code=grain_shader_code)
 
+        histogram_shader_path = Path(__file__).parent / "shaders/histogram.wgsl"
+        histogram_shader_code = histogram_shader_path.read_text()
+        histogram_shader = self.device.create_shader_module(code=histogram_shader_code)
+
+        scale_shader_path = Path(__file__).parent / "shaders/scale_texture.wgsl"
+        scale_shader_code = scale_shader_path.read_text()
+        scale_shader = self.device.create_shader_module(code=scale_shader_code)
+
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
             layout="auto", compute={"module": lut_1d_shader, "entry_point": "main"}
@@ -132,6 +141,21 @@ class GpuProcessor:
         self.pipeline_grain = self.device.create_compute_pipeline(
             layout="auto",
             compute={"module": grain_shader, "entry_point": "main"},
+        )
+        self.pipeline_histogram_1 = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": histogram_shader, "entry_point": "pass1_accumulate"},
+        )
+        self.pipeline_histogram_2 = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": histogram_shader, "entry_point": "pass2_process"},
+        )
+        self.pipeline_histogram_3 = self.device.create_compute_pipeline(
+            layout="auto",
+            compute={"module": histogram_shader, "entry_point": "pass3_render"},
+        )
+        self.pipeline_scale_texture = self.device.create_compute_pipeline(
+            layout="auto", compute={"module": scale_shader, "entry_point": "main"}
         )
 
         # Init gpu textures
@@ -164,6 +188,17 @@ class GpuProcessor:
         self.halation_param_dict = None
         self.grain_kernel_param_dict = None
 
+        # Add these definitions to your existing __init__ method:
+        # --------------------------------------------------------
+        self.tex_hist_out = None
+        self.buffer_hist_counts = None
+        self.buffer_hist_heights = None
+        self.buffer_hist_mix_table = None
+        self.buffer_hist_params = None
+
+        # A cached copy of the flat mix table to avoid re-uploading if unchanged
+        self.mix_table = None
+
         self.width = None
         self.height = None
 
@@ -183,6 +218,8 @@ class GpuProcessor:
 
         self.cameras = cameras
         self.lenses = lenses
+
+        self._create_histogram_buffers()
 
     @lru_cache
     def load_raw_image_cached(self, src, cam=None, lens=None, half_size=True):
@@ -499,6 +536,34 @@ class GpuProcessor:
                 "height": 1,
                 "depth_or_array_layers": 1,
             },
+        )
+
+    def _create_histogram_buffers(self, mix_table: np.ndarray = MIX_TABLE):
+        self.tex_hist_out = GpuTexture(
+            self.device, (256, 256), format=wgpu.TextureFormat.rgba8uint
+        )
+
+        # Buffer 1: Atomic collection buckets (3 channels * 256 bins * 4 bytes)
+        self.buffer_hist_counts = self.device.create_buffer(
+            size=3 * 256 * 4,
+            usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+        )
+
+        # Buffer 2: Scaled vertical line markers (3 channels * 256 bins * 4 bytes)
+        self.buffer_hist_heights = self.device.create_buffer(
+            size=3 * 256 * 4, usage=wgpu.BufferUsage.STORAGE
+        )
+
+        self._cached_mix_table = mix_table.copy()
+        flat_table = mix_table.reshape((8, 4)).astype(np.uint32)
+        self.buffer_hist_mix_table = self.device.create_buffer_with_data(
+            data=flat_table, usage=wgpu.BufferUsage.STORAGE
+        )
+
+    def _ensure_histogram_buffers(self):
+        param_data = np.array([256, self.width, self.height, 0], dtype=np.uint32)
+        self.buffer_hist_params = self.device.create_buffer_with_data(
+            data=param_data, usage=wgpu.BufferUsage.UNIFORM
         )
 
     def load_image_texture(
@@ -880,21 +945,194 @@ class GpuProcessor:
             ],
         )
 
-    def _dispatch(self, pipeline, bind_group, size):
+    def _bind_histogram_pass1(self, source_tex):
+        return self.device.create_bind_group(
+            layout=self.pipeline_histogram_1.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": source_tex.view},
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": self.buffer_hist_counts,
+                        "offset": 0,
+                        "size": self.buffer_hist_counts.size,
+                    },
+                },
+                {
+                    "binding": 5,
+                    "resource": {
+                        "buffer": self.buffer_hist_params,
+                        "offset": 0,
+                        "size": self.buffer_hist_params.size,
+                    },
+                },
+            ],
+        )
+
+    def _bind_histogram_pass2(self):
+        return self.device.create_bind_group(
+            layout=self.pipeline_histogram_2.get_bind_group_layout(0),
+            entries=[
+                {
+                    "binding": 1,
+                    "resource": {
+                        "buffer": self.buffer_hist_counts,
+                        "offset": 0,
+                        "size": self.buffer_hist_counts.size,
+                    },
+                },
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": self.buffer_hist_heights,
+                        "offset": 0,
+                        "size": self.buffer_hist_heights.size,
+                    },
+                },
+                {
+                    "binding": 5,
+                    "resource": {
+                        "buffer": self.buffer_hist_params,
+                        "offset": 0,
+                        "size": self.buffer_hist_params.size,
+                    },
+                },
+            ],
+        )
+
+    def _bind_histogram_pass3(self):
+        return self.device.create_bind_group(
+            layout=self.pipeline_histogram_3.get_bind_group_layout(0),
+            entries=[
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": self.buffer_hist_heights,
+                        "offset": 0,
+                        "size": self.buffer_hist_heights.size,
+                    },
+                },
+                {
+                    "binding": 3,
+                    "resource": {
+                        "buffer": self.buffer_hist_mix_table,
+                        "offset": 0,
+                        "size": self.buffer_hist_mix_table.size,
+                    },
+                },
+                {"binding": 4, "resource": self.tex_hist_out.view},
+                {
+                    "binding": 5,
+                    "resource": {
+                        "buffer": self.buffer_hist_params,
+                        "offset": 0,
+                        "size": self.buffer_hist_params.size,
+                    },
+                },
+            ],
+        )
+
+    def generate_histogram(self, source_tex):
+        """
+        Executes the complete multi-pass pipeline chain to draw the output histogram.
+        """
+        self._ensure_histogram_buffers()
+
+        zero_data = np.zeros(3 * 256, dtype=np.uint32)
+        self.queue.write_buffer(self.buffer_hist_counts, 0, zero_data)
+
+        # Open single primary command stream record for all 3 passes
         encoder = self.device.create_command_encoder()
+
+        # Pass 1: Frequencies Accumulation (16x16 workgroups)
+        self._dispatch(
+            pipeline=self.pipeline_histogram_1,
+            bind_group=self._bind_histogram_pass1(source_tex),
+            size=(self.width, self.height),
+            wg_size=(16, 16),
+            encoder=encoder,
+        )
+
+        # Pass 2: Log Transformation & Smoothing (1x1 execution layout)
+        self._dispatch(
+            pipeline=self.pipeline_histogram_2,
+            bind_group=self._bind_histogram_pass2(),
+            size=(256, 1),
+            wg_size=(256, 1),
+            encoder=encoder,
+        )
+
+        # Pass 3: Grid Rasterization & Blending (16x16 workgroups over 256x256 target)
+        self._dispatch(
+            pipeline=self.pipeline_histogram_3,
+            bind_group=self._bind_histogram_pass3(),
+            size=(256, 256),
+            wg_size=(16, 16),
+            encoder=encoder,
+        )
+
+        self.queue.submit([encoder.finish()])
+        return self.tex_hist_out
+
+    def _dispatch_scale_histogram(self, target_texture):
+        """Scales the internal histogram texture to fit an arbitrary target canvas."""
+        target_w, target_h = target_texture.size[0], target_texture.size[1]
+
+        # Create transient uniform buffer
+        scale_params = np.array([target_w, target_h], dtype=np.uint32)
+        buffer_scale_params = self.device.create_buffer_with_data(
+            data=scale_params, usage=wgpu.BufferUsage.UNIFORM
+        )
+
+        # Build layout entries smoothly
+        bind_group = self.device.create_bind_group(
+            layout=self.pipeline_scale_texture.get_bind_group_layout(0),
+            entries=[
+                {"binding": 0, "resource": self.tex_hist_out.view},
+                {"binding": 1, "resource": target_texture.create_view()},
+                {
+                    "binding": 2,
+                    "resource": {
+                        "buffer": buffer_scale_params,
+                        "offset": 0,
+                        "size": buffer_scale_params.size,
+                    },
+                },
+            ],
+        )
+
+        # Recycle the primary pattern dispatcher completely
+        self._dispatch(
+            pipeline=self.pipeline_scale_texture,
+            bind_group=bind_group,
+            size=(target_w, target_h),
+            wg_size=(16, 16),
+        )
+
+    def _dispatch(self, pipeline, bind_group, size, wg_size=(8, 8), encoder=None):
+        """
+        A unified, flexible dispatch helper that handles arbitrary workgroup sizes
+        and optional multi-pass command encoding chaining.
+        """
+        # If no encoder is passed, we manage the lifecycle (single-pass mode)
+        submit_instantly = False
+        if encoder is None:
+            encoder = self.device.create_command_encoder()
+            submit_instantly = True
 
         pass_enc = encoder.begin_compute_pass()
         pass_enc.set_pipeline(pipeline)
         pass_enc.set_bind_group(0, bind_group)
 
-        # Workgroup sizing (assumes 8x8)
-        gx = (size[0] + 7) // 8
-        gy = (size[1] + 7) // 8
+        # Dynamic workgroup ceiling division math
+        gx = (size[0] + (wg_size[0] - 1)) // wg_size[0]
+        gy = (size[1] + (wg_size[1] - 1)) // wg_size[1]
 
         pass_enc.dispatch_workgroups(gx, gy, 1)
         pass_enc.end()
 
-        self.queue.submit([encoder.finish()])
+        if submit_instantly:
+            self.queue.submit([encoder.finish()])
 
     def read_texture(self, texture, width, height):
         # rgba8unorm uses 4 bytes per pixel (1 byte per channel)
@@ -1002,6 +1240,7 @@ class GpuProcessor:
         grain_size: float,
         grain_sigma: float,
         dst_texture=None,
+        histogram_texture=None,
         lens_correction: bool = True,
         print_film: FilmSpectral | None = None,
         exp_comp: float = 0.0,
@@ -1180,7 +1419,6 @@ class GpuProcessor:
         # TODO: highlight burn
         # TODO: canvas_mode
         # TODO: half res
-        # TODO: histogram
         # TODO: auto downscale when needed
 
         print(f"shaders {time.time() - start:.4f}s")
@@ -1198,5 +1436,10 @@ class GpuProcessor:
         else:
             self.copy_to_dst(ping_pong_tex[idx].texture, dst_texture)
             print(f"to int {time.time() - start:.4f}s")
+
+            if histogram_texture is not None:
+                self.generate_histogram(ping_pong_tex[idx])
+
+                self._dispatch_scale_histogram(histogram_texture)
 
             return None

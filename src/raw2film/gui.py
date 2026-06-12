@@ -1567,6 +1567,7 @@ class MainWindow(QMainWindow):
                     wgpu.TextureUsage.COPY_DST
                     | wgpu.TextureUsage.RENDER_ATTACHMENT
                     | wgpu.TextureUsage.STORAGE_BINDING
+                    | wgpu.TextureUsage.TEXTURE_BINDING
                 ),
             )
             self.histogram_context = self.histogram.get_wgpu_context()
@@ -2100,6 +2101,7 @@ class MainWindow(QMainWindow):
                 src,
                 icc_transform=self.icc_transform,
                 dst_texture=self.image_context.get_current_texture(),
+                histogram_texture=self.histogram_context.get_current_texture(),
                 **processing_args,
             )
         else:
@@ -2110,28 +2112,13 @@ class MainWindow(QMainWindow):
             )
             histogram = generate_histogram(image, height=80)
             self.histogram_context.set_bitmap(histogram)
-            self.histogram.request_draw()
             img_height, img_width, _ = image.shape
             self.numpy_to_canvas(image, full_height, full_width, img_height, img_width)
 
+        self.histogram.request_draw()
         self.image.request_draw()
         self.image.setToolTip(src)
-        # TODO: restore histogram
-        # histogram = generate_histogram(image, height=80)
-        # histogram = QPixmap.fromImage(
-        #     QImage(
-        #         histogram,
-        #         histogram.shape[1],
-        #         histogram.shape[0],
-        #         3 * histogram.shape[1],
-        #         QImage.Format.Format_RGB888,
-        #     )
-        # )
-        # self.histogram.setPixmap(histogram)
-        #
-        # image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
-        # pixmap = QPixmap.fromImage(image)
-        # pixmap.setDevicePixelRatio(pixel_ratio)
+
         print(f"total {time.time() - start:.4f}s")
 
     def setup_image_params(self, src):

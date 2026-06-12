@@ -98,7 +98,7 @@ def precompute_mix_table(red=None, green=None, blue=None):
     Output channel 0-2: RGB, Channel 3: Alpha (0 or 255)
     """
     if red is None or green is None or blue is None:
-        hues = np.array((29.22, 142.51, 264.07)) / 360
+        hues = np.array((29.23, 142.50, 264.05)) / 360
         red, green, blue = [
             np.clip(colour.convert([0.6, 0.2, hues[i]], "Oklch", "sRGB"), 0, 1) * 255
             for i in range(3)
