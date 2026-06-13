@@ -517,6 +517,9 @@ class MainWindow(QMainWindow):
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
             "push_pull": 0.0,
+            # New sharpening profile parameters
+            "sharpening_strength": 0.0,
+            "sharpening_sigma": 1.0,
         }
         self.dflt_img_params = {
             "exp_comp": 0,
@@ -671,6 +674,32 @@ class MainWindow(QMainWindow):
             self.dflt_prf_params["sharpness"],
             self.sharpness.setChecked,
             tool_tip="Emulate the resolution and micro-contrast of film.",
+        )
+
+        self.sharpening_strength = Slider()
+        """Amount of sharpening to apply (0 - no sharpening, 1 - full)."""
+        self.sharpening_strength.setMinMaxTicks(
+            0.0, 1.0, 1, 100, default=self.dflt_prf_params["sharpening_strength"]
+        )
+        film_effects_group.add_option(
+            self.sharpening_strength,
+            "Sharpening strength",
+            self.dflt_prf_params["sharpening_strength"],
+            self.sharpening_strength.setValue,
+            tool_tip="Amount of sharpening to apply (0 - no sharpening, 1 - full).",
+        )
+
+        self.sharpening_sigma = Slider()
+        """Sigma used for the sharpening kernel (controls radius)."""
+        self.sharpening_sigma.setMinMaxTicks(
+            0.1, 3.0, 1, 50, default=self.dflt_prf_params["sharpening_sigma"]
+        )
+        film_effects_group.add_option(
+            self.sharpening_sigma,
+            "Sharpening sigma",
+            self.dflt_prf_params["sharpening_sigma"],
+            self.sharpening_sigma.setValue,
+            tool_tip="Sigma used for the sharpening kernel (controls radius).",
         )
 
         self.halation = QCheckBox()
@@ -1386,6 +1415,13 @@ class MainWindow(QMainWindow):
         self.sharpness.stateChanged.connect(
             lambda x: self.profile_changed(x, "sharpness")
         )
+        # Profile-bind sharpening parameters
+        self.sharpening_strength.valueChanged.connect(
+            lambda x: self.profile_changed(x, "sharpening_strength")
+        )
+        self.sharpening_sigma.valueChanged.connect(
+            lambda x: self.profile_changed(x, "sharpening_sigma")
+        )
         self.grain.stateChanged.connect(lambda x: self.profile_changed(x, "grain"))
         self.rotation.valueChanged.connect(
             lambda x: self.setting_changed(x, "rotation")
@@ -1977,6 +2013,8 @@ class MainWindow(QMainWindow):
         self.halation_green.setValue(profile_params["halation_green_factor"])
         self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
+        self.sharpening_strength.setValue(profile_params["sharpening_strength"])
+        self.sharpening_sigma.setValue(profile_params["sharpening_sigma"])
         self.grain.setCheckState(Qt.CheckState(profile_params["grain"]))
         if "frame_width" in profile_params:
             self.frame_width.setText(str(profile_params["frame_width"]))

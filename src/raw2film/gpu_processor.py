@@ -690,16 +690,26 @@ class GpuProcessor:
 
         self.height, self.width = image.shape[:2]
 
-    def load_mtf_kernel(self, negative_film: FilmSpectral, scale: float):
+    def load_mtf_kernel(
+        self,
+        negative_film: FilmSpectral,
+        scale: float,
+        sharpening_strength: float,
+        sharpening_sigma: float,
+    ):
         new_param_dict = {
             "negative_film": negative_film.name,
             "scale": scale,
+            "sharpening_strength": sharpening_strength,
+            "sharpening_sigma": sharpening_sigma,
         }
 
         if new_param_dict == self.mtf_param_dict:
             return
 
-        mtf_kernel_np = mtf_kernel(negative_film, scale)
+        mtf_kernel_np = mtf_kernel(
+            negative_film, scale, sharpening_strength, sharpening_sigma
+        )
 
         self._ensure_mtf_kernel(mtf_kernel_np)
 
@@ -1394,6 +1404,8 @@ class GpuProcessor:
         halation_size: float = 1.0,
         halation_green_factor: float = 0.4,
         sharpness: bool = True,
+        sharpening_strength: float = 0.0,
+        sharpening_sigma: float = 1.0,
         chroma_nr: int = 0,
         grain: int = 2,
         highlight_burn: float = 0.0,
@@ -1490,7 +1502,9 @@ class GpuProcessor:
         idx = 1 - idx
 
         if sharpness and negative_film.mtf is not None:
-            self.load_mtf_kernel(negative_film, scale)
+            self.load_mtf_kernel(
+                negative_film, scale, sharpening_strength, sharpening_sigma
+            )
 
             self._dispatch(
                 self.pipeline_convolution,

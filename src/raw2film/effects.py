@@ -161,19 +161,38 @@ def mtf_kernel_layer(logf, vals, scale):
 
 
 @lru_cache(maxsize=50)
-def mtf_kernel(stock, scale):
+def mtf_kernel(
+    stock: FilmSpectral,
+    scale,
+    sharpening_strength: float = 0.0,
+    sharpening_sigma: float = 1.0,
+):
     """Cache a mtf convolution kernel."""
     kernel = np.stack(
         [mtf_kernel_layer(logf, vals, scale) for logf, vals in stock.mtf],
         axis=-1,
         dtype=DEFAULT_DTYPE,
     )
+
+    if sharpening_strength:
+        sigma = sharpening_sigma * scale / 50
+        print(sigma)
+        unsharp_kernel = ndimage.gaussian_filter(kernel, sigma=sigma)
+
+        kernel += sharpening_strength * (kernel - unsharp_kernel)
+
     return kernel
 
 
-def film_sharpness(rgb: np.ndarray, stock: FilmSpectral, scale: float):
+def film_sharpness(
+    rgb: np.ndarray,
+    stock: FilmSpectral,
+    scale: float,
+    sharpening_strength,
+    sharpening_sigma,
+):
     """Apply the sharpness and micro-contrast of a film stock ot an image."""
-    kernel = mtf_kernel(stock, scale)
+    kernel = mtf_kernel(stock, scale, sharpening_strength, sharpening_sigma)
     return convolve_2d(rgb, kernel)
 
 

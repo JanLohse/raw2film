@@ -291,7 +291,6 @@ class CpuProcessor:
         flip: bool = False,
         cam: str | None = None,
         lens: str | None = None,
-        half_res: bool = False,
         canvas_mode: CANVAS_MODES = "No",
         canvas_scale: float = 1.0,
         canvas_ratio: float = 1.0,
@@ -300,6 +299,8 @@ class CpuProcessor:
         halation_size: float = 1.0,
         halation_green_factor: float = 0.4,
         sharpness: bool = True,
+        sharpening_strength: float = 0.0,
+        sharpening_sigma: float = 1.0,
         chroma_nr: int = 0,
         grain: int = 2,
         highlight_burn: float = 0.0,
@@ -369,7 +370,9 @@ class CpuProcessor:
         image = multi_channel_interp(image, self.tex_lut_1d)
 
         if sharpness and negative_film.mtf is not None:
-            image = effects.film_sharpness(image, negative_film, scale)
+            image = effects.film_sharpness(
+                image, negative_film, scale, sharpening_strength, sharpening_sigma
+            )
 
         if grain and negative_film.rms_density is not None:
             image = effects.apply_grain(
