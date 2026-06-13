@@ -10,7 +10,7 @@ from spectral_film_lut.xy_lut import apply_2d_lut
 from wgpu import get_default_device
 
 from raw2film import effects
-from raw2film.effects import add_canvas, add_canvas_uniform, chroma_nr_filter
+from raw2film.effects import add_canvas, chroma_nr_filter
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
 from raw2film.utils import (
     apply_lut_tetrahedral,
@@ -396,21 +396,7 @@ class CpuProcessor:
 
         image = (image * (2**8 - 1)).astype(np.uint8)
 
-        # post-processing (canvas, scaling)
-        if canvas_mode != "No":
-            if "white" in canvas_mode:
-                canvas_color = (255, 255, 255)
-            elif "black" in canvas_mode:
-                canvas_color = (0, 0, 0)
-            else:
-                canvas_color = (128, 128, 128)
-            if "Proportional" in canvas_mode:
-                canvas_ratio = image.shape[1] / image.shape[0]
-                image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
-            elif "Fixed" in canvas_mode:
-                image = add_canvas(image, canvas_ratio, canvas_scale, canvas_color)
-            elif "Uniform" in canvas_mode:
-                image = add_canvas_uniform(image, canvas_scale, canvas_color)
+        image = add_canvas(image, canvas_mode, canvas_scale, canvas_ratio)
 
         if resolution is not None:
             image = resolution_scaling(image, resolution)

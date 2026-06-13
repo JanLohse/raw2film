@@ -16,6 +16,8 @@ from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.grain_generation import generate_grain
 
+from raw2film.raw_conversion import CANVAS_MODES
+
 
 def lens_correction(
     rgb: np.ndarray, metadata: dict, cam: None | str, lens: None | str
@@ -286,44 +288,82 @@ def halation(
     return rgb
 
 
+def get_canvas_data(
+    image: np.ndarray,
+    canvas_mode: CANVAS_MODES,
+    canvas_scale: float = 1.0,
+    canvas_ratio: float = 1.0,
+):
+    if "white" in canvas_mode:
+        canvas_color = (255, 255, 255)
+    elif "black" in canvas_mode:
+        canvas_color = (0, 0, 0)
+    else:
+        canvas_color = (128, 128, 128)
+
+    if "Proportional" in canvas_mode:
+        canvas_ratio = image.shape[1] / image.shape[0]
+        img_ratio = image.shape[1] / image.shape[0]
+        if img_ratio > canvas_ratio:
+            output_resolution = (
+                int(image.shape[1] / canvas_ratio * canvas_scale),
+                int(image.shape[1] * canvas_scale),
+            )
+        else:
+            output_resolution = (
+                int(image.shape[0] * canvas_scale),
+                int(image.shape[0] * canvas_ratio * canvas_scale),
+            )
+        offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    elif "Fixed" in canvas_mode:
+        img_ratio = image.shape[1] / image.shape[0]
+        if img_ratio > canvas_ratio:
+            output_resolution = (
+                int(image.shape[1] / canvas_ratio * canvas_scale),
+                int(image.shape[1] * canvas_scale),
+            )
+        else:
+            output_resolution = (
+                int(image.shape[0] * canvas_scale),
+                int(image.shape[0] * canvas_ratio * canvas_scale),
+            )
+        offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    elif "Uniform" in canvas_mode:
+        side_length = max(image.shape[:2])
+        border_size = int(side_length * (canvas_scale - 1))
+        output_resolution = (image.shape[0] + border_size, image.shape[1] + border_size)
+        offset = np.subtract(output_resolution, image.shape[:2]) // 2
+
+    return output_resolution, canvas_color, offset
+
+
 def add_canvas(
     image: np.ndarray,
-    canvas_ratio: float,
-    canvas_scale: float,
-    canvas_color: tuple[int, int, int],
+    canvas_mode: CANVAS_MODES,
+    canvas_scale: float = 1.0,
+    canvas_ratio: float = 1.0,
 ):
     """Adds a background canvas to an image."""
-    img_ratio = image.shape[1] / image.shape[0]
-    if img_ratio > canvas_ratio:
-        output_resolution = (
-            int(image.shape[1] / canvas_ratio * canvas_scale),
-            int(image.shape[1] * canvas_scale),
-        )
-    else:
-        output_resolution = (
-            int(image.shape[0] * canvas_scale),
-            int(image.shape[0] * canvas_ratio * canvas_scale),
-        )
-    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    if canvas_mode == "No":
+        return image
+
+    output_resolution, canvas_color, offset = get_canvas_data(
+        image, canvas_mode, canvas_scale, canvas_ratio
+    )
+
+    output_resolution, canvas_color, offset = get_canvas_data(
+        image, canvas_mode, canvas_scale, canvas_ratio
+    )
+
+    print("image.shape =", image.shape)
+    print("output_resolution =", output_resolution)
+    print("offset =", offset)
+
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[
         offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]
     ] = image
-    return canvas.astype(dtype="uint8")
 
-
-def add_canvas_uniform(
-    image: np.ndarray, canvas_scale: float, canvas_color: tuple[int, int, int]
-):
-    """Adds background canvas to image."""
-    side_length = max(image.shape[:2])
-    border_size = int(side_length * (canvas_scale - 1))
-    output_resolution = (image.shape[0] + border_size, image.shape[1] + border_size)
-    offset = np.subtract(output_resolution, image.shape[:2]) // 2
-    canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
-    canvas[
-        offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]
-    ] = image
     return canvas.astype(dtype="uint8")
 
 

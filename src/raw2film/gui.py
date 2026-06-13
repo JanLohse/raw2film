@@ -2119,21 +2119,32 @@ class MainWindow(QMainWindow):
         image: np.ndarray,
         full_height: int,
         full_width: int,
-        img_height: int,
-        img_width: int,
     ):
-        canvas_rgba = np.zeros((full_height, full_width, 4), dtype=np.uint8)
-
         image = np.ascontiguousarray(image)
 
-        y_offset = (full_height - img_height) // 2
-        x_offset = (full_width - img_width) // 2
+        image_height, image_width = image.shape[:2]
+
+        canvas_ratio = full_width / full_height
+        image_ratio = image_width / image_height
+
+        if canvas_ratio > image_ratio:
+            canvas_height = image_height
+            canvas_width = round(image_height * canvas_ratio)
+        else:
+            canvas_width = image_width
+            canvas_height = round(image_width / canvas_ratio)
+
+        y_offset = (canvas_height - image_height) // 2
+        x_offset = (canvas_width - image_width) // 2
+
+        canvas_rgba = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
 
         canvas_rgba[
-            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 0:3
+            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 0:3
         ] = image
+
         canvas_rgba[
-            y_offset : y_offset + img_height, x_offset : x_offset + img_width, 3
+            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 3
         ] = 255
 
         self.image_context.set_bitmap(canvas_rgba)
@@ -2202,7 +2213,7 @@ class MainWindow(QMainWindow):
             histogram = generate_histogram(image, height=80)
             self.histogram_context.set_bitmap(histogram)
             img_height, img_width, _ = image.shape
-            self.numpy_to_canvas(image, full_height, full_width, img_height, img_width)
+            self.numpy_to_canvas(image, full_height, full_width)
 
         self.histogram.request_draw()
         self.image.request_draw()
