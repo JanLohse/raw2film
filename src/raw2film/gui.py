@@ -3,12 +3,9 @@ The main gui implementation.
 """
 
 import json
-import math
 import os
 import shutil
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache, partial
 from pathlib import Path
 
@@ -17,10 +14,12 @@ import imageio
 import lensfunpy
 import numpy as np
 import PIL.ImageCms
+import wgpu
 from PIL import ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
+    QEvent,
     QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
@@ -41,7 +40,6 @@ from PyQt6.QtGui import (
     QImage,
     QIntValidator,
     QKeySequence,
-    QPixmap,
     QRegularExpressionValidator,
     QShortcut,
 )
@@ -64,6 +62,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from rendercanvas.qt import QRenderWidget
 from spectral_film_lut import BASE_DIR
 from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
@@ -78,53 +77,34 @@ from spectral_film_lut.gui_objects import (
 )
 
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
+from raw2film.cpu_processor import CpuProcessor
+from raw2film.gpu_processor import GpuProcessor
 from raw2film.image_bar import ImageBar
-from raw2film.raw_conversion import process_image, raw_to_linear
+from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
 
 class MultiWorker(QObject):
-    """A worker that runs multiple worker threads."""
-
-    progress = pyqtSignal(str)
-    """How many of the workers finished."""
+    progress = pyqtSignal(str, int)
     finished = pyqtSignal()
-    """If all worker threads finished."""
 
     def __init__(self):
         super().__init__()
-        self.cancel_event = threading.Event()
+        self.cancelled = False
 
-    def run_tasks(self, func, tasks, max_workers=None, **kwargs):
-        semaphore = threading.Semaphore(1)
-        kwargs["semaphore"] = semaphore
-        kwargs["cancel_event"] = self.cancel_event  # Pass cancel flag to each task
+    def run_tasks(self, func, tasks, **kwargs):
+        for i, task in enumerate(tasks, start=1):
+            if self.cancelled:
+                break
 
-        def func_wrapper(i, *args, **kwargs):
-            if self.cancel_event.is_set():
-                return "Cancelled"
+            result = func(*task, **kwargs)
 
-            if i < max_workers:
-                time.sleep(i)
-            return func(*args, **kwargs)
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(func_wrapper, i, *task, **kwargs)
-                for i, task in enumerate(tasks)
-                if not self.cancel_event.is_set()
-            ]
-
-            for future in as_completed(futures):
-                if self.cancel_event.is_set():
-                    break
-                self.progress.emit(future.result())
+            self.progress.emit(result, i)
 
         self.finished.emit()
 
     def cancel(self):
-        self.cancel_event.set()
-        self.finished.emit()
+        self.cancelled = True
 
 
 down_arrow_icon = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
@@ -304,21 +284,22 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings("JanLohse", "Raw2Film")
 
-        self.histogram = QLabel()
-        self.histogram.setScaledContents(True)
+        self.histogram = QRenderWidget(update_mode="ondemand")
+        self.histogram.setMinimumSize(QSize(256, 256))
         self.histogram.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
         self.histogram.setMinimumSize(0, 80)
+        self.histogram_context = None
 
         page_splitter = QSplitter(Qt.Orientation.Vertical)
-        top_splitter = QSplitter()
+        self.top_splitter = QSplitter()
         sidebar_widget = QWidget()
-        sidebar_layout = QVBoxLayout(sidebar_widget)
-        sidebar_layout.addWidget(self.histogram)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        self.sidebar_layout = QVBoxLayout(sidebar_widget)
+        self.sidebar_layout.addWidget(self.histogram)
+        self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.histogram.setContentsMargins(BORDER_RADIUS - 1, 0, BORDER_RADIUS - 1, 0)
-        sidebar_layout.setSpacing(0)
+        self.sidebar_layout.setSpacing(0)
         sidebar_settings = QWidget()
         side_layout = QVBoxLayout()
         sidebar_settings.setLayout(side_layout)
@@ -361,12 +342,13 @@ class MainWindow(QMainWindow):
         scroll_area.setMinimumWidth(280)
         sidebar_container_layout.addWidget(scroll_area)
 
-        self.image = QLabel("Select a reference image for the preview")
-        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image = QRenderWidget(update_mode="ondemand")
         self.image.setSizePolicy(
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
         self.image.setMinimumSize(QSize(256, 256))
+        self.image_context = None
+        self.context_mode = None
 
         self.image_bar = ImageBar()
         image_bar_container = QFrame(self)
@@ -375,20 +357,20 @@ class MainWindow(QMainWindow):
         image_bar_container_layout.setContentsMargins(4, 4, 4, 4)
         image_bar_container_layout.addWidget(self.image_bar)
 
-        page_splitter.addWidget(top_splitter)
+        page_splitter.addWidget(self.top_splitter)
         page_splitter.addWidget(image_bar_container)
         page_splitter.setContentsMargins(8, 8, 8, 8)
-        top_splitter.setContentsMargins(0, 0, 0, 0)
+        self.top_splitter.setContentsMargins(0, 0, 0, 0)
 
         page_splitter.setStretchFactor(0, 1)
         page_splitter.setStretchFactor(1, 0)
 
-        top_splitter.addWidget(self.image)
-        sidebar_layout.addWidget(sidebar_container)
-        top_splitter.addWidget(sidebar_widget)
-        top_splitter.setStretchFactor(0, 1)
-        top_splitter.setStretchFactor(1, 0)
-        top_splitter.setSizes([100, 320])
+        self.top_splitter.addWidget(self.image)
+        self.sidebar_layout.addWidget(sidebar_container)
+        self.top_splitter.addWidget(sidebar_widget)
+        self.top_splitter.setStretchFactor(0, 1)
+        self.top_splitter.setStretchFactor(1, 0)
+        self.top_splitter.setSizes([100, 320])
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
@@ -428,6 +410,11 @@ class MainWindow(QMainWindow):
         self.deselect_all_button = QAction("Deselect all", self)
         self.deselect_all_button.setShortcut("Ctrl+D")
         edit_menu.addAction(self.deselect_all_button)
+        self.auto_lens_correct = QAction("Auto lens correct", self)
+        """Whether to toggle lens correction automatically when loading a new image."""
+        self.auto_lens_correct.setCheckable(True)
+        self.auto_lens_correct.setChecked(True)
+        edit_menu.addAction(self.auto_lens_correct)
         self.reset_image_button = QAction("Reset image", self)
         edit_menu.addAction(self.reset_image_button)
         self.reset_all_images_button = QAction("Reset all images", self)
@@ -442,7 +429,12 @@ class MainWindow(QMainWindow):
         self.full_preview = QAction("Full preview", self)
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
+        self.full_preview.setChecked(True)
         view_menu.addAction(self.full_preview)
+        self.gpu_processing = QAction("GPU rendering", self)
+        self.gpu_processing.setCheckable(True)
+        self.gpu_processing.setChecked(True)
+        view_menu.addAction(self.gpu_processing)
         self.half_res_preview = QAction("Half res. preview", self)
         self.half_res_preview.setCheckable(True)
         self.half_res_preview.setShortcut(QKeySequence("Ctrl+Shift+H"))
@@ -525,6 +517,9 @@ class MainWindow(QMainWindow):
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
             "push_pull": 0.0,
+            "sharpening_strength": 0.0,
+            "sharpening_sigma": 1.0,
+            "color_masking": 1.0,
         }
         self.dflt_img_params = {
             "exp_comp": 0,
@@ -576,14 +571,32 @@ class MainWindow(QMainWindow):
         self.cameras["None"] = None
         self.lenses["None"] = None
 
+        # Lens correction checkbox with a reload-data button next to it
+        lens_widget = QWidget()
+        lens_layout = QHBoxLayout()
+        lens_layout.setContentsMargins(0, 0, 0, 0)
         self.lens_correction = QCheckBox()
         """Correct lens distortion and vignetting."""
+        # Button to reload camera/lens data for the current image
+        self.reload_lens_data_button = AnimatedButton("Reload data", parent=self)
+        self.reload_lens_data_button.setObjectName("reload")
+        self.reload_lens_data_button.setFixedWidth(100)
+        lens_layout.addWidget(self.lens_correction)
+        lens_layout.addWidget(self.reload_lens_data_button)
+        lens_widget.setLayout(lens_layout)
+
         image_correction_group.add_option(
-            self.lens_correction,
+            lens_widget,
             "Lens correction",
             self.dflt_img_params["lens_correction"],
             self.lens_correction.setChecked,
             tool_tip="Correct lens distortion and vignetting.",
+        )
+
+        # Connect the reload button to the handler that enables lens correction
+        # for the current image and tries to reload camera/lens data.
+        self.reload_lens_data_button.released.connect(
+            lambda: self.reload_lens_cam_data()
         )
 
         self.camera_selector = WideComboBox(self)
@@ -661,6 +674,32 @@ class MainWindow(QMainWindow):
             self.dflt_prf_params["sharpness"],
             self.sharpness.setChecked,
             tool_tip="Emulate the resolution and micro-contrast of film.",
+        )
+
+        self.sharpening_strength = Slider()
+        """Amount of sharpening to apply (0 - no sharpening, 1 - full)."""
+        self.sharpening_strength.setMinMaxTicks(
+            0.0, 1.0, 1, 100, default=self.dflt_prf_params["sharpening_strength"]
+        )
+        film_effects_group.add_option(
+            self.sharpening_strength,
+            "Sharpening strength",
+            self.dflt_prf_params["sharpening_strength"],
+            self.sharpening_strength.setValue,
+            tool_tip="Amount of sharpening to apply (0 - no sharpening, 1 - full).",
+        )
+
+        self.sharpening_sigma = Slider()
+        """Sigma used for the sharpening kernel (controls radius)."""
+        self.sharpening_sigma.setMinMaxTicks(
+            0.1, 3.0, 1, 50, default=self.dflt_prf_params["sharpening_sigma"]
+        )
+        film_effects_group.add_option(
+            self.sharpening_sigma,
+            "Sharpening sigma",
+            self.dflt_prf_params["sharpening_sigma"],
+            self.sharpening_sigma.setValue,
+            tool_tip="Sigma used for the sharpening kernel (controls radius).",
         )
 
         self.halation = QCheckBox()
@@ -1167,6 +1206,20 @@ class MainWindow(QMainWindow):
             tool_tip="Adjust the saturation in the display color space.",
         )
 
+        self.color_masking = Slider()
+        """Color masking adjustment (0 - no masking, 1 - normal, 2 - strong)."""
+        self.color_masking.setMinMaxTicks(
+            0, 2, 1, 100, default=self.dflt_prf_params["color_masking"]
+        )
+        profile_settings_group.add_option(
+            self.color_masking,
+            "Color masking",
+            self.dflt_prf_params["color_masking"],
+            self.color_masking.setValue,
+            tool_tip="Color masking adjustment\n"
+            "(0 - no masking, 1 - normal, 2 - strong).",
+        )
+
         self.canvas_mode = WideComboBox(self)
         self.canvas_mode.addItems(
             [
@@ -1366,13 +1419,22 @@ class MainWindow(QMainWindow):
         self.lens_correction.stateChanged.connect(
             lambda x: self.setting_changed(x, "lens_correction")
         )
-        self.full_preview.triggered.connect(lambda: self.parameter_changed())
-        self.half_res_preview.triggered.connect(lambda: self.parameter_changed())
+        self.auto_lens_correct.triggered.connect(self.toggle_auto_lens_correction)
+        self.full_preview.triggered.connect(self.toggle_full_preview)
+        self.gpu_processing.triggered.connect(self.toggle_gpu_processing)
+        self.half_res_preview.triggered.connect(self.toggle_half_res_preview)
         self.halation.stateChanged.connect(
             lambda x: self.profile_changed(x, "halation")
         )
         self.sharpness.stateChanged.connect(
             lambda x: self.profile_changed(x, "sharpness")
+        )
+        # Profile-bind sharpening parameters
+        self.sharpening_strength.valueChanged.connect(
+            lambda x: self.profile_changed(x, "sharpening_strength")
+        )
+        self.sharpening_sigma.valueChanged.connect(
+            lambda x: self.profile_changed(x, "sharpening_sigma")
         )
         self.grain.stateChanged.connect(lambda x: self.profile_changed(x, "grain"))
         self.rotation.valueChanged.connect(
@@ -1425,6 +1487,9 @@ class MainWindow(QMainWindow):
         )
         self.saturation_slider.valueChanged.connect(
             lambda x: self.profile_changed(x, "sat_adjust")
+        )
+        self.color_masking.valueChanged.connect(
+            lambda x: self.profile_changed(x, "color_masking")
         )
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(
@@ -1525,19 +1590,77 @@ class MainWindow(QMainWindow):
         self.srgb_profile = ImageCms.createProfile("sRGB")
         self.icc_bpc = False
 
+        self.gpu_processor = GpuProcessor(self.cameras, self.lenses)
+        self.cpu_processor = CpuProcessor(self.cameras, self.lenses)
+
         self.image_params = {}
         self.profile_params = {}
 
         self.load_settings_system()
-        self.load_icc_setting()
+        self.load_view_settings()
 
         self.save_timer = time.time()
 
         self.load_profile_params()
 
-        print(scroll_area.styleSheet())
-
         QTimer.singleShot(0, self.test_exiftool)
+
+    def eventFilter(self, watched, event):
+        if watched == self.image and event.type() == QEvent.Type.Resize:
+            self.parameter_changed()
+
+        return super().eventFilter(watched, event)
+
+    def create_context(self):
+        target_mode = "wgpu" if self.gpu_processing.isChecked() else "bitmap"
+        if self.context_mode == target_mode:
+            return
+        self.context_mode = target_mode
+        old_image = self.image
+        old_histogram = self.histogram
+        self.image = QRenderWidget(update_mode="ondemand")
+        self.image.installEventFilter(self)
+        self.top_splitter.insertWidget(0, self.image)
+        self.histogram = QRenderWidget(update_mode="ondemand")
+        self.sidebar_layout.insertWidget(0, self.histogram)
+
+        old_image.setParent(None)
+        old_image.deleteLater()
+        old_histogram.setParent(None)
+        old_histogram.deleteLater()
+        self.image.setSizePolicy(
+            QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        )
+        self.histogram.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self.image.setMinimumSize(QSize(256, 256))
+        self.histogram.setMinimumSize(0, 80)
+        if self.context_mode == "wgpu":
+            self.image_context = self.image.get_wgpu_context()
+            self.image_context.configure(
+                device=self.gpu_processor.device,
+                format=wgpu.TextureFormat.rgba8unorm,
+                usage=(
+                    wgpu.TextureUsage.COPY_DST
+                    | wgpu.TextureUsage.RENDER_ATTACHMENT
+                    | wgpu.TextureUsage.STORAGE_BINDING
+                    | wgpu.TextureUsage.TEXTURE_BINDING
+                ),
+            )
+            self.histogram_context = self.histogram.get_wgpu_context()
+            self.histogram_context.configure(
+                device=self.gpu_processor.device,
+                format=wgpu.TextureFormat.rgba8unorm,
+                usage=(
+                    wgpu.TextureUsage.COPY_DST
+                    | wgpu.TextureUsage.RENDER_ATTACHMENT
+                    | wgpu.TextureUsage.STORAGE_BINDING
+                ),
+            )
+        elif self.context_mode == "bitmap":
+            self.image_context = self.image.get_bitmap_context()
+            self.histogram_context = self.histogram.get_bitmap_context()
 
     def test_exiftool(self):
         try:
@@ -1734,6 +1857,9 @@ class MainWindow(QMainWindow):
                 self.image_params[src_short]["lens"] = lens.model
             else:
                 self.image_params[src_short]["lens"] = "None"
+            self.image_params[src_short]["lens_correction"] = (
+                self.auto_lens_correct.isChecked()
+            )
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = (
                 self.profile_selector.currentText()
@@ -1756,10 +1882,6 @@ class MainWindow(QMainWindow):
 
         return image
 
-    def resizeEvent(self, event):
-        self.parameter_changed()
-        super().resizeEvent(event)
-
     def changed_wb_mode(self, mode):
         if mode != "Custom":
             self.exp_wb.setValue(self.wb_modes[mode])
@@ -1772,6 +1894,11 @@ class MainWindow(QMainWindow):
             self.profile_changed(self.print_selector.currentText(), "print_film")
         else:
             self.profile_changed(None, "print_film")
+        # Load film stock's default color masking when film stock changes
+        if negative in self.filmstocks and self.filmstocks[negative] is not None:
+            film_stock = self.filmstocks[negative]
+            if hasattr(film_stock, "color_masking"):
+                self.color_masking.setValue(film_stock.color_masking)
         self.active = True
         self.profile_changed(negative, "negative_film")
 
@@ -1908,6 +2035,8 @@ class MainWindow(QMainWindow):
         self.halation_green.setValue(profile_params["halation_green_factor"])
         self.halation_intensity.setValue(profile_params["halation_intensity"])
         self.sharpness.setChecked(profile_params["sharpness"])
+        self.sharpening_strength.setValue(profile_params["sharpening_strength"])
+        self.sharpening_sigma.setValue(profile_params["sharpening_sigma"])
         self.grain.setCheckState(Qt.CheckState(profile_params["grain"]))
         if "frame_width" in profile_params:
             self.frame_width.setText(str(profile_params["frame_width"]))
@@ -1926,6 +2055,7 @@ class MainWindow(QMainWindow):
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.shadow_comp.setValue(profile_params["shadow_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
+        self.color_masking.setValue(profile_params["color_masking"])
         self.inversion_gamma.setValue(profile_params["inversion_gamma"])
         self.idealized_curve.setChecked(profile_params["idealized_curve"])
         self.white_clip.setChecked(profile_params["white_clip"])
@@ -1961,6 +2091,7 @@ class MainWindow(QMainWindow):
         self.running = False
         if self.waiting:
             self.waiting = False
+            self.create_context()
             self.start_worker(self.update_preview)
 
     def progress_fn(self, n):
@@ -1968,6 +2099,7 @@ class MainWindow(QMainWindow):
 
     def parameter_changed(self, src=None):
         if self.active:
+            self.create_context()
             self.start_worker(self.update_preview, src=src)
 
     def start_worker(self, function, semaphore=True, *args, **kwargs):
@@ -1982,6 +2114,41 @@ class MainWindow(QMainWindow):
             worker.signals.finished.connect(self.update_finished)
         self.threadpool.start(worker)
 
+    def numpy_to_canvas(
+        self,
+        image: np.ndarray,
+        full_height: int,
+        full_width: int,
+    ):
+        image = np.ascontiguousarray(image)
+
+        image_height, image_width = image.shape[:2]
+
+        canvas_ratio = full_width / full_height
+        image_ratio = image_width / image_height
+
+        if canvas_ratio > image_ratio:
+            canvas_height = image_height
+            canvas_width = round(image_height * canvas_ratio)
+        else:
+            canvas_width = image_width
+            canvas_height = round(image_width / canvas_ratio)
+
+        y_offset = (canvas_height - image_height) // 2
+        x_offset = (canvas_width - image_width) // 2
+
+        canvas_rgba = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
+
+        canvas_rgba[
+            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 0:3
+        ] = image
+
+        canvas_rgba[
+            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 3
+        ] = 255
+
+        self.image_context.set_bitmap(canvas_rgba)
+
     def update_preview(self, src=None, *args, **kwargs):
         if src is None:
             if self.image_bar.current_image() is None:
@@ -1994,6 +2161,9 @@ class MainWindow(QMainWindow):
             return
         else:
             self.load_image_params(src_short)
+
+        full_width, full_height = self.image_context.physical_size
+
         image_args = self.setup_image_params(src_short)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
@@ -2010,52 +2180,41 @@ class MainWindow(QMainWindow):
                 processing_args["print_film"]
             ]
 
-        pixel_ratio = self.devicePixelRatioF()
-        if processing_args["lens_correction"]:
-            image = self.load_raw_image(
-                src, processing_args.get("cam", None), processing_args.get("lens", None)
-            )
-        else:
-            image = self.load_raw_image(src)
         processing_args["resolution"] = (
-            math.floor(self.image.height() * pixel_ratio),
-            math.floor(self.image.width() * pixel_ratio),
+            full_height,
+            full_width,
         )
+
         if self.half_res_preview.isChecked():
             processing_args["resolution"] = tuple(
                 x // 2 for x in processing_args["resolution"]
             )
-            processing_args["double_upscale"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
-            processing_args["chroma_nr"] = 0
 
-        image = process_image(
-            image,
-            metadata=load_metadata(src),
-            icc_transform=self.icc_transform,
-            **processing_args,
-        )
-        height, width, _ = image.shape
-        histogram = generate_histogram(image, height=80)
-        histogram = QPixmap.fromImage(
-            QImage(
-                histogram,
-                histogram.shape[1],
-                histogram.shape[0],
-                3 * histogram.shape[1],
-                QImage.Format.Format_RGB888,
+        if self.gpu_processing.isChecked():
+            self.gpu_processor.process(
+                src,
+                icc_transform=self.icc_transform,
+                dst_texture=self.image_context.get_current_texture(),
+                histogram_texture=self.histogram_context.get_current_texture(),
+                **processing_args,
             )
-        )
-        self.histogram.setPixmap(histogram)
+        else:
+            image = self.cpu_processor.process(
+                src,
+                icc_transform=self.icc_transform,
+                **processing_args,
+            )
+            histogram = generate_histogram(image, height=80)
+            self.histogram_context.set_bitmap(histogram)
+            img_height, img_width, _ = image.shape
+            self.numpy_to_canvas(image, full_height, full_width)
 
-        image = QImage(image, width, height, 3 * width, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(image)
-        pixmap.setDevicePixelRatio(pixel_ratio)
-
-        self.image.setPixmap(pixmap)
+        self.histogram.request_draw()
+        self.image.request_draw()
         self.image.setToolTip(src)
 
     def setup_image_params(self, src):
@@ -2073,9 +2232,9 @@ class MainWindow(QMainWindow):
         quality=100,
         close=False,
         resolution=None,
-        semaphore=None,
         **kwargs,
     ):
+        start = time.time()
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             image_args = self.setup_image_params(src_short)
@@ -2086,8 +2245,6 @@ class MainWindow(QMainWindow):
         processing_args["negative_film"] = self.filmstocks[
             processing_args["negative_film"]
         ]
-        if semaphore is not None:
-            processing_args["semaphore"] = semaphore
         if resolution is not None:
             processing_args["resolution"] = (resolution, resolution)
         if (
@@ -2097,7 +2254,6 @@ class MainWindow(QMainWindow):
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
-        image = raw_to_linear(src, half_size=False)
         metadata = load_metadata(src)
         if processing_args["lens_correction"]:
             if "cam" not in processing_args or "lens" not in processing_args:
@@ -2105,18 +2261,18 @@ class MainWindow(QMainWindow):
                 if cam is not None or lens is not None:
                     processing_args["cam"] = cam.maker + " " + cam.model
                     processing_args["lens"] = lens.model
-            if "cam" in processing_args and "lens" in processing_args:
-                image = effects.lens_correction(
-                    image,
-                    metadata,
-                    self.cameras[processing_args["cam"]],
-                    self.lenses[processing_args["lens"]],
-                )
 
         processing_args["chroma_nr"] *= 2
-        image = process_image(
-            image,
-            lut_size=65,
+
+        if self.gpu_processing.isChecked():
+            processor = self.gpu_processor
+        else:
+            processor = self.cpu_processor
+
+        image = processor.process(
+            src,
+            half_size=False,
+            cache=False,
             **processing_args,
         )
         path = "/".join(filename.split("/")[:-1])
@@ -2137,7 +2293,6 @@ class MainWindow(QMainWindow):
         if move_raw:
             if not os.path.exists(path + "RAW"):
                 os.makedirs(path + "RAW")
-            # self.save_settings_directory(path + 'RAW', src=src_short)
             if move_raw == 2:
                 os.replace(src, path + "RAW/" + src.split("/")[-1])
             elif move_raw == 1 and not os.path.isfile(
@@ -2148,6 +2303,7 @@ class MainWindow(QMainWindow):
         add_metadata(path + filename, metadata, exp_comp=processing_args["exp_comp"])
         if close:
             self.image_bar.close_single_image(src)
+        print(f"exported {time.time() - start:.4f}s")
         return f"exported {filename}"
 
     def save_image_dialog(self):
@@ -2165,9 +2321,14 @@ class MainWindow(QMainWindow):
 
     def save_multiple_process(self, folder, filenames, **kwargs):
         self.active = False
-        self.task_count = len(filenames)
+
+        tasks = [
+            (filename, folder + "/" + filename.split("/")[-1].split(".")[0])
+            for filename in filenames
+        ]
+
         self.progress_dialog = QProgressDialog(
-            "Starting export...", "Cancel", 0, self.task_count, parent=self
+            "Starting export...", "Cancel", 0, len(tasks), parent=self
         )
         self.progress_dialog.setWindowTitle("Export")
         self.progress_dialog.setAutoClose(False)
@@ -2175,35 +2336,35 @@ class MainWindow(QMainWindow):
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
-        QApplication.processEvents()
 
         self.thread = QThread()
         self.worker = MultiWorker()
-        self.progress_dialog.canceled.connect(self.worker.cancel)
+
         self.worker.moveToThread(self.thread)
+
+        self.progress_dialog.canceled.connect(self.worker.cancel)
 
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.tasks_finished)
-        tasks = [
-            (filename, folder + "/" + filename.split("/")[-1].split(".")[0])
-            for filename in filenames
-        ]
+
         self.thread.started.connect(
-            partial(self.worker.run_tasks, self.save_image, tasks, **kwargs)
+            partial(
+                self.worker.run_tasks,
+                self.save_image,
+                tasks,
+                **kwargs,
+            )
         )
+
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
-        self.tasks_done = 0
 
-    def update_progress(self, value):
-        self.tasks_done += 1
-        self.progress_dialog.setValue(self.tasks_done)
-        self.progress_dialog.setLabelText(
-            f"{value} ({self.tasks_done}/{self.task_count})"
-        )
+    def update_progress(self, message, value):
+        self.progress_dialog.setLabelText(message)
+        self.progress_dialog.setValue(value)
 
     def tasks_finished(self):
         self.active = True
@@ -2250,13 +2411,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Resolution:"))
         layout.addWidget(resolution_field)
 
-        thread_slider = Slider()
-        cpu_count = os.cpu_count()
-        thread_slider.setMinMaxTicks(1, os.cpu_count())
-        thread_slider.setValue(max(cpu_count // 2, 1))
-        layout.addWidget(QLabel("Threads:"))
-        layout.addWidget(thread_slider)
-
         # Buttons
         button_layout = QHBoxLayout()
         ok_button = AnimatedButton("OK", parent=self)
@@ -2283,7 +2437,6 @@ class MainWindow(QMainWindow):
                 "quality": int(quality_slider.getValue()),
                 "add_date": sort_by_date.isChecked(),
                 "resolution": resolution,
-                "max_workers": int(thread_slider.getValue()),
             }
             return True, kwargs
         else:
@@ -2422,7 +2575,7 @@ class MainWindow(QMainWindow):
         self.flip = not self.flip
         self.setting_changed(self.flip, "flip")
 
-    def load_icc_setting(self):
+    def load_view_settings(self):
         display_icc_path = self.settings.value("display_icc", None)
         softproof_icc_path = self.settings.value("softproof_icc", None)
         display_intent = self.settings.value("display_rendering_intent", "relative")
@@ -2434,6 +2587,35 @@ class MainWindow(QMainWindow):
             self.load_display_icc(display_icc_path)
         if softproof_icc_path is not None:
             self.load_softproof_icc(softproof_icc_path)
+
+        # Restore view-related settings (GPU rendering, half-res preview, full preview)
+        def _to_bool(v):
+            if v is None:
+                return False
+            return str(v).lower() in ("1", "true", "yes")
+
+        gpu_val = self.settings.value("gpu_processing", None)
+        half_val = self.settings.value("half_res_preview", None)
+        full_val = self.settings.value("full_preview", None)
+
+        if gpu_val is not None:
+            # set the action state according to stored value
+            self.gpu_processing.setChecked(_to_bool(gpu_val))
+        if half_val is not None:
+            self.half_res_preview.setChecked(_to_bool(half_val))
+        if full_val is not None:
+            self.full_preview.setChecked(_to_bool(full_val))
+        auto_lens_val = self.settings.value("auto_lens_correct", None)
+        if auto_lens_val is not None:
+            self.auto_lens_correct.setChecked(_to_bool(auto_lens_val))
+
+        # Ensure rendering context matches restored GPU setting
+        try:
+            self.create_context()
+        except Exception:
+            # If context creation fails at startup, ignore and continue; the user
+            # can toggle GPU rendering later.
+            pass
 
     def load_display_icc_dialog(self):
         icc_path, _ = QFileDialog.getOpenFileName(
@@ -2599,6 +2781,81 @@ class MainWindow(QMainWindow):
             self.build_icc_transform()
 
             self.parameter_changed()
+
+    def toggle_gpu_processing(self, checked):
+        """Called when the GPU rendering action is toggled. Persist the choice and
+        recreate the rendering context so it takes effect immediately."""
+        self.settings.setValue("gpu_processing", "1" if checked else "0")
+        try:
+            self.create_context()
+        except Exception:
+            pass
+        self.parameter_changed()
+
+    def toggle_half_res_preview(self, checked):
+        """Persist half-resolution preview choice and update the preview."""
+        self.settings.setValue("half_res_preview", "1" if checked else "0")
+        self.parameter_changed()
+
+    def toggle_full_preview(self, checked):
+        """Persist full-preview choice and update the preview.
+
+        The full preview action previously only triggered a parameter update
+        but did not persist the user choice across sessions. Store the
+        state in QSettings so it can be restored on startup.
+        """
+        self.settings.setValue("full_preview", "1" if checked else "0")
+        self.parameter_changed()
+
+    def toggle_auto_lens_correction(self, checked):
+        """Persist whether to auto-toggle lens correction for newly loaded images."""
+        try:
+            self.settings.setValue("auto_lens_correct", "1" if checked else "0")
+        except Exception:
+            # ignore settings failure
+            pass
+
+    def reload_lens_cam_data(self):
+        """Enable lens correction for the current image and try to reload
+        camera and lens data from metadata. Updates image params and triggers
+        a re-render."""
+        current = self.image_bar.current_image()
+        if current is None:
+            return
+        src = current
+        src_short = src.split("/")[-1]
+
+        # Ensure an entry exists for this image
+        if src_short not in self.image_params:
+            self.image_params[src_short] = {}
+
+        # Load metadata and try to find camera/lens
+        metadata = load_metadata(src)
+        cam, lens = utils.find_data(metadata, self.lensfunpy_db)
+
+        if cam is not None:
+            self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
+        else:
+            self.image_params[src_short]["cam"] = "None"
+
+        if lens is not None:
+            self.image_params[src_short]["lens"] = lens.model
+        else:
+            self.image_params[src_short]["lens"] = "None"
+
+        # Activate lens correction for this image and update UI
+        self.image_params[src_short]["lens_correction"] = True
+        self.lens_correction.setChecked(True)
+
+        # Clear any cached raw load that might depend on previous lens/cam
+        try:
+            self.load_raw_image.cache_clear()
+        except Exception:
+            pass
+
+        # Refresh UI and reprocess
+        self.load_image_params(src_short)
+        self.parameter_changed(src)
 
     def icc_loading_warning(self):
         QMessageBox.information(

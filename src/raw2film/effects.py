@@ -16,6 +16,8 @@ from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
 from spectral_film_lut.grain_generation import generate_grain
 
+from raw2film.raw_conversion import CANVAS_MODES
+
 
 def lens_correction(
     rgb: np.ndarray, metadata: dict, cam: None | str, lens: None | str
@@ -141,30 +143,58 @@ def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
     return kernel
 
 
-@lru_cache(maxsize=50)
-def mtf_kernel(logf, vals, scale):
-    """Cache a mtf convolution kernel."""
-    mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
-    kernel = compute_kernel_from_function(mtf_func, 1.0, 1 / scale)
-    return kernel
-
-
-def film_sharpness(rgb: np.ndarray, stock: FilmSpectral, scale: float):
-    """Apply the sharpness and micro-contrast of a film stock ot an image."""
-    kernel = np.stack(
-        [mtf_kernel(logf, vals, scale) for logf, vals in stock.mtf],
-        axis=-1,
-        dtype=DEFAULT_DTYPE,
-    )
-    size = kernel.shape[0]
-    if len(kernel.shape) == 2 or size >= 13:
+def convolve_2d(rgb: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    if len(kernel.shape) == 2:
         rgb = cv.filter2D(rgb, -1, kernel)
+    elif rgb.shape[-1] == 1:
+        rgb = cv.filter2D(rgb, -1, kernel[..., 0])
     elif len(kernel.shape) == 3:
         for c in range(kernel.shape[-1]):
             rgb[..., c] = cv.filter2D(rgb[..., c], -1, kernel[..., c])
     if len(rgb.shape) == 2:
         rgb = rgb[..., np.newaxis]
     return rgb
+
+
+def mtf_kernel_layer(logf, vals, scale):
+    mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
+    kernel = compute_kernel_from_function(mtf_func, 0.1, 1 / scale)
+    return kernel
+
+
+@lru_cache(maxsize=50)
+def mtf_kernel(
+    stock: FilmSpectral,
+    scale,
+    sharpening_strength: float = 0.0,
+    sharpening_sigma: float = 1.0,
+):
+    """Cache a mtf convolution kernel."""
+    kernel = np.stack(
+        [mtf_kernel_layer(logf, vals, scale) for logf, vals in stock.mtf],
+        axis=-1,
+        dtype=DEFAULT_DTYPE,
+    )
+
+    if sharpening_strength:
+        sigma = sharpening_sigma * scale / 50
+        unsharp_kernel = ndimage.gaussian_filter(kernel, sigma=sigma)
+
+        kernel += sharpening_strength * (kernel - unsharp_kernel)
+
+    return kernel
+
+
+def film_sharpness(
+    rgb: np.ndarray,
+    stock: FilmSpectral,
+    scale: float,
+    sharpening_strength,
+    sharpening_sigma,
+):
+    """Apply the sharpness and micro-contrast of a film stock ot an image."""
+    kernel = mtf_kernel(stock, scale, sharpening_strength, sharpening_sigma)
+    return convolve_2d(rgb, kernel)
 
 
 @njit
@@ -200,31 +230,37 @@ def apply_grain(
     grain = generate_grain(
         rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma
     )
-    grain_factors = stock.grain_transform(rgb, scale, adx=adx)
+    grain_factors = stock.grain_transform(rgb, scale, adx=adx, bw_grain=bw_grain)
     grain = grain * grain_factors
     rgb += grain
     return rgb
 
 
-@njit
-def apply_halation_inplace(
-    rgb: np.ndarray, blured: np.ndarray, color_factors: np.ndarray
+def compute_halation_kernel(
+    scale: float,
+    halation_size: float = 1.0,
+    halation_red_factor: float = 1.0,
+    halation_green_factor: float = 0.4,
+    halation_blue_factor: float = 0.0,
+    halation_intensity: float = 1.0,
+    bw: bool = False,
 ):
-    """Adds halation inplace."""
-    for i in range(rgb.shape[0]):
-        for j in range(rgb.shape[1]):
-            for c in range(rgb.shape[2]):
-                rgb[i, j, c] += blured[i, j, c] * color_factors[c]
-                rgb[i, j, c] /= color_factors[c] + 1.0
-
-
-@njit
-def apply_halation_bw(rgb: np.ndarray, blured: np.ndarray, intensity: float):
-    """Adds halation to a black and white image."""
-    for i in range(rgb.shape[0]):
-        for j in range(rgb.shape[1]):
-            rgb[i, j] += blured[i, j] * intensity
-            rgb[i, j] /= intensity + 1.0
+    if bw:
+        halation_red_factor = halation_green_factor
+        halation_blue_factor = halation_green_factor
+    kernel = np.asarray(
+        exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+    )
+    kernel = np.dstack([kernel] * 3)
+    color_factors = halation_intensity * np.array(
+        [halation_red_factor, halation_green_factor, halation_blue_factor],
+        dtype=DEFAULT_DTYPE,
+    )
+    kernel *= color_factors
+    size = kernel.shape[0]
+    kernel[size // 2, size // 2, :] += 1.0
+    kernel /= color_factors + 1.0
+    return kernel
 
 
 def halation(
@@ -235,61 +271,89 @@ def halation(
     halation_green_factor: float = 0.4,
     halation_blue_factor: float = 0.0,
     halation_intensity: float = 1.0,
+    bw: bool = False,
 ) -> np.ndarray:
     """A halation image processing effect."""
-    kernel = np.asarray(
-        exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
+    kernel = compute_halation_kernel(
+        scale,
+        halation_size,
+        halation_red_factor,
+        halation_green_factor,
+        halation_blue_factor,
+        halation_intensity,
+        bw,
     )
-    blured = cv.filter2D(rgb, -1, kernel)
-    color_factors = halation_intensity * np.array(
-        [halation_red_factor, halation_green_factor, halation_blue_factor],
-        dtype=DEFAULT_DTYPE,
-    )
-    if rgb.shape[-1] == 1:
-        apply_halation_bw(rgb, blured, color_factors[0])
-    else:
-        apply_halation_inplace(rgb, blured, color_factors)  # TODO: test if inplace
+    rgb = convolve_2d(rgb, kernel)
     return rgb
+
+
+def get_canvas_data(
+    shape,
+    canvas_mode: CANVAS_MODES,
+    canvas_scale: float = 1.0,
+    canvas_ratio: float = 1.0,
+):
+    if "white" in canvas_mode:
+        canvas_color = (255, 255, 255)
+    elif "black" in canvas_mode:
+        canvas_color = (0, 0, 0)
+    else:
+        canvas_color = (128, 128, 128)
+
+    if "Proportional" in canvas_mode:
+        canvas_ratio = shape[1] / shape[0]
+        img_ratio = shape[1] / shape[0]
+        if img_ratio > canvas_ratio:
+            output_resolution = (
+                int(shape[1] / canvas_ratio * canvas_scale),
+                int(shape[1] * canvas_scale),
+            )
+        else:
+            output_resolution = (
+                int(shape[0] * canvas_scale),
+                int(shape[0] * canvas_ratio * canvas_scale),
+            )
+    elif "Fixed" in canvas_mode:
+        img_ratio = shape[1] / shape[0]
+        if img_ratio > canvas_ratio:
+            output_resolution = (
+                int(shape[1] / canvas_ratio * canvas_scale),
+                int(shape[1] * canvas_scale),
+            )
+        else:
+            output_resolution = (
+                int(shape[0] * canvas_scale),
+                int(shape[0] * canvas_ratio * canvas_scale),
+            )
+    elif "Uniform" in canvas_mode:
+        side_length = max(shape[:2])
+        border_size = int(side_length * (canvas_scale - 1))
+        output_resolution = (shape[0] + border_size, shape[1] + border_size)
+
+    offset = np.subtract(output_resolution, shape[:2]) // 2
+
+    return output_resolution, canvas_color, offset
 
 
 def add_canvas(
     image: np.ndarray,
-    canvas_ratio: float,
-    canvas_scale: float,
-    canvas_color: tuple[int, int, int],
+    canvas_mode: CANVAS_MODES,
+    canvas_scale: float = 1.0,
+    canvas_ratio: float = 1.0,
 ):
     """Adds a background canvas to an image."""
-    img_ratio = image.shape[1] / image.shape[0]
-    if img_ratio > canvas_ratio:
-        output_resolution = (
-            int(image.shape[1] / canvas_ratio * canvas_scale),
-            int(image.shape[1] * canvas_scale),
-        )
-    else:
-        output_resolution = (
-            int(image.shape[0] * canvas_scale),
-            int(image.shape[0] * canvas_ratio * canvas_scale),
-        )
-    offset = np.subtract(output_resolution, image.shape[:2]) // 2
+    if canvas_mode == "No":
+        return image
+
+    output_resolution, canvas_color, offset = get_canvas_data(
+        image.shape, canvas_mode, canvas_scale, canvas_ratio
+    )
+
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[
         offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]
     ] = image
-    return canvas.astype(dtype="uint8")
 
-
-def add_canvas_uniform(
-    image: np.ndarray, canvas_scale: float, canvas_color: tuple[int, int, int]
-):
-    """Adds background canvas to image."""
-    side_length = max(image.shape[:2])
-    border_size = int(side_length * (canvas_scale - 1))
-    output_resolution = (image.shape[0] + border_size, image.shape[1] + border_size)
-    offset = np.subtract(output_resolution, image.shape[:2]) // 2
-    canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
-    canvas[
-        offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]
-    ] = image
     return canvas.astype(dtype="uint8")
 
 
@@ -311,7 +375,7 @@ def down_up_blur(image: np.ndarray, scale: int = 50, func: Callable | None = Non
         if func is not None:
             down = func(down)
         # Downsample channel
-        blurred = ndimage.gaussian_filter(down, sigma=3)
+        blurred = ndimage.gaussian_filter(down, sigma=3, truncate=2)
 
         # Upsample back
         up = ndimage.zoom(blurred, scale, order=1)
