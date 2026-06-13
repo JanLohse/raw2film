@@ -1,3 +1,5 @@
+"""The main CPU processing implementation."""
+
 from functools import lru_cache
 
 import numpy as np
@@ -20,6 +22,8 @@ from raw2film.utils import (
 
 
 class CpuProcessor:
+    """The main CPU processing implementation."""
+
     def __init__(self, cameras, lenses):
         self.device = get_default_device()
         self.queue = self.device.queue
@@ -45,10 +49,12 @@ class CpuProcessor:
         self.lenses = lenses
 
     @lru_cache
-    def load_raw_image_cached(self, src, cam=None, lens=None, half_size=True):
+    def load_raw_image_cached(self, src, cam=None, lens=None, half_size: bool = True):
+        """Load images and cache previous requests."""
         return self.load_raw_image(src, cam, lens, half_size)
 
-    def load_raw_image(self, src, cam=None, lens=None, half_size=True):
+    def load_raw_image(self, src, cam=None, lens=None, half_size: bool = True):
+        """Load an image and apply lens correction."""
         image = raw_to_linear(src, half_size=half_size)
 
         if cam is not None and lens is not None:
@@ -78,7 +84,7 @@ class CpuProcessor:
         cache: bool = True,
         chroma_nr: int = 0,
         max_scale: float | None = None,
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int] | None:
         new_param_dict = {
             "src": src,
             "cam": cam,
@@ -140,6 +146,7 @@ class CpuProcessor:
         tint: float | int,
         exp_comp: float | int,
     ):
+        """Create the 2D input LUT."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "exp_kelvin": exp_kelvin,
@@ -162,6 +169,7 @@ class CpuProcessor:
         push_pull: float | int,
         color_masking: float | None = None,
     ):
+        """Create the 1D LUT for the HD-curve."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
@@ -198,6 +206,7 @@ class CpuProcessor:
         icc_transform=None,
         color_masking: float | None = None,
     ):
+        """Create the output 3D LUT."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "print_film": print_film.name if print_film is not None else None,
@@ -311,6 +320,7 @@ class CpuProcessor:
         max_scale: float | None = 400.0,
         **_,
     ):
+        """Main function to load and process an image."""
         # Update textures
         resolution = self.load_image_texture(
             src,

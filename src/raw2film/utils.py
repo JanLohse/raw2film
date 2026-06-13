@@ -140,6 +140,7 @@ def precompute_mix_table(red=None, green=None, blue=None):
 
 
 MIX_TABLE = precompute_mix_table()
+"""Lookup table for the histogram colors."""
 
 
 @njit

@@ -11,7 +11,7 @@ struct Uniforms {
     canvas_min_y: f32,
     canvas_max_x: f32,
     canvas_max_y: f32,
-    canvas_color: vec3<f32>, // Automatically maps to the 3 color floats + 1 padding float
+    canvas_color: vec3<f32>,
 }
 @group(0) @binding(3) var<uniform> u_transforms: Uniforms;
 

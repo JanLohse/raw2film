@@ -2150,7 +2150,6 @@ class MainWindow(QMainWindow):
         self.image_context.set_bitmap(canvas_rgba)
 
     def update_preview(self, src=None, *args, **kwargs):
-        start = time.time()
         if src is None:
             if self.image_bar.current_image() is None:
                 return
@@ -2217,8 +2216,6 @@ class MainWindow(QMainWindow):
         self.histogram.request_draw()
         self.image.request_draw()
         self.image.setToolTip(src)
-
-        print(f"total {time.time() - start:.4f}s")
 
     def setup_image_params(self, src):
         image_params = {**self.dflt_img_params, **self.image_params[src]}
@@ -2805,8 +2802,7 @@ class MainWindow(QMainWindow):
 
         The full preview action previously only triggered a parameter update
         but did not persist the user choice across sessions. Store the
-        state in QSettings so it can be restored on startup (see
-        `load_icc_setting`).
+        state in QSettings so it can be restored on startup.
         """
         self.settings.setValue("full_preview", "1" if checked else "0")
         self.parameter_changed()

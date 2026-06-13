@@ -1,3 +1,5 @@
+"""The main GPU processing implementation."""
+
 import math
 import random
 import struct
@@ -30,6 +32,8 @@ from raw2film.utils import (
 
 
 class GpuTexture:
+    """Wrapper for GPU texture to make usage easier."""
+
     def __init__(self, device, size, format=wgpu.TextureFormat.rgba16float):
         self.device = device
         self.size = size
@@ -64,6 +68,8 @@ class GpuTexture:
 
 
 class GpuProcessor:
+    """The main GPU processing implementation."""
+
     def __init__(self, cameras, lenses):
         self.device = get_default_device()
         self.queue = self.device.queue
@@ -251,10 +257,12 @@ class GpuProcessor:
         self._create_histogram_buffers()
 
     @lru_cache
-    def load_raw_image_cached(self, src, cam=None, lens=None, half_size=True):
+    def load_raw_image_cached(self, src, cam=None, lens=None, half_size: bool = True):
+        """Load images and cache previous requests."""
         return self.load_raw_image(src, cam, lens, half_size)
 
-    def load_raw_image(self, src, cam=None, lens=None, half_size=True):
+    def load_raw_image(self, src, cam=None, lens=None, half_size: bool = True):
+        """Load an image and apply lens correction."""
         image = raw_to_linear(src, half_size=half_size)
 
         if cam is not None and lens is not None:
@@ -273,6 +281,7 @@ class GpuProcessor:
         image: np.ndarray,
         canvas_resolution: None | tuple[int, int] = None,
     ):
+        """Set up textures and load image to GPU."""
         h, w = image.shape[:2]
 
         if canvas_resolution is None:
@@ -296,6 +305,7 @@ class GpuProcessor:
         self.tex_input.upload(self.queue, image)
 
     def _ensure_lut_1d(self, lut: np.ndarray):
+        """Set up 1D LUT texture."""
         size = lut.shape[1]
         if self.tex_lut_1d is None or size != self.tex_lut_1d.size[0]:
             self.tex_lut_1d = self.device.create_texture(
@@ -337,6 +347,7 @@ class GpuProcessor:
         )
 
     def _ensure_lut_2d(self, lut: np.ndarray):
+        """Set up 2D LUT texture."""
         size = lut.shape[0]
         if self.tex_lut_2d is None or size != self.tex_lut_2d.size[0]:
             self.tex_lut_2d = self.device.create_texture(
@@ -365,6 +376,7 @@ class GpuProcessor:
         )
 
     def _ensure_lut_3d(self, lut: np.ndarray):
+        """Set up 3D LUT texture."""
         size = lut.shape[0]
         if self.tex_lut_3d is None or size != self.tex_lut_3d.size[0]:
             self.tex_lut_3d = self.device.create_texture(
@@ -397,6 +409,7 @@ class GpuProcessor:
         )
 
     def _ensure_mtf_kernel(self, kernel: np.ndarray):
+        """Set up MTF-kernel texture."""
         h, w = kernel.shape[:2]
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
@@ -438,6 +451,7 @@ class GpuProcessor:
         )
 
     def _ensure_grain_kernel(self, kernel: np.ndarray):
+        """Set up grain convolution kernel texture."""
         h, w = kernel.shape[:2]
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
@@ -482,6 +496,7 @@ class GpuProcessor:
         )
 
     def _ensure_halation_kernel(self, kernel: np.ndarray):
+        """Set up halation convolution kernel texture."""
         h, w = kernel.shape[:2]
 
         kernel_rgba = np.ones((h, w, 4), dtype=np.float32)
@@ -532,10 +547,11 @@ class GpuProcessor:
     def _ensure_highlight_burn(
         self, d_ref: float, highlight_burn: float, lowres_w: int, lowres_h: int
     ):
+        """Set up highlight burn parameters."""
         self.tex_highlight_burn = self.device.create_texture(
             size=(lowres_w, lowres_h, 1),
             usage=wgpu.TextureUsage.STORAGE_BINDING | wgpu.TextureUsage.TEXTURE_BINDING,
-            format=wgpu.TextureFormat.rgba16float,  # Change this to match your pipeline
+            format=wgpu.TextureFormat.rgba16float,
         )
 
         self.tex_highlight_burn_view = self.tex_highlight_burn.create_view()
@@ -547,6 +563,7 @@ class GpuProcessor:
         )
 
     def _ensure_grain_lut(self, lut: np.ndarray):
+        """Set up the 1D LUT for the grain intensity."""
         size = lut.shape[1]
         if self.tex_lut_grain is None or size != self.tex_lut_grain.size[0]:
             self.tex_lut_grain = self.device.create_texture(
@@ -594,6 +611,7 @@ class GpuProcessor:
         )
 
     def _create_histogram_buffers(self, mix_table: np.ndarray = MIX_TABLE):
+        """Set up buffers needed for histogram."""
         self.tex_hist_out = GpuTexture(
             self.device, (256, 256), format=wgpu.TextureFormat.rgba8uint
         )
@@ -616,6 +634,7 @@ class GpuProcessor:
         )
 
     def _ensure_histogram_buffers(self):
+        """Set up histogram parameters."""
         param_data = np.array(
             [256, self.pipeline_resolution[0], self.pipeline_resolution[1], 0],
             dtype=np.uint32,
@@ -645,6 +664,7 @@ class GpuProcessor:
         canvas_scale: float = 1.0,
         canvas_ratio: float = 1.0,
     ):
+        """Load the image, perform pre-processing and upload to GPU."""
         new_param_dict = {
             "src": src,
             "cam": cam,
@@ -728,6 +748,7 @@ class GpuProcessor:
         sharpening_strength: float,
         sharpening_sigma: float,
     ):
+        """Create MTF-kernel and upload to GPU."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "scale": scale,
@@ -756,6 +777,7 @@ class GpuProcessor:
         halation_intensity: float = 1.0,
         bw: bool = False,
     ):
+        """Create halation kernel and upload it to the GPU."""
         new_param_dict = {
             "scale": scale,
             "halation_size": halation_size,
@@ -786,6 +808,7 @@ class GpuProcessor:
     def load_highlight_burn(
         self, negative_film: FilmSpectral, highlight_burn: float, burn_scale: float
     ):
+        """Create highlight burn parameters and upload them to the GPU."""
         d_ref = negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0]
 
         scale_factor = math.ceil(min(self.height, self.width) / burn_scale)
@@ -813,6 +836,7 @@ class GpuProcessor:
         tint: float | int,
         exp_comp: float | int,
     ):
+        """Create the 2D input LUT and upload it to the GPU."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "exp_kelvin": exp_kelvin,
@@ -837,6 +861,7 @@ class GpuProcessor:
         grain_sigma: float = 0.4,
         bw_grain: bool = False,
     ):
+        """Set up grain parameters and kernel and upload them to the GPU."""
         input_lut = negative_film.get_grain_curve(scale, adx=False, bw_grain=bw_grain)
 
         self._ensure_grain_lut(input_lut)
@@ -868,6 +893,7 @@ class GpuProcessor:
         push_pull: float | int,
         color_masking: float | None = None,
     ):
+        """Create 1D LUT for the films HD-curve."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
@@ -904,6 +930,7 @@ class GpuProcessor:
         icc_transform=None,
         color_masking: float | None = None,
     ):
+        """Create the 3D output LUT."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "print_film": print_film.name if print_film is not None else None,
@@ -1214,7 +1241,6 @@ class GpuProcessor:
         A unified, flexible dispatch helper that handles arbitrary workgroup sizes
         and optional multi-pass command encoding chaining.
         """
-        # If no encoder is passed, we manage the lifecycle (single-pass mode)
         submit_instantly = False
         if encoder is None:
             encoder = self.device.create_command_encoder()
@@ -1423,8 +1449,6 @@ class GpuProcessor:
         scale_x = 1.0 / render_w
         scale_y = 1.0 / render_h
 
-        # Updated struct layout to 12 floats ("ffffffffffff" = 48 bytes total)
-        # Includes scale, offsets, canvas bounding boxes, and canvas RGB channels
         transform_data = struct.pack(
             "ffffffffffff",
             scale_x,
@@ -1438,7 +1462,7 @@ class GpuProcessor:
             c_r,
             c_g,
             c_b,
-            0.0,  # Explicit padding float to keep struct 16-byte aligned in WGSL
+            0.0,
         )
 
         uniform_buffer = self.device.create_buffer_with_data(
@@ -1521,6 +1545,7 @@ class GpuProcessor:
         max_scale: float | None = 400.0,
         **_,
     ) -> np.ndarray | None:
+        """Main function to load and process an image."""
         # Update textures
         self.load_image_texture(
             src,
@@ -1672,8 +1697,6 @@ class GpuProcessor:
             encoder=encoder,
         )
         idx = 1 - idx
-
-        # TODO: canvas_mode
 
         if dst_texture is None:
             binding, dst_size = self._bind_copy_to_dst(
