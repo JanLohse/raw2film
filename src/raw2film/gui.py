@@ -517,9 +517,9 @@ class MainWindow(QMainWindow):
             "grain_sigma": 0.4,
             "gamma_func": "sRGB",
             "push_pull": 0.0,
-            # New sharpening profile parameters
             "sharpening_strength": 0.0,
             "sharpening_sigma": 1.0,
+            "color_masking": 1.0,
         }
         self.dflt_img_params = {
             "exp_comp": 0,
@@ -1206,6 +1206,20 @@ class MainWindow(QMainWindow):
             tool_tip="Adjust the saturation in the display color space.",
         )
 
+        self.color_masking = Slider()
+        """Color masking adjustment (0 - no masking, 1 - normal, 2 - strong)."""
+        self.color_masking.setMinMaxTicks(
+            0, 2, 1, 100, default=self.dflt_prf_params["color_masking"]
+        )
+        profile_settings_group.add_option(
+            self.color_masking,
+            "Color masking",
+            self.dflt_prf_params["color_masking"],
+            self.color_masking.setValue,
+            tool_tip="Color masking adjustment\n"
+            "(0 - no masking, 1 - normal, 2 - strong).",
+        )
+
         self.canvas_mode = WideComboBox(self)
         self.canvas_mode.addItems(
             [
@@ -1473,6 +1487,9 @@ class MainWindow(QMainWindow):
         )
         self.saturation_slider.valueChanged.connect(
             lambda x: self.profile_changed(x, "sat_adjust")
+        )
+        self.color_masking.valueChanged.connect(
+            lambda x: self.profile_changed(x, "color_masking")
         )
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(
@@ -1877,6 +1894,11 @@ class MainWindow(QMainWindow):
             self.profile_changed(self.print_selector.currentText(), "print_film")
         else:
             self.profile_changed(None, "print_film")
+        # Load film stock's default color masking when film stock changes
+        if negative in self.filmstocks and self.filmstocks[negative] is not None:
+            film_stock = self.filmstocks[negative]
+            if hasattr(film_stock, "color_masking"):
+                self.color_masking.setValue(film_stock.color_masking)
         self.active = True
         self.profile_changed(negative, "negative_film")
 
@@ -2033,6 +2055,7 @@ class MainWindow(QMainWindow):
         self.print_selector.setCurrentText(profile_params["print_film"])
         self.shadow_comp.setValue(profile_params["shadow_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
+        self.color_masking.setValue(profile_params["color_masking"])
         self.inversion_gamma.setValue(profile_params["inversion_gamma"])
         self.idealized_curve.setChecked(profile_params["idealized_curve"])
         self.white_clip.setChecked(profile_params["white_clip"])
