@@ -424,6 +424,7 @@ class MainWindow(QMainWindow):
         self.full_preview = QAction("Full preview", self)
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.full_preview.setCheckable(True)
+        self.full_preview.setChecked(True)
         view_menu.addAction(self.full_preview)
         self.gpu_processing = QAction("GPU rendering", self)
         self.gpu_processing.setCheckable(True)
@@ -1352,9 +1353,9 @@ class MainWindow(QMainWindow):
         self.lens_correction.stateChanged.connect(
             lambda x: self.setting_changed(x, "lens_correction")
         )
-        self.full_preview.triggered.connect(lambda: self.parameter_changed())
-        self.gpu_processing.triggered.connect(lambda: self.parameter_changed())
-        self.half_res_preview.triggered.connect(lambda: self.parameter_changed())
+        self.full_preview.triggered.connect(self.toggle_full_preview)
+        self.gpu_processing.triggered.connect(self.toggle_gpu_processing)
+        self.half_res_preview.triggered.connect(self.toggle_half_res_preview)
         self.halation.stateChanged.connect(
             lambda x: self.profile_changed(x, "halation")
         )
@@ -1519,7 +1520,7 @@ class MainWindow(QMainWindow):
         self.profile_params = {}
 
         self.load_settings_system()
-        self.load_icc_setting()
+        self.load_view_settings()
 
         self.save_timer = time.time()
 
@@ -2479,7 +2480,7 @@ class MainWindow(QMainWindow):
         self.flip = not self.flip
         self.setting_changed(self.flip, "flip")
 
-    def load_icc_setting(self):
+    def load_view_settings(self):
         display_icc_path = self.settings.value("display_icc", None)
         softproof_icc_path = self.settings.value("softproof_icc", None)
         display_intent = self.settings.value("display_rendering_intent", "relative")
@@ -2491,6 +2492,32 @@ class MainWindow(QMainWindow):
             self.load_display_icc(display_icc_path)
         if softproof_icc_path is not None:
             self.load_softproof_icc(softproof_icc_path)
+
+        # Restore view-related settings (GPU rendering, half-res preview, full preview)
+        def _to_bool(v):
+            if v is None:
+                return False
+            return str(v).lower() in ("1", "true", "yes")
+
+        gpu_val = self.settings.value("gpu_processing", None)
+        half_val = self.settings.value("half_res_preview", None)
+        full_val = self.settings.value("full_preview", None)
+
+        if gpu_val is not None:
+            # set the action state according to stored value
+            self.gpu_processing.setChecked(_to_bool(gpu_val))
+        if half_val is not None:
+            self.half_res_preview.setChecked(_to_bool(half_val))
+        if full_val is not None:
+            self.full_preview.setChecked(_to_bool(full_val))
+
+        # Ensure rendering context matches restored GPU setting
+        try:
+            self.create_context()
+        except Exception:
+            # If context creation fails at startup, ignore and continue; the user
+            # can toggle GPU rendering later.
+            pass
 
     def load_display_icc_dialog(self):
         icc_path, _ = QFileDialog.getOpenFileName(
@@ -2656,6 +2683,32 @@ class MainWindow(QMainWindow):
             self.build_icc_transform()
 
             self.parameter_changed()
+
+    def toggle_gpu_processing(self, checked):
+        """Called when the GPU rendering action is toggled. Persist the choice and
+        recreate the rendering context so it takes effect immediately."""
+        self.settings.setValue("gpu_processing", "1" if checked else "0")
+        try:
+            self.create_context()
+        except Exception:
+            pass
+        self.parameter_changed()
+
+    def toggle_half_res_preview(self, checked):
+        """Persist half-resolution preview choice and update the preview."""
+        self.settings.setValue("half_res_preview", "1" if checked else "0")
+        self.parameter_changed()
+
+    def toggle_full_preview(self, checked):
+        """Persist full-preview choice and update the preview.
+
+        The full preview action previously only triggered a parameter update
+        but did not persist the user choice across sessions. Store the
+        state in QSettings so it can be restored on startup (see
+        `load_icc_setting`).
+        """
+        self.settings.setValue("full_preview", "1" if checked else "0")
+        self.parameter_changed()
 
     def icc_loading_warning(self):
         QMessageBox.information(
