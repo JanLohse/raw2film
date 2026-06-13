@@ -1207,17 +1207,43 @@ class MainWindow(QMainWindow):
         )
 
         self.color_masking = Slider()
-        """Color masking adjustment (0 - no masking, 1 - normal, 2 - strong)."""
+        """
+        How effective the orange color mask of the film is. Value of 1 perfectly
+        compensates for color layer cross contamination. An increased value leads to
+        higher saturation. There is no documented data on this, so you can play around
+        with this to your liking.
+
+        For film without a color mask like slide film this can be used to simulate other
+        inter-layer effects. Should probably set lower, but should be experimented with.
+        """
         self.color_masking.setMinMaxTicks(
             0, 2, 1, 100, default=self.dflt_prf_params["color_masking"]
+        )
+        self.color_masking.set_color_gradient(
+            np.array(
+                [
+                    0.666,
+                    0.0,
+                    0.0,
+                ]
+            ),
+            np.array([0.666, 0.25, 2.0]),
+            20,
+            False,
         )
         profile_settings_group.add_option(
             self.color_masking,
             "Color masking",
             self.dflt_prf_params["color_masking"],
             self.color_masking.setValue,
-            tool_tip="Color masking adjustment\n"
-            "(0 - no masking, 1 - normal, 2 - strong).",
+            tool_tip="How effective the orange color mask of the film is. Value of 1\n"
+            "perfectly compensates for color layer cross contamination. An\n"
+            "increased value leads to higher saturation. There is no\n"
+            "documented data on this, so you can play around with this to\n"
+            "your liking.\n"
+            "For film without a color mask like slide film this\n"
+            "can be used to simulate other inter-layer effects. Should\n"
+            "probably set lower, but should be experimented with.",
         )
 
         self.canvas_mode = WideComboBox(self)
