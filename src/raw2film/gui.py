@@ -410,6 +410,11 @@ class MainWindow(QMainWindow):
         self.deselect_all_button = QAction("Deselect all", self)
         self.deselect_all_button.setShortcut("Ctrl+D")
         edit_menu.addAction(self.deselect_all_button)
+        self.auto_lens_correct = QAction("Auto lens correct", self)
+        """Whether to toggle lens correction automatically when loading a new image."""
+        self.auto_lens_correct.setCheckable(True)
+        self.auto_lens_correct.setChecked(True)
+        edit_menu.addAction(self.auto_lens_correct)
         self.reset_image_button = QAction("Reset image", self)
         edit_menu.addAction(self.reset_image_button)
         self.reset_all_images_button = QAction("Reset all images", self)
@@ -563,14 +568,32 @@ class MainWindow(QMainWindow):
         self.cameras["None"] = None
         self.lenses["None"] = None
 
+        # Lens correction checkbox with a reload-data button next to it
+        lens_widget = QWidget()
+        lens_layout = QHBoxLayout()
+        lens_layout.setContentsMargins(0, 0, 0, 0)
         self.lens_correction = QCheckBox()
         """Correct lens distortion and vignetting."""
+        # Button to reload camera/lens data for the current image
+        self.reload_lens_data_button = AnimatedButton("Reload data", parent=self)
+        self.reload_lens_data_button.setObjectName("reload")
+        self.reload_lens_data_button.setFixedWidth(100)
+        lens_layout.addWidget(self.lens_correction)
+        lens_layout.addWidget(self.reload_lens_data_button)
+        lens_widget.setLayout(lens_layout)
+
         image_correction_group.add_option(
-            self.lens_correction,
+            lens_widget,
             "Lens correction",
             self.dflt_img_params["lens_correction"],
             self.lens_correction.setChecked,
             tool_tip="Correct lens distortion and vignetting.",
+        )
+
+        # Connect the reload button to the handler that enables lens correction
+        # for the current image and tries to reload camera/lens data.
+        self.reload_lens_data_button.released.connect(
+            lambda: self.reload_lens_cam_data()
         )
 
         self.camera_selector = WideComboBox(self)
@@ -1353,6 +1376,7 @@ class MainWindow(QMainWindow):
         self.lens_correction.stateChanged.connect(
             lambda x: self.setting_changed(x, "lens_correction")
         )
+        self.auto_lens_correct.triggered.connect(self.toggle_auto_lens_correction)
         self.full_preview.triggered.connect(self.toggle_full_preview)
         self.gpu_processing.triggered.connect(self.toggle_gpu_processing)
         self.half_res_preview.triggered.connect(self.toggle_half_res_preview)
@@ -1780,6 +1804,9 @@ class MainWindow(QMainWindow):
                 self.image_params[src_short]["lens"] = lens.model
             else:
                 self.image_params[src_short]["lens"] = "None"
+            self.image_params[src_short]["lens_correction"] = (
+                self.auto_lens_correct.isChecked()
+            )
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = (
                 self.profile_selector.currentText()
@@ -2510,6 +2537,9 @@ class MainWindow(QMainWindow):
             self.half_res_preview.setChecked(_to_bool(half_val))
         if full_val is not None:
             self.full_preview.setChecked(_to_bool(full_val))
+        auto_lens_val = self.settings.value("auto_lens_correct", None)
+        if auto_lens_val is not None:
+            self.auto_lens_correct.setChecked(_to_bool(auto_lens_val))
 
         # Ensure rendering context matches restored GPU setting
         try:
@@ -2709,6 +2739,56 @@ class MainWindow(QMainWindow):
         """
         self.settings.setValue("full_preview", "1" if checked else "0")
         self.parameter_changed()
+
+    def toggle_auto_lens_correction(self, checked):
+        """Persist whether to auto-toggle lens correction for newly loaded images."""
+        try:
+            self.settings.setValue("auto_lens_correct", "1" if checked else "0")
+        except Exception:
+            # ignore settings failure
+            pass
+
+    def reload_lens_cam_data(self):
+        """Enable lens correction for the current image and try to reload
+        camera and lens data from metadata. Updates image params and triggers
+        a re-render."""
+        current = self.image_bar.current_image()
+        if current is None:
+            return
+        src = current
+        src_short = src.split("/")[-1]
+
+        # Ensure an entry exists for this image
+        if src_short not in self.image_params:
+            self.image_params[src_short] = {}
+
+        # Load metadata and try to find camera/lens
+        metadata = load_metadata(src)
+        cam, lens = utils.find_data(metadata, self.lensfunpy_db)
+
+        if cam is not None:
+            self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
+        else:
+            self.image_params[src_short]["cam"] = "None"
+
+        if lens is not None:
+            self.image_params[src_short]["lens"] = lens.model
+        else:
+            self.image_params[src_short]["lens"] = "None"
+
+        # Activate lens correction for this image and update UI
+        self.image_params[src_short]["lens_correction"] = True
+        self.lens_correction.setChecked(True)
+
+        # Clear any cached raw load that might depend on previous lens/cam
+        try:
+            self.load_raw_image.cache_clear()
+        except Exception:
+            pass
+
+        # Refresh UI and reprocess
+        self.load_image_params(src_short)
+        self.parameter_changed(src)
 
     def icc_loading_warning(self):
         QMessageBox.information(
