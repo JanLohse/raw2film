@@ -2190,7 +2190,6 @@ class MainWindow(QMainWindow):
             processing_args["resolution"] = tuple(
                 x // 2 for x in processing_args["resolution"]
             )
-            processing_args["half_res"] = True
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False

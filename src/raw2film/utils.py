@@ -240,7 +240,7 @@ def resolution_scaling(image: np.ndarray, resolution) -> np.ndarray:
             (round(w * scaling_factor), round(h * scaling_factor)),
             interpolation=cv.INTER_LANCZOS4,
         )
-    print(resolution, image.shape)
+
     return image
 
 

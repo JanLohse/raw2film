@@ -18,6 +18,7 @@ from raw2film import effects
 from raw2film.effects import (
     chroma_nr_filter,
     compute_halation_kernel,
+    get_canvas_data,
     mtf_kernel,
 )
 from raw2film.raw_conversion import CANVAS_MODES, crop_rotate_zoom, raw_to_linear
@@ -213,8 +214,10 @@ class GpuProcessor:
         self.grain_kernel_param_dict = None
         self.highlight_burn_param_dict = None
 
-        self.width = None
-        self.height = None
+        self.pipeline_resolution = None
+        self.output_resolution = None
+        self.canvas_resolution = None
+        self.canvas_color = None
 
         self.lut_1d_sampler = self.device.create_sampler(
             mag_filter=wgpu.FilterMode.linear,
@@ -266,18 +269,19 @@ class GpuProcessor:
         return image
 
     def _ensure_image_texture(
-        self, image: np.ndarray, scale_factor: float | None = None
+        self,
+        image: np.ndarray,
+        canvas_resolution: None | tuple[int, int] = None,
     ):
         h, w = image.shape[:2]
-        h_int, w_int = h, w
-        if scale_factor is not None:
-            w_int = round(w_int / scale_factor)
-            h_int = round(h_int / scale_factor)
+
+        if canvas_resolution is None:
+            canvas_resolution = (h, w)
 
         if (
             self.tex_input is None
             or self.tex_input.size != (w, h)
-            or self.tex_int_out != (w_int, h_int)
+            or self.tex_int_out.size != canvas_resolution
         ):
             self.tex_input = GpuTexture(
                 self.device, (w, h), format=wgpu.TextureFormat.rgba32float
@@ -286,7 +290,7 @@ class GpuProcessor:
             self.tex_b = GpuTexture(self.device, (w, h))
             self.tex_temp = GpuTexture(self.device, (w, h))
             self.tex_int_out = GpuTexture(
-                self.device, (w_int, h_int), format=wgpu.TextureFormat.rgba8unorm
+                self.device, canvas_resolution, format=wgpu.TextureFormat.rgba8unorm
             )
 
         self.tex_input.upload(self.queue, image)
@@ -612,7 +616,10 @@ class GpuProcessor:
         )
 
     def _ensure_histogram_buffers(self):
-        param_data = np.array([256, self.width, self.height, 0], dtype=np.uint32)
+        param_data = np.array(
+            [256, self.pipeline_resolution[0], self.pipeline_resolution[1], 0],
+            dtype=np.uint32,
+        )
         self.buffer_hist_params = self.device.create_buffer_with_data(
             data=param_data, usage=wgpu.BufferUsage.UNIFORM
         )
@@ -634,6 +641,9 @@ class GpuProcessor:
         cache: bool = True,
         chroma_nr: int = 0,
         max_scale: float | None = None,
+        canvas_mode: CANVAS_MODES = "No",
+        canvas_scale: float = 1.0,
+        canvas_ratio: float = 1.0,
     ):
         new_param_dict = {
             "src": src,
@@ -649,9 +659,10 @@ class GpuProcessor:
             "resolution": resolution,
             "half_size": half_size,
             "chroma_nr": chroma_nr,
+            "canvas_mode": canvas_mode,
+            "canvas_scale": canvas_scale,
+            "canvas_ratio": canvas_ratio,
         }
-        scale_factor = None
-
         if new_param_dict == self.image_param_dict:
             return
 
@@ -673,6 +684,8 @@ class GpuProcessor:
         if resolution is None and max_scale is not None:
             resolution = image.shape[:2]
 
+        scale_factor = 1.0
+
         if resolution is not None:
             scale = max(resolution) / max(frame_width, frame_height)
 
@@ -682,13 +695,31 @@ class GpuProcessor:
 
             image = resolution_scaling(image, resolution)
 
+        self.output_resolution = tuple(round(x / scale_factor) for x in image.shape[:2])
         image = np.dstack((image, np.ones_like(image[..., :1])))
 
-        self._ensure_image_texture(image, scale_factor)
+        if canvas_mode != "No":
+            self.canvas_resolution, self.canvas_color, _ = get_canvas_data(
+                self.output_resolution,
+                canvas_mode,
+                canvas_scale,
+                canvas_ratio,
+            )
+            self.canvas_resolution = (
+                self.canvas_resolution[1],
+                self.canvas_resolution[0],
+            )
+        else:
+            self.canvas_resolution = None
+
+        self.output_resolution = (self.output_resolution[1], self.output_resolution[0])
+
+        self._ensure_image_texture(image, self.canvas_resolution)
 
         self.image_param_dict = new_param_dict
 
-        self.height, self.width = image.shape[:2]
+        height, width = image.shape[:2]
+        self.pipeline_resolution = (width, height)
 
     def load_mtf_kernel(
         self,
@@ -1152,7 +1183,7 @@ class GpuProcessor:
         self._dispatch(
             pipeline=self.pipeline_histogram_1,
             bind_group=self._bind_histogram_pass1(source_tex),
-            size=(self.width, self.height),
+            size=self.pipeline_resolution,
             wg_size=(16, 16),
             encoder=encoder,
         )
@@ -1277,7 +1308,7 @@ class GpuProcessor:
                     },
                 ],
             ),
-            (self.width, self.height),
+            self.pipeline_resolution,
             encoder=encoder,
         )
 
@@ -1300,7 +1331,7 @@ class GpuProcessor:
                     },
                 ],
             ),
-            (self.width, self.height),
+            self.pipeline_resolution,
             encoder=encoder,
         )
 
@@ -1311,35 +1342,110 @@ class GpuProcessor:
         src_w, src_h, _ = src_texture.size
         dst_w, dst_h, _ = dst_texture.size
 
-        # 1. Calculate aspect ratios
-        src_aspect = src_w / src_h
+        # 1. Determine the overall canvas/container bounds shaping the destination
+        # viewport aspect ratio
+        has_canvas = (
+            getattr(self, "canvas_resolution", None) is not None
+            and self.canvas_resolution[0] > 0
+        )
+
+        if has_canvas:
+            content_w, content_h = self.canvas_resolution
+        elif (
+            getattr(self, "output_resolution", None) is not None
+            and self.output_resolution[0] > 0
+        ):
+            content_w, content_h = self.output_resolution
+        else:
+            content_w, content_h = getattr(self, "pipeline_resolution", (src_w, src_h))
+
+        src_aspect = content_w / content_h
         dst_aspect = dst_w / dst_h
 
-        # 2. Determine scaling factors and offsets to fit aspect ratio
+        # 2. Calculate the maximum letterboxed/pillarboxed space available for the
+        # canvas container
         if src_aspect > dst_aspect:
-            # Source is wider than destination (Letterbox - bars on top/bottom)
-            render_w = dst_w
-            render_h = dst_w / src_aspect
-            offset_x = 0.0
-            offset_y = (dst_h - render_h) / 2.0
+            canvas_render_w = dst_w
+            canvas_render_h = dst_w / src_aspect
+            canvas_offset_x = 0.0
+            canvas_offset_y = (dst_h - canvas_render_h) / 2.0
         else:
-            # Source is taller than destination (Pillarbox - bars on sides)
-            render_w = dst_h * src_aspect
-            render_h = dst_h
-            offset_x = (dst_w - render_w) / 2.0
-            offset_y = 0.0
+            canvas_render_w = dst_h * src_aspect
+            canvas_render_h = dst_h
+            canvas_offset_x = (dst_w - canvas_render_w) / 2.0
+            canvas_offset_y = 0.0
 
-        # 3. Calculate inverse scale to map from destination pixel space to 0.0-1.0 UV
-        # space
+        # Define canvas bounds in destination pixel space
+        if has_canvas:
+            canvas_min_x = canvas_offset_x
+            canvas_min_y = canvas_offset_y
+            canvas_max_x = canvas_offset_x + canvas_render_w
+            canvas_max_y = canvas_offset_y + canvas_render_h
+        else:
+            canvas_min_x, canvas_min_y, canvas_max_x, canvas_max_y = (
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            )
+
+        # Normalize canvas color from 0-255 integers to 0.0-1.0 floats
+        raw_color = (
+            self.canvas_color if self.canvas_color is not None else (255, 255, 255)
+        )
+        # Check if color is already normalized floats or 0-255 ints
+        c_r = raw_color[0] / 255.0 if max(raw_color) > 1.0 else float(raw_color[0])
+        c_g = raw_color[1] / 255.0 if max(raw_color) > 1.0 else float(raw_color[1])
+        c_b = raw_color[2] / 255.0 if max(raw_color) > 1.0 else float(raw_color[2])
+
+        # 3. Calculate the actual rendering size of the physical texture image.
+        if (
+            getattr(self, "canvas_resolution", None) is not None
+            and getattr(self, "output_resolution", None) is not None
+        ):
+            target_w, target_h = self.output_resolution
+
+            scale_factor_x = target_w / content_w
+            scale_factor_y = target_h / content_h
+
+            render_w = canvas_render_w * scale_factor_x
+            render_h = canvas_render_h * scale_factor_y
+
+            offset_x = canvas_offset_x + (canvas_render_w - render_w) / 2.0
+            offset_y = canvas_offset_y + (canvas_render_h - render_h) / 2.0
+        else:
+            render_w = canvas_render_w
+            render_h = canvas_render_h
+            offset_x = canvas_offset_x
+            offset_y = canvas_offset_y
+
+        # 4. Generate inverse scales to map destination pixels -> 0.0 - 1.0 UV space
         scale_x = 1.0 / render_w
         scale_y = 1.0 / render_h
 
-        transform_data = struct.pack("ffff", scale_x, scale_y, offset_x, offset_y)
+        # Updated struct layout to 12 floats ("ffffffffffff" = 48 bytes total)
+        # Includes scale, offsets, canvas bounding boxes, and canvas RGB channels
+        transform_data = struct.pack(
+            "ffffffffffff",
+            scale_x,
+            scale_y,
+            offset_x,
+            offset_y,
+            canvas_min_x,
+            canvas_min_y,
+            canvas_max_x,
+            canvas_max_y,
+            c_r,
+            c_g,
+            c_b,
+            0.0,  # Explicit padding float to keep struct 16-byte aligned in WGSL
+        )
+
         uniform_buffer = self.device.create_buffer_with_data(
             data=transform_data, usage=wgpu.BufferUsage.UNIFORM
         )
 
-        # Update Bind Group to include the sampler and new uniform layout
+        # 5. Build Bind Group
         bind_group = self.device.create_bind_group(
             layout=self.pipeline_copy_to_int.get_bind_group_layout(0),
             entries=[
@@ -1395,7 +1501,6 @@ class GpuProcessor:
         flip: bool = False,
         cam: str | None = None,
         lens: str | None = None,
-        half_res: bool = False,
         canvas_mode: CANVAS_MODES = "No",
         canvas_scale: float = 1.0,
         canvas_ratio: float = 1.0,
@@ -1433,6 +1538,9 @@ class GpuProcessor:
             cache,
             chroma_nr,
             max_scale,
+            canvas_mode,
+            canvas_scale,
+            canvas_ratio,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
@@ -1456,7 +1564,7 @@ class GpuProcessor:
         )
 
         # pixels per mm
-        scale = max(self.width, self.height) / max(frame_width, frame_height)
+        scale = max(self.pipeline_resolution) / max(frame_width, frame_height)
 
         ping_pong_tex = [self.tex_a, self.tex_b]
         idx = 1
@@ -1466,7 +1574,7 @@ class GpuProcessor:
         self._dispatch(
             self.pipeline_lut_2d,
             self._bind_lut_2d(self.tex_input, ping_pong_tex[1 - idx]),
-            (self.width, self.height),
+            self.pipeline_resolution,
             encoder=encoder,
         )
         idx = 1 - idx
@@ -1488,7 +1596,7 @@ class GpuProcessor:
                     self.buffer_halation_kernel,
                     self.buffer_halation_kernel_size,
                 ),
-                (self.width, self.height),
+                self.pipeline_resolution,
                 encoder=encoder,
             )
             idx = 1 - idx
@@ -1496,7 +1604,7 @@ class GpuProcessor:
         self._dispatch(
             self.pipeline_lut_1d,
             self._bind_lut_1d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
-            (self.width, self.height),
+            self.pipeline_resolution,
             encoder=encoder,
         )
         idx = 1 - idx
@@ -1514,7 +1622,7 @@ class GpuProcessor:
                     self.buffer_mtf_kernel,
                     self.buffer_mtf_kernel_size,
                 ),
-                (self.width, self.height),
+                self.pipeline_resolution,
                 encoder=encoder,
             )
             idx = 1 - idx
@@ -1532,7 +1640,7 @@ class GpuProcessor:
             self._dispatch(
                 noise_pipeline,
                 self._bind_noise(self.tex_temp, noise_pipeline),
-                (self.width, self.height),
+                self.pipeline_resolution,
                 encoder=encoder,
             )
 
@@ -1541,7 +1649,7 @@ class GpuProcessor:
                 self._bind_grain(
                     ping_pong_tex[idx], ping_pong_tex[1 - idx], self.tex_temp
                 ),
-                (self.width, self.height),
+                self.pipeline_resolution,
                 encoder=encoder,
             )
             idx = 1 - idx
@@ -1560,7 +1668,7 @@ class GpuProcessor:
         self._dispatch(
             self.pipeline_lut_3d,
             self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
-            (self.width, self.height),
+            self.pipeline_resolution,
             encoder=encoder,
         )
         idx = 1 - idx

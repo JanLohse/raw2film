@@ -178,7 +178,6 @@ def mtf_kernel(
 
     if sharpening_strength:
         sigma = sharpening_sigma * scale / 50
-        print(sigma)
         unsharp_kernel = ndimage.gaussian_filter(kernel, sigma=sigma)
 
         kernel += sharpening_strength * (kernel - unsharp_kernel)
@@ -289,7 +288,7 @@ def halation(
 
 
 def get_canvas_data(
-    image: np.ndarray,
+    shape,
     canvas_mode: CANVAS_MODES,
     canvas_scale: float = 1.0,
     canvas_ratio: float = 1.0,
@@ -302,37 +301,36 @@ def get_canvas_data(
         canvas_color = (128, 128, 128)
 
     if "Proportional" in canvas_mode:
-        canvas_ratio = image.shape[1] / image.shape[0]
-        img_ratio = image.shape[1] / image.shape[0]
+        canvas_ratio = shape[1] / shape[0]
+        img_ratio = shape[1] / shape[0]
         if img_ratio > canvas_ratio:
             output_resolution = (
-                int(image.shape[1] / canvas_ratio * canvas_scale),
-                int(image.shape[1] * canvas_scale),
+                int(shape[1] / canvas_ratio * canvas_scale),
+                int(shape[1] * canvas_scale),
             )
         else:
             output_resolution = (
-                int(image.shape[0] * canvas_scale),
-                int(image.shape[0] * canvas_ratio * canvas_scale),
+                int(shape[0] * canvas_scale),
+                int(shape[0] * canvas_ratio * canvas_scale),
             )
-        offset = np.subtract(output_resolution, image.shape[:2]) // 2
     elif "Fixed" in canvas_mode:
-        img_ratio = image.shape[1] / image.shape[0]
+        img_ratio = shape[1] / shape[0]
         if img_ratio > canvas_ratio:
             output_resolution = (
-                int(image.shape[1] / canvas_ratio * canvas_scale),
-                int(image.shape[1] * canvas_scale),
+                int(shape[1] / canvas_ratio * canvas_scale),
+                int(shape[1] * canvas_scale),
             )
         else:
             output_resolution = (
-                int(image.shape[0] * canvas_scale),
-                int(image.shape[0] * canvas_ratio * canvas_scale),
+                int(shape[0] * canvas_scale),
+                int(shape[0] * canvas_ratio * canvas_scale),
             )
-        offset = np.subtract(output_resolution, image.shape[:2]) // 2
     elif "Uniform" in canvas_mode:
-        side_length = max(image.shape[:2])
+        side_length = max(shape[:2])
         border_size = int(side_length * (canvas_scale - 1))
-        output_resolution = (image.shape[0] + border_size, image.shape[1] + border_size)
-        offset = np.subtract(output_resolution, image.shape[:2]) // 2
+        output_resolution = (shape[0] + border_size, shape[1] + border_size)
+
+    offset = np.subtract(output_resolution, shape[:2]) // 2
 
     return output_resolution, canvas_color, offset
 
@@ -348,16 +346,8 @@ def add_canvas(
         return image
 
     output_resolution, canvas_color, offset = get_canvas_data(
-        image, canvas_mode, canvas_scale, canvas_ratio
+        image.shape, canvas_mode, canvas_scale, canvas_ratio
     )
-
-    output_resolution, canvas_color, offset = get_canvas_data(
-        image, canvas_mode, canvas_scale, canvas_ratio
-    )
-
-    print("image.shape =", image.shape)
-    print("output_resolution =", output_resolution)
-    print("offset =", offset)
 
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
     canvas[
