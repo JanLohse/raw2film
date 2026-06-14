@@ -34,7 +34,9 @@ sudo apt install exiftool
 ```
 
 ### Windows
-Download the latest `.exe` from the [releases](../../releases) page and run it.
+Download the latest `.exe` from the [releases](../../releases) page and run it. (If ExifTool is not
+found despite being installed and put on `PATH`, try placing the `.exe` of Raw2Film and
+ExifTool in the same folder.)
 
 Alternatively, install via Python (see [below](#python-package)).
 

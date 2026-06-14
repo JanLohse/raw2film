@@ -19,19 +19,20 @@ classifiers = [
 dependencies = [
     "imageio>=2.37.3",
     "lensfunpy>=1.18.0",
-    "numpy>=2.4.4",
+    "numpy>=2.4.6",
     "opencv-python>=4.13.0.92",
     "pillow>=12.2.0",
     "pyexiftool>=0.5.6",
-    "rawpy>=0.26.1",
+    "pyqt6>=6.11.0",
+    "rawpy>=0.27.0",
     "scipy>=1.17.1",
-    "spectral-film-lut>=0.5.6",
+    "spectral-film-lut>=0.6.2",
     "wgpu>=0.31.0",
 ]
 
 [dependency-groups]
 dev = [
-    "mkdocstrings-python>=2.0.3",
+    "mkdocstrings-python>=2.0.4",
     "pre-commit>=4.6.0",
     "pyinstaller>=6.21.0",
     "ruff>=0.15.17",
