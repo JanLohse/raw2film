@@ -42,8 +42,8 @@ Alternatively, install via Python (see [below](#python-package)).
 Download the `.AppImage` from the [releases](../../releases) page and make it executable:
 
 ```bash
-chmod +x spectral_film_lut-{version}.AppImage
-./spectral_film_lut.AppImage
+chmod +x raw2film-{version}.AppImage
+./raw2film-{version}.AppImage
 ```
 
 Alternatively, install via Python (see [below](#python-package)).
@@ -59,13 +59,13 @@ Install the application using your preferred Python package manager. We show it 
 default pip. Others can be found in the full documentation.
 
 ```bash
-pip install git+https://github.com/JanLohse/spectral_film_lut
+pip install git+https://github.com/JanLohse/raw2film
 ```
 
 Then just run with:
 
 ```bash
-spectral_film_lut
+raw2film
 ```
 
 ## Usage
