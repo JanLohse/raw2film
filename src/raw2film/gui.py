@@ -93,11 +93,13 @@ class MultiWorker(QObject):
         self.cancelled = False
 
     def run_tasks(self, func, tasks, **kwargs):
+        total = len(tasks)
+
         for i, task in enumerate(tasks, start=1):
             if self.cancelled:
                 break
 
-            result = func(*task, **kwargs)
+            result = func(*task, current_idx=i, total_count=total, **kwargs)
 
             self.progress.emit(result, i)
 
@@ -528,7 +530,6 @@ class MainWindow(QMainWindow):
             "rotation": 0,
             "exp_kelvin": 6000,
             "profile": "Default",
-            "lens_correction": True,
             "canvas_mode": "No",
             "canvas_scale": 1.0,
             "canvas_ratio": 0.8,
@@ -588,8 +589,6 @@ class MainWindow(QMainWindow):
         image_correction_group.add_option(
             lens_widget,
             "Lens correction",
-            self.dflt_img_params["lens_correction"],
-            self.lens_correction.setChecked,
             tool_tip="Correct lens distortion and vignetting.",
         )
 
@@ -2219,25 +2218,27 @@ class MainWindow(QMainWindow):
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
-
-        if self.gpu_processing.isChecked():
-            self.gpu_processor.process(
-                src,
-                icc_transform=self.icc_transform,
-                dst_texture=self.image_context.get_current_texture(),
-                histogram_texture=self.histogram_context.get_current_texture(),
-                **processing_args,
-            )
-        else:
-            image = self.cpu_processor.process(
-                src,
-                icc_transform=self.icc_transform,
-                **processing_args,
-            )
-            histogram = generate_histogram(image, height=80)
-            self.histogram_context.set_bitmap(histogram)
-            img_height, img_width, _ = image.shape
-            self.numpy_to_canvas(image, full_height, full_width)
+        try:
+            if self.context_mode == "wgpu":
+                self.gpu_processor.process(
+                    src,
+                    icc_transform=self.icc_transform,
+                    dst_texture=self.image_context.get_current_texture(),
+                    histogram_texture=self.histogram_context.get_current_texture(),
+                    **processing_args,
+                )
+            else:
+                image = self.cpu_processor.process(
+                    src,
+                    icc_transform=self.icc_transform,
+                    **processing_args,
+                )
+                histogram = generate_histogram(image, height=80)
+                self.histogram_context.set_bitmap(histogram)
+                img_height, img_width, _ = image.shape
+                self.numpy_to_canvas(image, full_height, full_width)
+        except AttributeError:
+            self.update_preview(src)
 
         self.histogram.request_draw()
         self.image.request_draw()
@@ -2250,14 +2251,16 @@ class MainWindow(QMainWindow):
 
     def save_image(
         self,
-        src,
-        filename,
-        add_year=False,
-        add_date=False,
-        move_raw=0,
-        quality=100,
-        close=False,
-        resolution=None,
+        src: str,
+        filename: str,
+        add_year: bool = False,
+        add_date: bool = False,
+        move_raw: int = 0,
+        quality: int = 100,
+        close: bool = False,
+        resolution: int | None = None,
+        current_idx: int | None = None,
+        total_count: int | None = None,
         **kwargs,
     ):
         start = time.time()
@@ -2281,7 +2284,12 @@ class MainWindow(QMainWindow):
                 processing_args["print_film"]
             ]
         metadata = load_metadata(src)
-        if processing_args["lens_correction"]:
+        if (
+            "lens_correction" in processing_args and processing_args["lens_correction"]
+        ) or (
+            "lens_correction" not in processing_args
+            and self.auto_lens_correct.isChecked()
+        ):
             if "cam" not in processing_args or "lens" not in processing_args:
                 cam, lens = utils.find_data(metadata, self.lensfunpy_db)
                 if cam is not None or lens is not None:
@@ -2329,8 +2337,13 @@ class MainWindow(QMainWindow):
         add_metadata(path + filename, metadata, exp_comp=processing_args["exp_comp"])
         if close:
             self.image_bar.close_single_image(src)
-        print(f"exported {time.time() - start:.4f}s")
-        return f"exported {filename}"
+
+        print(f"exported {filename} in {time.time() - start:.2f}s")
+
+        if current_idx and total_count:
+            return f"exported {filename} ({current_idx}/{total_count})"
+        else:
+            return f"exported {filename}"
 
     def save_image_dialog(self):
         src = self.image_bar.current_image()
@@ -2368,7 +2381,9 @@ class MainWindow(QMainWindow):
 
         self.worker.moveToThread(self.thread)
 
-        self.progress_dialog.canceled.connect(self.worker.cancel)
+        self.progress_dialog.canceled.connect(
+            self.worker.cancel, Qt.ConnectionType.DirectConnection
+        )
 
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.tasks_finished)

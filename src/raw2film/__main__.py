@@ -1,4 +1,5 @@
 import ctypes
+import os
 import sys
 
 from PyQt6.QtCore import QSize
@@ -6,6 +7,8 @@ from PyQt6.QtGui import QIcon
 from spectral_film_lut.splash_screen import launch_splash_screen
 
 from raw2film import R2F_BASE_DIR, __version__
+
+os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 
 
 def run(exit_immediately: bool = False):
