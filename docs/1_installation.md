@@ -21,6 +21,11 @@ sudo apt install exiftool
 
     Alternatively, install via Python (see [below](#python-package)).
 
+    !!! bug "ExifTool not found"
+        If ExifTool is not
+        found despite being installed and put on `PATH`, try placing the `.exe` of Raw2Film and
+        ExifTool in the same folder.
+
 === "Linux"
     Download the `.AppImage` from
     the [releases](https://github.com/JanLohse/raw2film/releases) page and make it
@@ -34,9 +39,9 @@ sudo apt install exiftool
     Alternatively, install via Python (see [below](#python-package)).
 
 === "macOS"
-There is currently no native binary available for macOS.
-Install and run the application using a Python-based method.
-See the [Python Package](#python-package) section below.
+    There is currently no native binary available for macOS.
+    Install and run the application using a Python-based method.
+    See the [Python Package](#python-package) section below.
 
 ## Python Package
 
