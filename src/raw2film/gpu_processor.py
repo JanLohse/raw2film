@@ -285,7 +285,7 @@ class GpuProcessor:
         h, w = image.shape[:2]
 
         if canvas_resolution is None:
-            canvas_resolution = (h, w)
+            canvas_resolution = (w, h)
 
         if (
             self.tex_input is None
