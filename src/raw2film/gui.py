@@ -2218,25 +2218,27 @@ class MainWindow(QMainWindow):
             processing_args["sharpness"] = False
             processing_args["grain"] = False
             processing_args["halation"] = False
-
-        if self.gpu_processing.isChecked():
-            self.gpu_processor.process(
-                src,
-                icc_transform=self.icc_transform,
-                dst_texture=self.image_context.get_current_texture(),
-                histogram_texture=self.histogram_context.get_current_texture(),
-                **processing_args,
-            )
-        else:
-            image = self.cpu_processor.process(
-                src,
-                icc_transform=self.icc_transform,
-                **processing_args,
-            )
-            histogram = generate_histogram(image, height=80)
-            self.histogram_context.set_bitmap(histogram)
-            img_height, img_width, _ = image.shape
-            self.numpy_to_canvas(image, full_height, full_width)
+        try:
+            if self.context_mode == "wgpu":
+                self.gpu_processor.process(
+                    src,
+                    icc_transform=self.icc_transform,
+                    dst_texture=self.image_context.get_current_texture(),
+                    histogram_texture=self.histogram_context.get_current_texture(),
+                    **processing_args,
+                )
+            else:
+                image = self.cpu_processor.process(
+                    src,
+                    icc_transform=self.icc_transform,
+                    **processing_args,
+                )
+                histogram = generate_histogram(image, height=80)
+                self.histogram_context.set_bitmap(histogram)
+                img_height, img_width, _ = image.shape
+                self.numpy_to_canvas(image, full_height, full_width)
+        except AttributeError:
+            self.update_preview(src)
 
         self.histogram.request_draw()
         self.image.request_draw()
