@@ -1,4 +1,5 @@
 import ctypes
+import multiprocessing
 import os
 import sys
 
@@ -31,4 +32,5 @@ def run(exit_immediately: bool = False):
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     run()

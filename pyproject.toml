@@ -33,6 +33,7 @@ dependencies = [
 dev = [
     "mkdocstrings-python>=2.0.3",
     "pre-commit>=4.6.0",
+    "pyinstaller>=6.21.0",
     "ruff>=0.15.17",
     "zensical>=0.0.45",
 ]

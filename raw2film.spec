@@ -25,7 +25,7 @@ datas += resource_datas
 # ---- raw2film resources ----
 resource_datas = collect_data_files(
     "raw2film",
-    includes=["resources/*", "resources/**/*"]
+    includes=["resources/*", "resources/**/*", "shaders/*"]
 )
 datas += resource_datas
 
