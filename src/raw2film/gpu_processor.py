@@ -811,9 +811,9 @@ class GpuProcessor:
         """Create highlight burn parameters and upload them to the GPU."""
         d_ref = negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0]
 
-        scale_factor = math.ceil(min(self.height, self.width) / burn_scale)
-        lowres_w = max(1, self.width // scale_factor)
-        lowres_h = max(1, self.height // scale_factor)
+        scale_factor = math.ceil(min(self.pipeline_resolution) / burn_scale)
+        lowres_w = max(1, self.pipeline_resolution[0] // scale_factor)
+        lowres_h = max(1, self.pipeline_resolution[1] // scale_factor)
 
         new_param_dict = {
             "d_ref": d_ref,
