@@ -683,17 +683,66 @@ class GpuProcessor:
             "canvas_scale": canvas_scale,
             "canvas_ratio": canvas_ratio,
         }
-        if new_param_dict == self.image_param_dict:
+        if new_param_dict == getattr(self, "image_param_dict", None):
             return
 
+        # Reuse pure CPU processing logic entirely
+        cpu_payload = self.extract_image_data_cpu(
+            src,
+            cam,
+            lens,
+            lens_correction,
+            frame_width,
+            frame_height,
+            rotation,
+            zoom,
+            rotate_times,
+            flip,
+            resolution,
+            half_size,
+            cache,
+            chroma_nr,
+            max_scale,
+            canvas_mode,
+            canvas_scale,
+            canvas_ratio,
+        )
+
+        # State updates and texture allocation
+        self.prepare_gpu_textures(cpu_payload)
+        self.image_param_dict = new_param_dict
+
+    def extract_image_data_cpu(
+        self,
+        src,
+        cam=None,
+        lens=None,
+        lens_correction=True,
+        frame_width=36,
+        frame_height=24,
+        rotation=0.0,
+        zoom=1.0,
+        rotate_times=0,
+        flip=False,
+        resolution=None,
+        half_size=True,
+        cache=True,
+        chroma_nr=0,
+        max_scale=400.0,
+        canvas_mode="No",
+        canvas_scale=1.0,
+        canvas_ratio=1.0,
+        **kwargs,
+    ):
+        """PHASE 1: Pure CPU Workload. Modifies NO instance states."""
         if not lens_correction:
             cam, lens = None, None
 
-        if cache:
-            image = self.load_raw_image_cached(src, cam, lens, half_size)
-        else:
-            image = self.load_raw_image(src, cam, lens, half_size)
-
+        image = (
+            self.load_raw_image_cached(src, cam, lens, half_size)
+            if cache
+            else self.load_raw_image(src, cam, lens, half_size)
+        )
         image = crop_rotate_zoom(
             image, frame_width, frame_height, rotation, zoom, rotate_times, flip
         )
@@ -705,41 +754,40 @@ class GpuProcessor:
             resolution = image.shape[:2]
 
         scale_factor = 1.0
-
         if resolution is not None:
             scale = max(resolution) / max(frame_width, frame_height)
-
             if max_scale is not None and scale > max_scale:
                 scale_factor = max_scale / scale
                 resolution = [round(x * scale_factor) for x in resolution]
-
             image = resolution_scaling(image, resolution)
 
-        self.output_resolution = tuple(round(x / scale_factor) for x in image.shape[:2])
+        output_res = tuple(round(x / scale_factor) for x in image.shape[:2])
         image = np.dstack((image, np.ones_like(image[..., :1])))
 
         if canvas_mode != "No":
-            self.canvas_resolution, self.canvas_color, _ = get_canvas_data(
-                self.output_resolution,
-                canvas_mode,
-                canvas_scale,
-                canvas_ratio,
+            canvas_res, canvas_color, _ = get_canvas_data(
+                output_res, canvas_mode, canvas_scale, canvas_ratio
             )
-            self.canvas_resolution = (
-                self.canvas_resolution[1],
-                self.canvas_resolution[0],
-            )
+            canvas_res = (canvas_res[1], canvas_res[0])
         else:
-            self.canvas_resolution = None
+            canvas_res = None
 
-        self.output_resolution = (self.output_resolution[1], self.output_resolution[0])
-
-        self._ensure_image_texture(image, self.canvas_resolution)
-
-        self.image_param_dict = new_param_dict
-
+        output_res = (output_res[1], output_res[0])
         height, width = image.shape[:2]
-        self.pipeline_resolution = (width, height)
+
+        return {
+            "image_array": image,
+            "output_resolution": output_res,
+            "canvas_resolution": canvas_res,
+            "pipeline_resolution": (width, height),
+        }
+
+    def prepare_gpu_textures(self, cpu_payload):
+        """PHASE 2: GPU Stateful Allocation & Upload."""
+        self.output_resolution = cpu_payload["output_resolution"]
+        self.canvas_resolution = cpu_payload["canvas_resolution"]
+        self.pipeline_resolution = cpu_payload["pipeline_resolution"]
+        self._ensure_image_texture(cpu_payload["image_array"], self.canvas_resolution)
 
     def load_mtf_kernel(
         self,
@@ -1542,11 +1590,9 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
-        max_scale: float | None = 400.0,
-        **_,
-    ) -> np.ndarray | None:
+        **kwargs,
+    ):
         """Main function to load and process an image."""
-        # Update textures
         self.load_image_texture(
             src,
             cam,
@@ -1562,11 +1608,129 @@ class GpuProcessor:
             half_size,
             cache,
             chroma_nr,
-            max_scale,
+            kwargs.get("max_scale", 400.0),
             canvas_mode,
             canvas_scale,
             canvas_ratio,
         )
+
+        # Capture locals and explicitly exclude internal state and the raw kwargs dict
+        locs = locals()
+        exclude = {
+            "self",
+            "src",
+            "cam",
+            "lens",
+            "lens_correction",
+            "resolution",
+            "rotation",
+            "zoom",
+            "rotate_times",
+            "flip",
+            "canvas_mode",
+            "canvas_scale",
+            "canvas_ratio",
+            "chroma_nr",
+            "half_size",
+            "cache",
+            "locs",
+            "kwargs",  # <-- Explicitly drop 'kwargs'
+        }
+        pipe_args = {k: locs[k] for k in locs if k not in exclude}
+        return self._execute_gpu_pipeline(**pipe_args)
+
+    def process_preloaded(
+        self,
+        cpu_payload: dict,
+        negative_film: FilmSpectral,
+        grain_size: float,
+        grain_sigma: float,
+        dst_texture=None,
+        histogram_texture=None,
+        print_film: FilmSpectral | None = None,
+        exp_comp: float = 0.0,
+        red_light: float = 0.0,
+        green_light: float = 0.0,
+        blue_light: float = 0.0,
+        projector_kelvin: int = 6500,
+        shadow_comp: float = 0.0,
+        sat_adjust: float = 1.0,
+        gamma_func: GAMMA_KEYS = "sRGB",
+        exp_kelvin: int = 6500,
+        tint: float = 0.0,
+        inversion_gamma: float = 4.0,
+        idealized_curve: bool = False,
+        inversion: bool = False,
+        push_pull: float = 0.0,
+        white_balance: bool = False,
+        white_clip: bool = False,
+        icc_transform=None,
+        frame_width: int | float = 36,
+        frame_height: int | float = 24,
+        halation_intensity: float = 1.0,
+        halation: bool = True,
+        halation_size: float = 1.0,
+        halation_green_factor: float = 0.4,
+        sharpness: bool = True,
+        sharpening_strength: float = 0.0,
+        sharpening_sigma: float = 1.0,
+        grain: int = 2,
+        highlight_burn: float = 0.0,
+        burn_scale: float = 50.0,
+        color_masking: float | None = None,
+        **_,
+    ):
+        """Main function to process an image using pre-loaded CPU data."""
+        self.prepare_gpu_textures(cpu_payload)
+
+        # Capture locals and exclude the dictionary captured by **_
+        locs = locals()
+        exclude = {"self", "cpu_payload", "locs", "_"}  # <-- Explicitly drop '_'
+        pipe_args = {k: locs[k] for k in locs if k not in exclude}
+
+        res = self._execute_gpu_pipeline(**pipe_args)
+        return res
+
+    def _execute_gpu_pipeline(
+        self,
+        negative_film,
+        grain_size,
+        grain_sigma,
+        dst_texture,
+        histogram_texture,
+        print_film,
+        exp_comp,
+        red_light,
+        green_light,
+        blue_light,
+        projector_kelvin,
+        shadow_comp,
+        sat_adjust,
+        gamma_func,
+        exp_kelvin,
+        tint,
+        inversion_gamma,
+        idealized_curve,
+        inversion,
+        push_pull,
+        white_balance,
+        white_clip,
+        icc_transform,
+        frame_width,
+        frame_height,
+        halation_intensity,
+        halation,
+        halation_size,
+        halation_green_factor,
+        sharpness,
+        sharpening_strength,
+        sharpening_sigma,
+        grain,
+        highlight_burn,
+        burn_scale,
+        color_masking,
+    ):
+        """Internal shared routine executing the WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve(negative_film, push_pull, color_masking)
         self.load_output_lut(
@@ -1588,14 +1752,13 @@ class GpuProcessor:
             color_masking,
         )
 
-        # pixels per mm
         scale = max(self.pipeline_resolution) / max(frame_width, frame_height)
-
         ping_pong_tex = [self.tex_a, self.tex_b]
         idx = 1
 
         encoder = self.device.create_command_encoder()
 
+        # 2D LUT
         self._dispatch(
             self.pipeline_lut_2d,
             self._bind_lut_2d(self.tex_input, ping_pong_tex[1 - idx]),
@@ -1604,6 +1767,7 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
+        # Halation
         if halation:
             self.load_halation_kernel(
                 scale,
@@ -1612,7 +1776,6 @@ class GpuProcessor:
                 halation_intensity=halation_intensity,
                 bw=negative_film.density_measure == "bw",
             )
-
             self._dispatch(
                 self.pipeline_convolution,
                 self._bind_convolution(
@@ -1626,6 +1789,7 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        # 1D LUT
         self._dispatch(
             self.pipeline_lut_1d,
             self._bind_lut_1d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
@@ -1634,11 +1798,11 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
+        # Sharpness
         if sharpness and negative_film.mtf is not None:
             self.load_mtf_kernel(
                 negative_film, scale, sharpening_strength, sharpening_sigma
             )
-
             self._dispatch(
                 self.pipeline_convolution,
                 self._bind_convolution(
@@ -1652,23 +1816,21 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        # Grain
         if grain and negative_film.rms_density is not None:
             bw_grain = grain == 1
             self.load_grain(
                 negative_film, scale, grain_size / 1000, grain_sigma, bw_grain
             )
-
             noise_pipeline = (
                 self.pipeline_noise if not bw_grain else self.pipeline_noise_bw
             )
-
             self._dispatch(
                 noise_pipeline,
                 self._bind_noise(self.tex_temp, noise_pipeline),
                 self.pipeline_resolution,
                 encoder=encoder,
             )
-
             self._dispatch(
                 self.pipeline_grain,
                 self._bind_grain(
@@ -1679,17 +1841,18 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        # Highlight Burn
         if highlight_burn and (
             print_film is not None
             or negative_film.density_measure in ["status_m", "bw"]
         ):
             self.load_highlight_burn(negative_film, highlight_burn, burn_scale)
-
             self._dispatch_highlight_burn(
                 ping_pong_tex[idx], ping_pong_tex[1 - idx], encoder=encoder
             )
             idx = 1 - idx
 
+        # 3D LUT
         self._dispatch(
             self.pipeline_lut_3d,
             self._bind_lut_3d(ping_pong_tex[idx], ping_pong_tex[1 - idx]),
@@ -1698,46 +1861,29 @@ class GpuProcessor:
         )
         idx = 1 - idx
 
+        # Blit & Readback Target Output Selection
+        binding, dst_size = self._bind_copy_to_dst(
+            ping_pong_tex[idx].texture,
+            dst_texture if dst_texture else self.tex_int_out.texture,
+        )
+        self._dispatch(
+            self.pipeline_copy_to_int,
+            binding,
+            dst_size,
+            wg_size=(16, 16),
+            encoder=encoder,
+        )
+        self.queue.submit([encoder.finish()])
+
         if dst_texture is None:
-            binding, dst_size = self._bind_copy_to_dst(
-                ping_pong_tex[idx].texture, self.tex_int_out.texture
-            )
+            return self.read_texture(self.tex_int_out.texture)[..., 0:3]
 
+        if histogram_texture is not None:
+            self.generate_histogram(ping_pong_tex[idx])
             self._dispatch(
-                self.pipeline_copy_to_int,
-                binding,
-                dst_size,
+                self.pipeline_scale_texture,
+                self._bind_scale_histogram(histogram_texture),
+                histogram_texture.size[:2],
                 wg_size=(16, 16),
-                encoder=encoder,
             )
-
-            self.queue.submit([encoder.finish()])
-            image = self.read_texture(self.tex_int_out.texture)[..., 0:3]
-
-            return image
-        else:
-            binding, dst_size = self._bind_copy_to_dst(
-                ping_pong_tex[idx].texture, dst_texture
-            )
-
-            self._dispatch(
-                self.pipeline_copy_to_int,
-                binding,
-                dst_size,
-                wg_size=(16, 16),
-                encoder=encoder,
-            )
-
-            self.queue.submit([encoder.finish()])
-
-            if histogram_texture is not None:
-                self.generate_histogram(ping_pong_tex[idx])
-
-                self._dispatch(
-                    self.pipeline_scale_texture,
-                    self._bind_scale_histogram(histogram_texture),
-                    histogram_texture.size[:2],
-                    wg_size=(16, 16),
-                )
-
-            return None
+        return None

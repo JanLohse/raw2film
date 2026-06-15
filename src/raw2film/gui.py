@@ -4,7 +4,9 @@ The main gui implementation.
 
 import json
 import os
+import queue
 import shutil
+import threading
 import time
 from functools import lru_cache, partial
 from pathlib import Path
@@ -84,29 +86,106 @@ from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
 
-class MultiWorker(QObject):
+class CpuWorker(QObject):
     progress = pyqtSignal(str, int)
     finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.cancelled = False
+        self._is_canceled = False
 
-    def run_tasks(self, func, tasks, **kwargs):
+    @pyqtSlot()
+    def cancel(self):
+        self._is_canceled = True
+
+    def run_tasks(self, func_execute_cpu, tasks, **kwargs):
+        self._is_canceled = False
         total = len(tasks)
 
-        for i, task in enumerate(tasks, start=1):
-            if self.cancelled:
+        start = time.time()
+
+        for idx, task in enumerate(tasks, 1):
+            if self._is_canceled:
                 break
+            status_msg = func_execute_cpu(
+                task, current_idx=idx, total_count=total, **kwargs
+            )
+            self.progress.emit(status_msg, idx)
 
-            result = func(*task, current_idx=i, total_count=total, **kwargs)
-
-            self.progress.emit(result, i)
+        print(f"total {time.time() - start:.2f}s")
 
         self.finished.emit()
 
+
+class GpuWorker(QObject):
+    progress = pyqtSignal(str, int)
+    finished = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self._is_canceled = False
+        self.payload_queue = None
+
+    @pyqtSlot()
     def cancel(self):
-        self.cancelled = True
+        self._is_canceled = True
+        if self.payload_queue is not None:
+            try:
+                self.payload_queue.put((None, None, None), block=False)
+            except queue.Full:
+                pass
+
+    def run_tasks(self, func_prepare_cpu, func_execute_gpu, tasks, **kwargs):
+        self._is_canceled = False
+        total = len(tasks)
+        self.payload_queue = queue.Queue(maxsize=1)
+        start = time.time()
+
+        # Background Producer (CPU raw decoding)
+        def cpu_producer():
+            for idx, task in enumerate(tasks, 1):
+                if self._is_canceled:
+                    break
+                try:
+                    pipeline_payload = func_prepare_cpu(task[0], **kwargs)
+                    while not self._is_canceled:
+                        try:
+                            self.payload_queue.put(
+                                (idx, task, pipeline_payload), timeout=0.1
+                            )
+                            break
+                        except queue.Full:
+                            continue
+                except Exception:
+                    self.payload_queue.put((idx, task, None))
+            self.payload_queue.put((None, None, None))
+
+        producer_thread = threading.Thread(target=cpu_producer, daemon=True)
+        producer_thread.start()
+
+        # Consumer (GPU loop running on the QThread)
+        while True:
+            if self._is_canceled:
+                break
+
+            idx, task, pipeline_payload = self.payload_queue.get()
+            if idx is None:
+                break
+            if pipeline_payload is None:
+                self.payload_queue.task_done()
+                continue
+
+            status_msg = func_execute_gpu(
+                task, pipeline_payload, current_idx=idx, total_count=total, **kwargs
+            )
+            self.progress.emit(status_msg, idx)
+            self.payload_queue.task_done()
+
+        producer_thread.join(timeout=1.0)
+
+        print(f"total {time.time() - start:.2f}s")
+
+        self.finished.emit()
 
 
 down_arrow_icon = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
@@ -2249,66 +2328,74 @@ class MainWindow(QMainWindow):
 
         return image_params
 
-    def save_image(
-        self,
-        src: str,
-        filename: str,
-        add_year: bool = False,
-        add_date: bool = False,
-        move_raw: int = 0,
-        quality: int = 100,
-        close: bool = False,
-        resolution: int | None = None,
-        current_idx: int | None = None,
-        total_count: int | None = None,
-        **kwargs,
-    ):
-        start = time.time()
+    def _build_processing_params(
+        self, src: str, auto_lens_correct: bool, resolution: int | None
+    ) -> tuple[dict, dict]:
+        """Centralized parameter setup and validation logic."""
         src_short = src.split("/")[-1]
-        if src_short in self.image_params:
-            image_args = self.setup_image_params(src_short)
-        else:
-            image_args = self.dflt_img_params
+
+        # Parameter extraction
+        image_args = (
+            self.setup_image_params(src_short)
+            if src_short in self.image_params
+            else self.dflt_img_params
+        )
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
+
+        # 2. Film stock resolution mappings
         processing_args["negative_film"] = self.filmstocks[
             processing_args["negative_film"]
         ]
-        if resolution is not None:
-            processing_args["resolution"] = (resolution, resolution)
-        if (
-            "print_film" in processing_args
-            and processing_args["print_film"] is not None
-        ):
+        if processing_args.get("print_film") is not None:
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
+
+        if resolution is not None:
+            processing_args["resolution"] = (resolution, resolution)
+
         metadata = load_metadata(src)
-        if (
-            "lens_correction" in processing_args and processing_args["lens_correction"]
-        ) or (
-            "lens_correction" not in processing_args
-            and self.auto_lens_correct.isChecked()
+
+        # 3. Lensfun DB Correction mapping
+        if processing_args.get("lens_correction") or (
+            "lens_correction" not in processing_args and auto_lens_correct
         ):
             if "cam" not in processing_args or "lens" not in processing_args:
                 cam, lens = utils.find_data(metadata, self.lensfunpy_db)
-                if cam is not None or lens is not None:
-                    processing_args["cam"] = cam.maker + " " + cam.model
+                if cam or lens:
+                    processing_args["cam"] = f"{cam.maker} {cam.model}"
                     processing_args["lens"] = lens.model
 
-        processing_args["chroma_nr"] *= 2
+        # 4. Global parameter adjustments (Safe check configuration)
+        processing_args["chroma_nr"] = processing_args.get("chroma_nr", 0) * 2
 
-        if self.gpu_processing.isChecked():
-            processor = self.gpu_processor
-        else:
-            processor = self.cpu_processor
+        return processing_args, metadata
 
-        image = processor.process(
-            src,
-            half_size=False,
-            cache=False,
-            **processing_args,
-        )
+    def _export_processed_image(
+        self,
+        image,
+        task: tuple,
+        metadata: dict,
+        processing_args: dict,
+        start_time: float,
+        current_idx: int | None = None,
+        total_count: int | None = None,
+        **kwargs,
+    ) -> str:
+        """
+        Centralized file system saving, file movement, and metadata restoration logic.
+        """
+        src, filename = task
+        src_short = src.split("/")[-1]
+
+        add_year = kwargs.get("add_year", False)
+        add_date = kwargs.get("add_date", False)
+        move_raw = kwargs.get("move_raw", 0)
+        quality = kwargs.get("quality", 100)
+        close = kwargs.get("close", False)
+
+        # 1. Determine relative folder directory paths
         path = "/".join(filename.split("/")[:-1])
         if path:
             path += "/"
@@ -2316,34 +2403,62 @@ class MainWindow(QMainWindow):
             path += metadata["EXIF:DateTimeOriginal"][:4] + "/"
         if add_date:
             path += metadata["EXIF:DateTimeOriginal"][:10].replace(":", "-") + "/"
-        filename = filename.split("/")[-1]
-        if "." not in filename:
-            filename += ".jpg"
+
+        out_filename = filename.split("/")[-1]
+        if "." not in out_filename:
+            out_filename += ".jpg"
+
+        # 2. Handle Directory generation
         try:
             if not os.path.exists(path):
                 os.makedirs(path)
         except FileExistsError:
             pass
+
         if move_raw:
-            if not os.path.exists(path + "RAW"):
-                os.makedirs(path + "RAW")
+            raw_dir = os.path.join(path, "RAW")
+            if not os.path.exists(raw_dir):
+                os.makedirs(raw_dir)
+            target_raw = os.path.join(raw_dir, src_short)
             if move_raw == 2:
-                os.replace(src, path + "RAW/" + src.split("/")[-1])
-            elif move_raw == 1 and not os.path.isfile(
-                path + "RAW/" + src.split("/")[-1]
-            ):
-                shutil.copy2(src, path + "RAW/" + src.split("/")[-1])
-        imageio.imwrite(path + filename, image, quality=quality, format=".jpg")
-        add_metadata(path + filename, metadata, exp_comp=processing_args["exp_comp"])
+                os.replace(src, target_raw)
+            elif move_raw == 1 and not os.path.isfile(target_raw):
+                shutil.copy2(src, target_raw)
+
+        full_output_path = os.path.join(path, out_filename)
+        imageio.imwrite(full_output_path, image, quality=quality, format=".jpg")
+        add_metadata(full_output_path, metadata, exp_comp=processing_args["exp_comp"])
+
         if close:
-            self.image_bar.close_single_image(src)
+            QTimer.singleShot(0, lambda: self.image_bar.close_single_image(src))
 
-        print(f"exported {filename} in {time.time() - start:.2f}s")
-
+        print(f"exported {out_filename} in {time.time() - start_time:.2f}s")
         if current_idx and total_count:
-            return f"exported {filename} ({current_idx}/{total_count})"
-        else:
-            return f"exported {filename}"
+            return f"exported {out_filename} ({current_idx}/{total_count})"
+        return f"exported {out_filename}"
+
+    def save_image(self, src: str, filename: str, **kwargs):
+        start = time.time()
+        # Fallback to widget check if direct thread state snapshot isn't passed
+        auto_lens_correct = (
+            kwargs.get("_auto_lens_correct_state") or self.auto_lens_correct.isChecked()
+        )
+
+        processing_args, metadata = self._build_processing_params(
+            src, auto_lens_correct, kwargs.get("resolution")
+        )
+
+        processor = (
+            self.gpu_processor
+            if self.gpu_processing.isChecked()
+            else self.cpu_processor
+        )
+
+        image = processor.process(src, half_size=False, cache=False, **processing_args)
+
+        return self._export_processed_image(
+            image, (src, filename), metadata, processing_args, start, **kwargs
+        )
 
     def save_image_dialog(self):
         src = self.image_bar.current_image()
@@ -2360,12 +2475,9 @@ class MainWindow(QMainWindow):
 
     def save_multiple_process(self, folder, filenames, **kwargs):
         self.active = False
+        tasks = [(f, folder + "/" + f.split("/")[-1].split(".")[0]) for f in filenames]
 
-        tasks = [
-            (filename, folder + "/" + filename.split("/")[-1].split(".")[0])
-            for filename in filenames
-        ]
-
+        # 1. Create the dialog
         self.progress_dialog = QProgressDialog(
             "Starting export...", "Cancel", 0, len(tasks), parent=self
         )
@@ -2375,33 +2487,114 @@ class MainWindow(QMainWindow):
         self.progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.setValue(0)
+        self.progress_dialog.show()
+        QApplication.processEvents()
+
+        use_gpu = self.gpu_processing.isChecked()
+        kwargs["_auto_lens_correct_state"] = self.auto_lens_correct.isChecked()
 
         self.thread = QThread()
-        self.worker = MultiWorker()
+
+        if use_gpu:
+            self.worker = GpuWorker()
+            self.thread.started.connect(
+                partial(
+                    self.worker.run_tasks,
+                    self.prepare_cpu_stage,
+                    self.save_image_from_preloaded,
+                    tasks,
+                    **kwargs,
+                )
+            )
+        else:
+            self.worker = CpuWorker()
+            self.thread.started.connect(
+                partial(
+                    self.worker.run_tasks, self.execute_cpu_single_step, tasks, **kwargs
+                )
+            )
 
         self.worker.moveToThread(self.thread)
-
         self.progress_dialog.canceled.connect(
             self.worker.cancel, Qt.ConnectionType.DirectConnection
         )
-
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.tasks_finished)
-
-        self.thread.started.connect(
-            partial(
-                self.worker.run_tasks,
-                self.save_image,
-                tasks,
-                **kwargs,
-            )
-        )
-
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
+
+    def execute_cpu_single_step(
+        self, task: tuple, current_idx: int, total_count: int, **kwargs
+    ):
+        start = time.time()
+        src, filename = task
+        auto_lens_correct = kwargs.get("_auto_lens_correct_state", False)
+
+        processing_args, metadata = self._build_processing_params(
+            src, auto_lens_correct, kwargs.get("resolution")
+        )
+
+        image = self.cpu_processor.process(
+            src, half_size=False, cache=False, **processing_args
+        )
+
+        return self._export_processed_image(
+            image,
+            task,
+            metadata,
+            processing_args,
+            start,
+            current_idx,
+            total_count,
+            **kwargs,
+        )
+
+    def prepare_cpu_stage(self, src: str, **kwargs):
+        auto_lens_correct = kwargs.get("_auto_lens_correct_state", False)
+
+        processing_args, metadata = self._build_processing_params(
+            src, auto_lens_correct, kwargs.get("resolution")
+        )
+        cpu_payload = self.gpu_processor.extract_image_data_cpu(
+            src, half_size=False, cache=False, **processing_args
+        )
+
+        return {
+            "cpu_payload": cpu_payload,
+            "processing_args": processing_args,
+            "metadata": metadata,
+        }
+
+    def save_image_from_preloaded(
+        self,
+        task: tuple,
+        pipeline_payload: dict,
+        current_idx: int | None = None,
+        total_count: int | None = None,
+        **kwargs,
+    ):
+        start = time.time()
+
+        # Unpack preloaded variables
+        cpu_payload = pipeline_payload["cpu_payload"]
+        processing_args = pipeline_payload["processing_args"]
+        metadata = pipeline_payload["metadata"]
+
+        image = self.gpu_processor.process_preloaded(cpu_payload, **processing_args)
+
+        return self._export_processed_image(
+            image,
+            task,
+            metadata,
+            processing_args,
+            start,
+            current_idx,
+            total_count,
+            **kwargs,
+        )
 
     def update_progress(self, message, value):
         self.progress_dialog.setLabelText(message)
