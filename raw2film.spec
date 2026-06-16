@@ -63,6 +63,14 @@ a = Analysis(
     cipher=block_cipher,
 )
 
+filtered_binaries = []
+for name, path, typecode in a.binaries:
+    if "libfontconfig" in name:
+        print(f"--> Forcefully excluding binary: {name} from {path}")
+        continue
+    filtered_binaries.append((name, path, typecode))
+a.binaries = filtered_binaries
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

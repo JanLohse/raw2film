@@ -131,13 +131,18 @@ jobs:
         run: |
           TAG=${{ steps.bump.outputs.new_tag }}
           VERSION=${TAG#v}
+
           echo "TAG=$TAG" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
 
   build-artifacts:
     name: Build Artifacts
-    needs: create-tag
+    needs: [ checks, create-tag ]
+    if: |
+      always() &&
+      needs.checks.result == 'success' &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -145,10 +150,9 @@ jobs:
         os: [ windows-latest, ubuntu-latest ]
 
     steps:
-      - name: Checkout tagged commit
+      - name: Checkout commit
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.create-tag.outputs.TAG }}
           fetch-depth: 0
 
       - name: Install uv
@@ -158,7 +162,7 @@ jobs:
           enable-cache: true
 
       - name: Install PyInstaller and local package
-        run: uv sync
+        run: uv sync --no-dev --group install
 
       - name: Build with PyInstaller
         run: uv run pyinstaller raw2film.spec
@@ -166,38 +170,47 @@ jobs:
       - name: Package binaries
         shell: bash
         run: |
-          VERSION=${{ needs.create-tag.outputs.VERSION }}
+          VERSION=$(uv pip list --format freeze | grep "^zensical=" | cut -d'=' -f3 || echo "dev")
+
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            mv dist/Raw2Film.exe Raw2Film-${VERSION}.exe
+            mv dist/Raw2Film.exe Raw2Film.exe
           else
             chmod +x dist/Raw2Film
-            mv dist/Raw2Film Raw2Film-${VERSION}.AppImage
+            mv dist/Raw2Film Raw2Film.AppImage
           fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: raw2film-${{ matrix.os }}
-          path: Raw2Film-${{ needs.create-tag.outputs.VERSION }}.*
+          path: |
+            Raw2Film.exe
+            Raw2Film.AppImage
 
 
   release:
     name: Create Release
     needs: [ create-tag, build-artifacts ]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download Windows artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
-          name: raw2film-windows-latest
-          path: dist/
+          path: release-artifacts/
+          merge-multiple: true
 
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: raw2film-ubuntu-latest
-          path: dist/
+      - name: Rename artifacts with version
+        run: |
+          VERSION="${{ needs.create-tag.outputs.VERSION }}"
+          cd release-artifacts/
+          if [ -f "Raw2Film.exe" ]; then
+            mv Raw2Film.exe "Raw2Film-${VERSION}.exe"
+          fi
+          if [ -f "Raw2Film.AppImage" ]; then
+            mv Raw2Film.AppImage "Raw2Film-${VERSION}.AppImage"
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -205,14 +218,14 @@ jobs:
           tag_name: ${{ needs.create-tag.outputs.TAG }}
           name: Version ${{ needs.create-tag.outputs.VERSION }}
           files: |
-            dist/Raw2Film-${{ needs.create-tag.outputs.VERSION }}.exe
-            dist/Raw2Film-${{ needs.create-tag.outputs.VERSION }}.AppImage
+            release-artifacts/Raw2Film-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-pypi:
     name: Publish to PyPI
     needs: create-tag
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     environment:
@@ -232,7 +245,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          python-version: "3.14"
+          python-version: 3.14
           enable-cache: true
 
       - name: Build package
