@@ -28,4 +28,4 @@ The film emulation includes:
 - Resolution and micro-contrast matches mtf chart for each film stock.
 - Set the simulated frame size to match resolution, grain intensity, and aspect ratio.
 
-<img width="100%" alt="Spectral Film LUT main ui" src="https://github.com/user-attachments/assets/b7e31c74-d522-42dd-97e8-9374c9efa8ee" />
+<img width="100%" alt="Raw2Film main ui" src="https://github.com/user-attachments/assets/800af908-b790-4c11-9cfc-03d82c0cb7f5" />

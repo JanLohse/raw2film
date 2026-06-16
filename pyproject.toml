@@ -38,6 +38,9 @@ dev = [
     "ruff>=0.15.17",
     "zensical>=0.0.45",
 ]
+install = [
+    "pyinstaller>=6.21.0",
+]
 
 [project.urls]
 Repository = "https://github.com/JanLohse/raw2film"
