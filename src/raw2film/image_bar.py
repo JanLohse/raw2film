@@ -198,18 +198,24 @@ class ImageBar(QScrollArea):
 
         self.setWidget(self.container)
 
-        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(self.highlight_all)
-        QShortcut(QKeySequence("Right"), self).activated.connect(
-            lambda: self.arrow_pressed("right")
+        def create_shortcut(key_sequence: str, func, name: str | None = None):
+            shortcut = QShortcut(QKeySequence(key_sequence), self)
+            if name is not None:
+                shortcut.setObjectName(name)
+            shortcut.activated.connect(func)
+
+        create_shortcut("Ctrl+A", self.highlight_all, "Highlight all images")
+        create_shortcut("Right", lambda: self.arrow_pressed("right"), "Next image")
+        create_shortcut(
+            "Shift+Right",
+            lambda: self.arrow_pressed("right", shift=True),
+            "Extend selection right",
         )
-        QShortcut(QKeySequence("Shift+Right"), self).activated.connect(
-            lambda: self.arrow_pressed("right", shift=True)
-        )
-        QShortcut(QKeySequence("Left"), self).activated.connect(
-            lambda: self.arrow_pressed("left")
-        )
-        QShortcut(QKeySequence("Shift+Left"), self).activated.connect(
-            lambda: self.arrow_pressed("left", shift=True)
+        create_shortcut("Left", lambda: self.arrow_pressed("left"), "Previous image")
+        create_shortcut(
+            "Shift+Left",
+            lambda: self.arrow_pressed("left", shift=True),
+            "Extend selection left",
         )
 
         self.horizontalScrollBar().valueChanged.connect(self.check_visible)
