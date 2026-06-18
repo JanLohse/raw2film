@@ -270,8 +270,11 @@ class MainWindow(QMainWindow):
         self.histogram_context = None
 
         page_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.top_splitter = QSplitter()
         sidebar_widget = QWidget()
+
+        sidebar_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
         self.sidebar_layout = QVBoxLayout(sidebar_widget)
         self.sidebar_layout.addWidget(self.histogram)
         self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -334,6 +337,7 @@ class MainWindow(QMainWindow):
         image_bar_container_layout.setContentsMargins(4, 4, 4, 4)
         image_bar_container_layout.addWidget(self.image_bar)
 
+        self.top_splitter = QSplitter()
         page_splitter.addWidget(self.top_splitter)
         page_splitter.addWidget(image_bar_container)
         page_splitter.setContentsMargins(8, 8, 8, 8)
@@ -342,12 +346,18 @@ class MainWindow(QMainWindow):
         page_splitter.setStretchFactor(0, 1)
         page_splitter.setStretchFactor(1, 0)
 
-        self.top_splitter.addWidget(self.image)
         self.sidebar_layout.addWidget(sidebar_container)
+        self.top_splitter.addWidget(self.image)
         self.top_splitter.addWidget(sidebar_widget)
+
+        # Fixes: Prevent the sidebar (index 1) from collapsing completely to 0 width
+        self.top_splitter.setCollapsible(0, False)
+        self.top_splitter.setCollapsible(1, False)
+
+        # Enforce that only index 0 (image) expands during window resizes
         self.top_splitter.setStretchFactor(0, 1)
         self.top_splitter.setStretchFactor(1, 0)
-        self.top_splitter.setSizes([100, 320])
+        self.top_splitter.setSizes([10000, 370])
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
@@ -1598,26 +1608,43 @@ class MainWindow(QMainWindow):
         if self.context_mode == target_mode:
             return
         self.context_mode = target_mode
+
+        sizes = self.top_splitter.sizes()
+        sidebar_width = sizes[1] if len(sizes) > 1 else 320
+
         old_image = self.image
         old_histogram = self.histogram
-        self.image = QRenderWidget(update_mode="ondemand")
-        self.image.installEventFilter(self)
-        self.top_splitter.insertWidget(0, self.image)
-        self.histogram = QRenderWidget(update_mode="ondemand")
-        self.sidebar_layout.insertWidget(0, self.histogram)
 
         old_image.setParent(None)
         old_image.deleteLater()
+
+        self.image = QRenderWidget(update_mode="ondemand")
+        self.image.installEventFilter(self)
+
+        self.top_splitter.insertWidget(0, self.image)
+
         old_histogram.setParent(None)
         old_histogram.deleteLater()
+
+        self.histogram = QRenderWidget(update_mode="ondemand")
+        self.histogram.setMinimumSize(0, 80)
+        self.histogram.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+
+        histogram_container = QWidget()
+        container_layout = QHBoxLayout(histogram_container)
+        container_layout.setContentsMargins(BORDER_RADIUS - 1, 0, BORDER_RADIUS - 1, 0)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(self.histogram)
+
+        self.sidebar_layout.insertWidget(0, histogram_container)
+
         self.image.setSizePolicy(
             QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         )
-        self.histogram.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
-        )
         self.image.setMinimumSize(QSize(256, 256))
-        self.histogram.setMinimumSize(0, 80)
+
         if self.context_mode == "wgpu":
             self.image_context = self.image.get_wgpu_context()
             self.image_context.configure(
@@ -1643,6 +1670,10 @@ class MainWindow(QMainWindow):
         elif self.context_mode == "bitmap":
             self.image_context = self.image.get_bitmap_context()
             self.histogram_context = self.histogram.get_bitmap_context()
+
+        self.top_splitter.setStretchFactor(0, 1)
+        self.top_splitter.setStretchFactor(1, 0)
+        self.top_splitter.setSizes([10000, sidebar_width])
 
     def test_exiftool(self):
         try:
