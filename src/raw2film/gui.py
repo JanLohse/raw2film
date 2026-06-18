@@ -4,9 +4,7 @@ The main gui implementation.
 
 import json
 import os
-import queue
 import shutil
-import threading
 import time
 from functools import lru_cache, partial
 from pathlib import Path
@@ -22,7 +20,6 @@ from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
     QEvent,
-    QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
     QRegularExpression,
@@ -69,6 +66,7 @@ from spectral_film_lut import BASE_DIR
 from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import (
+    AboutDialog,
     AnimatedButton,
     AnimatedToolButton,
     HoverLineEdit,
@@ -81,115 +79,13 @@ from spectral_film_lut.gui_objects import (
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
 from raw2film.cpu_processor import CpuProcessor
 from raw2film.gpu_processor import GpuProcessor
+from raw2film.gui_objects import AutoShortcutsDialog, CpuWorker, GpuWorker
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
-
-class CpuWorker(QObject):
-    progress = pyqtSignal(str, int)
-    finished = pyqtSignal()
-
-    def __init__(self):
-        super().__init__()
-        self._is_canceled = False
-
-    @pyqtSlot()
-    def cancel(self):
-        self._is_canceled = True
-
-    def run_tasks(self, func_execute_cpu, tasks, **kwargs):
-        self._is_canceled = False
-        total = len(tasks)
-
-        start = time.time()
-
-        for idx, task in enumerate(tasks, 1):
-            if self._is_canceled:
-                break
-            status_msg = func_execute_cpu(
-                task, current_idx=idx, total_count=total, **kwargs
-            )
-            self.progress.emit(status_msg, idx)
-
-        print(f"total {time.time() - start:.2f}s")
-
-        self.finished.emit()
-
-
-class GpuWorker(QObject):
-    progress = pyqtSignal(str, int)
-    finished = pyqtSignal()
-
-    def __init__(self):
-        super().__init__()
-        self._is_canceled = False
-        self.payload_queue = None
-
-    @pyqtSlot()
-    def cancel(self):
-        self._is_canceled = True
-        if self.payload_queue is not None:
-            try:
-                self.payload_queue.put((None, None, None), block=False)
-            except queue.Full:
-                pass
-
-    def run_tasks(self, func_prepare_cpu, func_execute_gpu, tasks, **kwargs):
-        self._is_canceled = False
-        total = len(tasks)
-        self.payload_queue = queue.Queue(maxsize=1)
-        start = time.time()
-
-        # Background Producer (CPU raw decoding)
-        def cpu_producer():
-            for idx, task in enumerate(tasks, 1):
-                if self._is_canceled:
-                    break
-                try:
-                    pipeline_payload = func_prepare_cpu(task[0], **kwargs)
-                    while not self._is_canceled:
-                        try:
-                            self.payload_queue.put(
-                                (idx, task, pipeline_payload), timeout=0.1
-                            )
-                            break
-                        except queue.Full:
-                            continue
-                except Exception:
-                    self.payload_queue.put((idx, task, None))
-            self.payload_queue.put((None, None, None))
-
-        producer_thread = threading.Thread(target=cpu_producer, daemon=True)
-        producer_thread.start()
-
-        # Consumer (GPU loop running on the QThread)
-        while True:
-            if self._is_canceled:
-                break
-
-            idx, task, pipeline_payload = self.payload_queue.get()
-            if idx is None:
-                break
-            if pipeline_payload is None:
-                self.payload_queue.task_done()
-                continue
-
-            status_msg = func_execute_gpu(
-                task, pipeline_payload, current_idx=idx, total_count=total, **kwargs
-            )
-            self.progress.emit(status_msg, idx)
-            self.payload_queue.task_done()
-
-        producer_thread.join(timeout=1.0)
-
-        print(f"total {time.time() - start:.2f}s")
-
-        self.finished.emit()
-
-
-down_arrow_icon = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
-right_arrow_icon = QIcon(f"{BASE_DIR}/resources/right_arrow.svg")
+DOWN_ARROW_ICON = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
+RIGHT_ARROW_ICON = QIcon(f"{BASE_DIR}/resources/right_arrow.svg")
 
 
 class SidebarGroup(QWidget):
@@ -206,7 +102,7 @@ class SidebarGroup(QWidget):
         self.toggle_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.toggle_button.setIcon(right_arrow_icon)
+        self.toggle_button.setIcon(RIGHT_ARROW_ICON)
         self.toggle_button.pressed.connect(self.on_pressed)
         self.toggle_button.setStyleSheet("background: transparent;")
         self.toggle_button.setIconSize(QSize(12, 12))
@@ -237,7 +133,7 @@ class SidebarGroup(QWidget):
 
     def setChecked(self):
         self.toggle_button.setChecked(True)
-        self.toggle_button.setIcon(down_arrow_icon)
+        self.toggle_button.setIcon(DOWN_ARROW_ICON)
         collapsed_height = self.sizeHint().height() - self.content_area.maximumHeight()
         content_height = self.content_layout.sizeHint().height()
         self.setMinimumHeight(collapsed_height + content_height)
@@ -247,7 +143,7 @@ class SidebarGroup(QWidget):
     @pyqtSlot()
     def on_pressed(self):
         checked = self.toggle_button.isChecked()
-        self.toggle_button.setIcon(right_arrow_icon if checked else down_arrow_icon)
+        self.toggle_button.setIcon(RIGHT_ARROW_ICON if checked else DOWN_ARROW_ICON)
         self.toggle_animation.setDirection(
             QAbstractAnimation.Direction.Backward
             if checked
@@ -459,6 +355,7 @@ class MainWindow(QMainWindow):
         view_menu = menu.addMenu("View")
         edit_menu = menu.addMenu("Edit")
         view_menu.setToolTipsVisible(True)
+        help_menu = menu.addMenu("Help")
 
         self.image_selector = QAction("Open images", self)
         self.image_selector.setShortcut(QKeySequence("Ctrl+O"))
@@ -571,6 +468,11 @@ class MainWindow(QMainWindow):
         self.softproof_saturation_intent = QAction("Saturation preserving", self)
         self.softproof_saturation_intent.setCheckable(True)
         softproof_intent_menu.addAction(self.softproof_saturation_intent)
+
+        about_button = help_menu.addAction("About")
+        about_button.triggered.connect(self.show_about)
+        shortcut_button = help_menu.addAction("Shortcuts")
+        shortcut_button.triggered.connect(self.show_shortcuts_dialog)
 
         self.dflt_prf_params = {
             "negative_film": "Kodak Portra 400",
@@ -1391,92 +1293,68 @@ class MainWindow(QMainWindow):
             "darkened without crushing any details.",
         )
 
-        QShortcut(QKeySequence("Up"), self).activated.connect(self.exp_comp.increase)
-        QShortcut(QKeySequence("Down"), self).activated.connect(self.exp_comp.decrease)
-        QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(
-            self.rotation.increase
+        # Helper Method
+        def create_shortcut(key_sequence: str, func, name: str | None = None):
+            shortcut = QShortcut(QKeySequence(key_sequence), self)
+            if name is not None:
+                shortcut.setObjectName(name)
+            shortcut.activated.connect(func)
+
+        # Exposure & Image Manipulation
+        create_shortcut("Up", self.exp_comp.increase, "Increase exposure compensation")
+        create_shortcut(
+            "Down", self.exp_comp.decrease, "Decrease exposure compensation"
         )
-        QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(
-            self.rotation.decrease
+        create_shortcut("Ctrl+Right", self.rotation.increase, "Rotate right")
+        create_shortcut("Ctrl+Left", self.rotation.decrease, "Rotate left")
+        create_shortcut(
+            "Shift+Up", self.highlight_burn.increase, "Increase highlight-burn"
         )
-        QShortcut(QKeySequence("Shift+Up"), self).activated.connect(
-            self.highlight_burn.increase
+        create_shortcut(
+            "Shift+Down", self.highlight_burn.decrease, "Decrease highlight-burn"
         )
-        QShortcut(QKeySequence("Shift+Down"), self).activated.connect(
-            self.highlight_burn.decrease
-        )
-        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.rotate_image)
-        QShortcut(QKeySequence("Ctrl++"), self).activated.connect(
-            lambda: self.zoom.increase(5)
-        )
-        QShortcut(QKeySequence("Ctrl+-"), self).activated.connect(
-            lambda: self.zoom.decrease(5)
-        )
-        QShortcut(QKeySequence("Shift+Ctrl++"), self).activated.connect(
-            self.zoom.increase
-        )
-        QShortcut(QKeySequence("Shift+Ctrl+-"), self).activated.connect(
-            self.zoom.decrease
-        )
-        QShortcut(QKeySequence("1"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(0, self.profile_selector.count() - 1)
+        create_shortcut("Ctrl+R", self.rotate_image, "Rotate image 90°")
+
+        #  Zoom Controls
+        create_shortcut("Ctrl++", lambda: self.zoom.increase(5), "Zoom in")
+        create_shortcut("Ctrl+-", lambda: self.zoom.decrease(5), "Zoom out")
+        create_shortcut("Shift+Ctrl++", self.zoom.increase, "Zoom in (fine)")
+        create_shortcut("Shift+Ctrl+-", self.zoom.decrease, "Zoom out (fine)")
+
+        #  Profile Selection (Dynamic Loop for 1-9)
+        for i in range(1, 10):
+            create_shortcut(
+                str(i),
+                lambda idx=i - 1: self.profile_selector.setCurrentIndex(
+                    min(idx, self.profile_selector.count() - 1)
+                ),
+                f"Select profile slot {i}",
             )
+
+        create_shortcut(
+            "Shift+D",
+            lambda: self.wb_mode.setCurrentText("Daylight"),
+            "Set white balance: Daylight",
         )
-        QShortcut(QKeySequence("2"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(1, self.profile_selector.count() - 1)
-            )
+        create_shortcut(
+            "Shift+C",
+            lambda: self.wb_mode.setCurrentText("Cloudy"),
+            "Set white balance: Cloudy",
         )
-        QShortcut(QKeySequence("3"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(2, self.profile_selector.count() - 1)
-            )
+        create_shortcut(
+            "Shift+S",
+            lambda: self.wb_mode.setCurrentText("Shade"),
+            "Set white balance: Shade",
         )
-        QShortcut(QKeySequence("4"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(3, self.profile_selector.count() - 1)
-            )
+        create_shortcut(
+            "Shift+T",
+            lambda: self.wb_mode.setCurrentText("Tungsten"),
+            "Set white balance: Tungsten",
         )
-        QShortcut(QKeySequence("5"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(4, self.profile_selector.count() - 1)
-            )
-        )
-        QShortcut(QKeySequence("6"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(5, self.profile_selector.count() - 1)
-            )
-        )
-        QShortcut(QKeySequence("7"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(6, self.profile_selector.count() - 1)
-            )
-        )
-        QShortcut(QKeySequence("8"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(7, self.profile_selector.count() - 1)
-            )
-        )
-        QShortcut(QKeySequence("9"), self).activated.connect(
-            lambda: self.profile_selector.setCurrentIndex(
-                min(8, self.profile_selector.count() - 1)
-            )
-        )
-        QShortcut(QKeySequence("Shift+D"), self).activated.connect(
-            lambda: self.wb_mode.setCurrentText("Daylight")
-        )
-        QShortcut(QKeySequence("Shift+C"), self).activated.connect(
-            lambda: self.wb_mode.setCurrentText("Cloudy")
-        )
-        QShortcut(QKeySequence("Shift+S"), self).activated.connect(
-            lambda: self.wb_mode.setCurrentText("Shade")
-        )
-        QShortcut(QKeySequence("Shift+T"), self).activated.connect(
-            lambda: self.wb_mode.setCurrentText("Tungsten")
-        )
-        QShortcut(QKeySequence("Shift+F"), self).activated.connect(
-            lambda: self.wb_mode.setCurrentText("Fluorescent")
+        create_shortcut(
+            "Shift+F",
+            lambda: self.wb_mode.setCurrentText("Fluorescent"),
+            "Set white balance: Fluorescent",
         )
 
         self.negative_selector.currentTextChanged.connect(self.changed_negative)
@@ -3098,3 +2976,45 @@ class MainWindow(QMainWindow):
             "The ICC profiles could not be restored from last session. They have "
             "been reset.",
         )
+
+    def show_about(self):
+        app_links = {
+            "GitHub Page": "https://github.com/JanLohse/raw2film",
+            "PyPI Page": "https://pypi.org/project/raw2film/",
+            "Documentation": "https://janlohse.github.io/raw2film",
+        }
+
+        about_box = AboutDialog(
+            parent=self,
+            app_name="Raw2Film",
+            version=__version__,
+            author="Jan Lohse",
+            year="2026",
+            license_type="MIT License",
+            links=app_links,
+        )
+        about_box.exec()
+
+    def show_shortcuts_dialog(self):
+        """Show the shortcut dialog."""
+        shortcuts_map = {}
+
+        # Grab shortcuts from all QActions
+        for action in self.findChildren(QAction):
+            if not action.shortcut().isEmpty():
+                name = action.text().replace("&", "")
+                shortcuts_map[name] = action.shortcut().toString()
+
+        # Grab shortcuts from all standalone QShortcut objects
+        for shortcut in self.findChildren(QShortcut):
+            if not shortcut.key().isEmpty():
+                desc = f"Shortcut ({shortcut.key().toString()})"
+
+                if shortcut.objectName():
+                    desc = shortcut.objectName()
+
+                shortcuts_map[desc] = shortcut.key().toString()
+
+        # Open the updated dialog
+        dialog = AutoShortcutsDialog(shortcuts_map, self)
+        dialog.exec()
