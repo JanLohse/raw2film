@@ -79,7 +79,7 @@ def find_data(metadata, db):
     return cam, lens
 
 
-def add_metadata(src, metadata, exp_comp):
+def add_metadata(et, src, metadata, exp_comp):
     """Adds metadata to an image file."""
     metadata = {
         key: metadata[key]
@@ -87,8 +87,7 @@ def add_metadata(src, metadata, exp_comp):
         if key.startswith("EXIF") and key[5:] in data.METADATA_KEYS
     }
     metadata["EXIF:ExposureCompensation"] = exp_comp
-    with exiftool.ExifToolHelper() as et:
-        et.set_tags([src], metadata, "-overwrite_original")
+    et.set_tags([src], metadata, "-overwrite_original")
 
 
 def precompute_mix_table(red=None, green=None, blue=None):

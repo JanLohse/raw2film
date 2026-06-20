@@ -1347,13 +1347,14 @@ class GpuProcessor:
         data = readback_buffer.read_mapped()
         readback_buffer.unmap()
 
-        array = np.frombuffer(data, dtype=np.uint8)
+        flat_array = np.frombuffer(data, dtype=np.uint8)
+        padded_grid = flat_array.reshape((height, padded_row_bytes))
 
-        array = array.reshape((height, padded_row_bytes))
+        rgba_view = padded_grid[:, :row_bytes].reshape((height, width, 4))
 
-        array = array.reshape((height, padded_row_bytes // 4, 4))[:, :width, :]
+        rgb_view = rgba_view[:, :, :3]
 
-        return array
+        return rgb_view
 
     def _dispatch_highlight_burn(self, tex_a, tex_b, encoder=None):
         """
@@ -1876,7 +1877,7 @@ class GpuProcessor:
         self.queue.submit([encoder.finish()])
 
         if dst_texture is None:
-            return self.read_texture(self.tex_int_out.texture)[..., 0:3]
+            return self.read_texture(self.tex_int_out.texture)
 
         if histogram_texture is not None:
             self.generate_histogram(ping_pong_tex[idx])

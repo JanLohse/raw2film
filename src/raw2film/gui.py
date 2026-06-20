@@ -10,12 +10,11 @@ from functools import lru_cache, partial
 from pathlib import Path
 
 import exiftool
-import imageio
 import lensfunpy
 import numpy as np
 import PIL.ImageCms
 import wgpu
-from PIL import ImageCms
+from PIL import Image, ImageCms
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -1595,6 +1594,8 @@ class MainWindow(QMainWindow):
 
         self.load_profile_params()
 
+        self.et = exiftool.ExifToolHelper()
+
         QTimer.singleShot(0, self.test_exiftool)
 
     def eventFilter(self, watched, event):
@@ -2335,8 +2336,15 @@ class MainWindow(QMainWindow):
                 shutil.copy2(src, target_raw)
 
         full_output_path = os.path.join(path, out_filename)
-        imageio.imwrite(full_output_path, image, quality=quality, format=".jpg")
-        add_metadata(full_output_path, metadata, exp_comp=processing_args["exp_comp"])
+        start = time.time()
+        img = Image.fromarray(image)
+        img.save(full_output_path, "JPEG", quality=quality)
+        print(f"PIL {time.time() - start}")
+        start = time.time()
+        add_metadata(
+            self.et, full_output_path, metadata, exp_comp=processing_args["exp_comp"]
+        )
+        print(f"metadata {time.time() - start}")
 
         if close:
             QTimer.singleShot(0, lambda: self.image_bar.close_single_image(src))
@@ -3049,3 +3057,8 @@ class MainWindow(QMainWindow):
         # Open the updated dialog
         dialog = AutoShortcutsDialog(shortcuts_map, self)
         dialog.exec()
+
+    def closeEvent(self, event):
+        self.quick_save()
+        self.et.terminate()
+        super().closeEvent(event)
