@@ -1594,9 +1594,9 @@ class MainWindow(QMainWindow):
 
         self.load_profile_params()
 
-        self.et = exiftool.ExifToolHelper()
+        self.et = None
 
-        QTimer.singleShot(0, self.test_exiftool)
+        QTimer.singleShot(0, self.setup_exiftool)
 
     def eventFilter(self, watched, event):
         if watched == self.image and event.type() == QEvent.Type.Resize:
@@ -1676,9 +1676,9 @@ class MainWindow(QMainWindow):
         self.top_splitter.setStretchFactor(1, 0)
         self.top_splitter.setSizes([10000, sidebar_width])
 
-    def test_exiftool(self):
+    def setup_exiftool(self):
         try:
-            exiftool.ExifToolHelper()
+            self.et = exiftool.ExifToolHelper()
         except FileNotFoundError:
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Icon.Critical)
@@ -3060,5 +3060,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.quick_save()
-        self.et.terminate()
+        if self.et is not None:
+            self.et.terminate()
         super().closeEvent(event)
