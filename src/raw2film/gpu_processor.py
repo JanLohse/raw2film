@@ -350,24 +350,25 @@ class GpuProcessor:
 
     def _ensure_color_masking_matrix(self, matrix: np.ndarray):
         """Set up color masking matrix as uniform buffer."""
-        # Matrix should be transposed like in CPU pipeline
-        matrix_t = matrix.T.astype(np.float32)
+        # Keep the CPU row-vector convention: the shader applies the matrix
+        # directly via per-channel dot products, so no extra transpose here.
+        matrix_f32 = matrix.astype(np.float32, copy=False)
 
         # Pack as 3 rows of 4 floats each (16 bytes per row for alignment)
         # Structure: f32, f32, f32, u32 (padding) per row
         matrix_data = struct.pack(
             "fffIfffIfffI",
-            matrix_t[0, 0],
-            matrix_t[0, 1],
-            matrix_t[0, 2],
+            matrix_f32[0, 0],
+            matrix_f32[0, 1],
+            matrix_f32[0, 2],
             0,
-            matrix_t[1, 0],
-            matrix_t[1, 1],
-            matrix_t[1, 2],
+            matrix_f32[1, 0],
+            matrix_f32[1, 1],
+            matrix_f32[1, 2],
             0,
-            matrix_t[2, 0],
-            matrix_t[2, 1],
-            matrix_t[2, 2],
+            matrix_f32[2, 0],
+            matrix_f32[2, 1],
+            matrix_f32[2, 2],
             0,
         )
 
