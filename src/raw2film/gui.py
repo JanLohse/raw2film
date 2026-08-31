@@ -1695,10 +1695,12 @@ class MainWindow(QMainWindow):
             src_short = src.split("/")[-1]
             if src_short in self.image_params:
                 self.image_params.pop(src_short)
+        self.sync_thumbnail_settings()
         self.load_image(self.image_bar.selected_label.image_path)
 
     def reset_all_images(self):
         self.image_params = {}
+        self.sync_thumbnail_settings()
         if self.image_bar.selected_label is not None:
             self.load_image(self.image_bar.selected_label.image_path)
 
@@ -1733,6 +1735,7 @@ class MainWindow(QMainWindow):
             for image in self.image_bar.get_highlighted():
                 if image in self.image_params:
                     self.image_params.pop(image.split("/")[-1])
+        self.sync_thumbnail_settings()
         self.load_image(self.image_bar.selected_label.image_path)
 
     def delete_highlighted(self):
@@ -1842,6 +1845,7 @@ class MainWindow(QMainWindow):
             ):
                 self.load_settings_directory(folder)
             self.image_bar.load_images(filenames)
+            self.sync_thumbnail_settings()
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select image folder", "")
@@ -1853,6 +1857,7 @@ class MainWindow(QMainWindow):
                 if filename.lower().endswith(data.EXTENSION_LIST)
             ]
             self.image_bar.load_images(filenames)
+            self.sync_thumbnail_settings()
 
     def load_image(self, src, **kwargs):
         self.start_worker(self.load_image_process, src=src)
@@ -1944,6 +1949,10 @@ class MainWindow(QMainWindow):
         self.save_settings_system()
         self.save_timer = time.time()
 
+    def sync_thumbnail_settings(self):
+        if hasattr(self, "image_bar"):
+            self.image_bar.set_settings_images(self.image_params.keys())
+
     def setting_changed(self, value, key):
         if self.loading:
             return
@@ -1975,6 +1984,7 @@ class MainWindow(QMainWindow):
             self.image_params[src_short][key] = value
         if key == "exp_kelvin":
             self.update_wb_mode(value)
+        self.sync_thumbnail_settings()
         self.parameter_changed()
 
     def update_wb_mode(self, value):
@@ -2033,6 +2043,8 @@ class MainWindow(QMainWindow):
 
         if "profile" in image_params:
             self.profile_selector.setCurrentText(image_params["profile"])
+
+        self.sync_thumbnail_settings()
 
     def load_profile_params(self, profile=None):
         if profile is None:
@@ -2677,6 +2689,7 @@ class MainWindow(QMainWindow):
         for profile in self.profile_params:
             if self.profile_selector.findText(profile) == -1:
                 self.profile_selector.addItem(profile)
+        self.sync_thumbnail_settings()
 
     def load_settings_dialogue(self):
         filename, ok = QFileDialog.getOpenFileName(self)
@@ -2699,6 +2712,7 @@ class MainWindow(QMainWindow):
         for profile in self.profile_params:
             if self.profile_selector.findText(profile) == -1:
                 self.profile_selector.addItem(profile)
+        self.sync_thumbnail_settings()
 
     def light_changed(self, value, light_name):
         if self.loading:

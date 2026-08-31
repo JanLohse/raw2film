@@ -20,6 +20,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QScrollArea,
@@ -83,6 +84,25 @@ class Thumbnail(QFrame):
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
 
+        self.settings_dot = QFrame(self)
+        self.settings_dot.setFixedSize(8, 8)
+        self.settings_dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.settings_dot.setStyleSheet(
+            """
+            QFrame {
+                background-color: #dedede;
+                border: 1px solid rgba(0, 0, 0, 70);
+                border-radius: 4px;
+            }
+            """
+        )
+        shadow = QGraphicsDropShadowEffect(self.settings_dot)
+        shadow.setBlurRadius(8)
+        shadow.setOffset(0, 0)
+        shadow.setColor(Qt.GlobalColor.black)
+        self.settings_dot.setGraphicsEffect(shadow)
+        self.settings_dot.hide()
+
         # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -121,6 +141,8 @@ class Thumbnail(QFrame):
             )
             scaled_pixmap.setDevicePixelRatio(self.devicePixelRatioF())
             self.label.setPixmap(scaled_pixmap)
+        self.settings_dot.move(self.width() - self.settings_dot.width() - 6, 6)
+        self.settings_dot.raise_()
 
     def setPixmap(self, pixmap: QPixmap):
         if pixmap:
@@ -133,7 +155,7 @@ class Thumbnail(QFrame):
             self.label.setPixmap(scaled_pixmap)
 
     def set_state(self, state="default"):
-        bq_color = _thumbnail_color[state]
+        bq_color = _thumbnail_color.get(state, _thumbnail_color["default"])
         outline_thickness = 3
         self.setStyleSheet(f"""
 #Thumbnail {{
@@ -142,6 +164,9 @@ class Thumbnail(QFrame):
     background-color: {bq_color};
 }}
 """)
+
+    def set_has_settings(self, has_settings: bool):
+        self.settings_dot.setVisible(has_settings)
 
     def sizeHint(self):
         if self.loaded:
@@ -175,6 +200,7 @@ class ImageBar(QScrollArea):
         self.selected_label = None
         self.highlighted_labels = set()
         self.image_labels = []
+        self.settings_images = set()
 
         self.threadpool = QThreadPool()
 
@@ -235,7 +261,26 @@ class ImageBar(QScrollArea):
         self.image_labels = []
         self.highlighted_labels = set()
         self.selected_label = None
+        self.settings_images = set()
         gc.collect()
+
+    def _state_for_label(self, label):
+        if label == self.selected_label:
+            return "selected"
+        if label in self.highlighted_labels:
+            return "highlighted"
+        return "default"
+
+    def refresh_thumbnail_states(self):
+        for label in self.image_labels:
+            label.set_state(self._state_for_label(label))
+            label.set_has_settings(
+                label.image_path.split("/")[-1] in self.settings_images
+            )
+
+    def set_settings_images(self, image_paths):
+        self.settings_images = {image_path.split("/")[-1] for image_path in image_paths}
+        self.refresh_thumbnail_states()
 
     def load_images(self, image_paths):
         self.clear_images()
@@ -246,6 +291,7 @@ class ImageBar(QScrollArea):
             )
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
+        self.refresh_thumbnail_states()
         QApplication.processEvents()
         QTimer.singleShot(0, self.check_visible)
 
@@ -265,8 +311,6 @@ class ImageBar(QScrollArea):
             return
         selected_index = self.image_labels.index(self.selected_label)
         clicked_index = self.image_labels.index(label)
-        for highlighted_label in self.highlighted_labels:
-            highlighted_label.set_state("default")
         self.highlighted_labels = {
             self.image_labels[index]
             for index in range(
@@ -274,52 +318,35 @@ class ImageBar(QScrollArea):
                 max(selected_index, clicked_index) + 1,
             )
         }
-        for highlighted_label in self.highlighted_labels:
-            highlighted_label.set_state("highlighted")
-        self.selected_label.set_state("selected")
+        self.refresh_thumbnail_states()
 
     def highlight_image(self, label, friendly=False):
         if not self.selected_label == label:
             if label in self.highlighted_labels and not friendly:
                 self.highlighted_labels.remove(label)
-                label.set_state("default")
             else:
                 self.highlighted_labels.add(label)
-                label.set_state("highlighted")
+            self.refresh_thumbnail_states()
 
     def highlight_all(self):
         if len(self.highlighted_labels) == len(self.image_labels):
-            for label in self.image_labels:
-                label.set_state("default")
             self.highlighted_labels = set()
-            if self.selected_label is not None:
-                self.highlighted_labels.add(self.selected_label)
-                self.selected_label.set_state("selected")
         else:
-            for label in self.image_labels:
-                label.set_state("highlighted")
             self.highlighted_labels = set(self.image_labels)
-            if self.selected_label is not None:
-                self.selected_label.set_state("selected")
+        self.refresh_thumbnail_states()
 
     def select_image(self, label):
         if label == self.selected_label:
             return
         if self.selected_label:
             if label in self.highlighted_labels:
-                self.selected_label.set_state("highlighted")
                 self.highlighted_labels.add(label)
             else:
-                self.selected_label.set_state("default")
-                for highlighted_label in self.highlighted_labels:
-                    highlighted_label.set_state("default")
                 self.highlighted_labels = {label}
         elif label not in self.highlighted_labels:
-            for highlighted_label in self.highlighted_labels:
-                highlighted_label.set_state("default")
             self.highlighted_labels = {label}
         self.selected_label = label
-        label.set_state("selected")
+        self.refresh_thumbnail_states()
         self.image_changed.emit(label.image_path)
         self.ensure_visible(label)
 
@@ -386,6 +413,7 @@ class ImageBar(QScrollArea):
             self.image_labels.pop(index)
             if image_label == self.selected_label:
                 self.selected_label = None
+            self.highlighted_labels.discard(image_label)
             if (
                 new_selected is not None
                 and index <= new_selected
@@ -395,6 +423,7 @@ class ImageBar(QScrollArea):
                     new_selected -= 1
                 if new_selected >= len(self.image_labels) - 1:
                     new_selected = len(self.image_labels) - 1
+        self.refresh_thumbnail_states()
         QTimer.singleShot(0, self.check_visible)
         return new_selected
 
@@ -405,13 +434,11 @@ class ImageBar(QScrollArea):
             self.select_image(self.image_labels[new_selected])
 
     def deselect_all(self):
-        for label in self.highlighted_labels:
-            if label != self.selected_label:
-                label.set_state("default")
         if self.selected_label is not None:
             self.highlighted_labels = {self.selected_label}
         else:
             self.highlighted_labels = set()
+        self.refresh_thumbnail_states()
 
     def close_single_image(self, src):
         for label in self.image_labels:
