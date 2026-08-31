@@ -279,7 +279,10 @@ class ImageBar(QScrollArea):
             )
 
     def set_settings_images(self, image_paths):
-        self.settings_images = {image_path.split("/")[-1] for image_path in image_paths}
+        settings_images = {image_path.split("/")[-1] for image_path in image_paths}
+        if settings_images == self.settings_images:
+            return
+        self.settings_images = settings_images
         self.refresh_thumbnail_states()
 
     def load_images(self, image_paths):

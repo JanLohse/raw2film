@@ -1862,30 +1862,51 @@ class MainWindow(QMainWindow):
     def load_image(self, src, **kwargs):
         self.start_worker(self.load_image_process, src=src)
 
-    def load_image_process(self, src, **kwargs):
-        src_short = src.split("/")[-1]
-        if src_short not in self.image_params:
-            self.image_params[src_short] = {}
+    def _ensure_image_metadata(self, src_short, src=None, force=False):
+        image_params = self.image_params.setdefault(src_short, {})
+
+        if image_params.get("_metadata_checked") and not force:
+            return image_params
+
+        needs_cam = force or image_params.get("cam") in (None, "", "None")
+        needs_lens = force or image_params.get("lens") in (None, "", "None")
+
+        if not (needs_cam or needs_lens):
+            if "lens_correction" not in image_params:
+                image_params["lens_correction"] = self.auto_lens_correct.isChecked()
+            return image_params
+
+        if src is None and hasattr(self, "image_bar"):
+            current = self.image_bar.current_image()
+            if current is not None and current.split("/")[-1] == src_short:
+                src = current
+
+        if src is not None:
             metadata = load_metadata(src)
             cam, lens = utils.find_data(metadata, self.lensfunpy_db)
-            if cam is not None:
-                self.image_params[src_short]["cam"] = cam.maker + " " + cam.model
-            else:
-                self.image_params[src_short]["cam"] = "None"
-            if lens is not None:
-                self.image_params[src_short]["lens"] = lens.model
-            else:
-                self.image_params[src_short]["lens"] = "None"
-            self.image_params[src_short]["lens_correction"] = (
-                self.auto_lens_correct.isChecked()
-            )
+
+            if needs_cam:
+                image_params["cam"] = f"{cam.maker} {cam.model}" if cam else "None"
+            if needs_lens:
+                image_params["lens"] = lens.model if lens else "None"
+
+        if "lens_correction" not in image_params:
+            image_params["lens_correction"] = self.auto_lens_correct.isChecked()
+
+        image_params["_metadata_checked"] = True
+
+        return image_params
+
+    def load_image_process(self, src, **kwargs):
+        src_short = src.split("/")[-1]
+        self._ensure_image_metadata(src_short, src)
         if "profile" not in self.image_params[src_short]:
             self.image_params[src_short]["profile"] = (
                 self.profile_selector.currentText()
             )
         if "exp_kelvin" not in self.image_params[src_short]:
             self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
-        self.load_image_params(src_short)
+        self.load_image_params(src_short, src)
         if self.active:
             self.update_preview(src)
 
@@ -1951,7 +1972,11 @@ class MainWindow(QMainWindow):
 
     def sync_thumbnail_settings(self):
         if hasattr(self, "image_bar"):
-            self.image_bar.set_settings_images(self.image_params.keys())
+            current_settings = frozenset(self.image_params.keys())
+            if getattr(self, "_thumbnail_settings_images", None) == current_settings:
+                return
+            self._thumbnail_settings_images = current_settings
+            self.image_bar.set_settings_images(current_settings)
 
     def setting_changed(self, value, key):
         if self.loading:
@@ -1975,12 +2000,13 @@ class MainWindow(QMainWindow):
             src_short = src.split("/")[-1]
             if src_short not in self.image_params:
                 self.image_params[src_short] = {}
-                if "profile" not in self.image_params[src_short]:
-                    self.image_params[src_short]["profile"] = (
-                        self.profile_selector.currentText()
-                    )
-                if "exp_kelvin" not in self.image_params[src_short]:
-                    self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
+            self._ensure_image_metadata(src_short, src)
+            if "profile" not in self.image_params[src_short]:
+                self.image_params[src_short]["profile"] = (
+                    self.profile_selector.currentText()
+                )
+            if "exp_kelvin" not in self.image_params[src_short]:
+                self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
             self.image_params[src_short][key] = value
         if key == "exp_kelvin":
             self.update_wb_mode(value)
@@ -2002,8 +2028,8 @@ class MainWindow(QMainWindow):
         else:
             return self.dflt_prf_params
 
-    def load_image_params(self, src):
-        image_params = self.setup_image_params(src)
+    def load_image_params(self, src, full_src=None):
+        image_params = self.setup_image_params(src, full_src)
         self.ui_update.emit(image_params)
 
     def load_image_params_to_ui(self, image_params):
@@ -2185,14 +2211,14 @@ class MainWindow(QMainWindow):
         if src_short not in self.image_params:
             self.load_image_process(src)
             return
-        else:
-            self.load_image_params(src_short)
+        self._ensure_image_metadata(src_short, src)
 
         full_width, full_height = self.image_context.physical_size
 
-        image_args = self.setup_image_params(src_short)
+        image_args = self.setup_image_params(src_short, src)
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
+
         processing_args["negative_film"] = self.filmstocks[
             processing_args["negative_film"]
         ]
@@ -2245,8 +2271,9 @@ class MainWindow(QMainWindow):
         self.image.request_draw()
         self.image.setToolTip(src)
 
-    def setup_image_params(self, src):
-        image_params = {**self.dflt_img_params, **self.image_params[src]}
+    def setup_image_params(self, src, full_src=None):
+        src_short = src.split("/")[-1]
+        image_params = {**self.dflt_img_params, **self.image_params[src_short]}
 
         return image_params
 
@@ -2258,7 +2285,7 @@ class MainWindow(QMainWindow):
 
         # Parameter extraction
         image_args = (
-            self.setup_image_params(src_short)
+            self.setup_image_params(src_short, src)
             if src_short in self.image_params
             else self.dflt_img_params
         )
@@ -2630,11 +2657,74 @@ class MainWindow(QMainWindow):
                 )
 
     def save_settings_dialogue(self):
-        filename, ok = QFileDialog.getSaveFileName(
-            self, "Select file name", "raw2film_settings.json", "*.json"
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export settings")
+
+        layout = QVBoxLayout()
+
+        quality_slider = Slider(continuous=False)
+        quality_slider.setMinMaxTicks(0, 100)
+        quality_slider.setValue(100)
+        layout.addWidget(QLabel("JPEG quality:"))
+        layout.addWidget(quality_slider)
+
+        sort_by_year = QCheckBox("Sort by year")
+        sort_by_year.setChecked(True)
+        layout.addWidget(sort_by_year)
+
+        sort_by_date = QCheckBox("Sort by date")
+        sort_by_date.setChecked(True)
+        layout.addWidget(sort_by_date)
+
+        move_raw = QCheckBox("Move raw file to subfolder")
+        move_raw.setTristate(True)
+        move_raw.setToolTip(
+            "Checked: move file \nPartially checked: copy file\nUnchecked: do nothing "
+            "to raw file"
         )
-        if ok:
-            self.save_settings(filename)
+        layout.addWidget(move_raw)
+
+        close_checkbox = QCheckBox("Close images after export")
+        move_raw.stateChanged.connect(lambda x: close_checkbox.setEnabled(x != 2))
+        move_raw.setChecked(True)
+        close_checkbox.setChecked(True)
+        layout.addWidget(close_checkbox)
+
+        resolution_field = HoverLineEdit(parent=self)
+        resolution_field.setValidator(QIntValidator())
+        layout.addWidget(QLabel("Resolution:"))
+        layout.addWidget(resolution_field)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        ok_button = AnimatedButton("OK", parent=self)
+        cancel_button = AnimatedButton("Cancel", parent=self)
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+
+        # Connect buttons
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+
+        if dialog.exec():
+            if resolution_field.text():
+                resolution = int(resolution_field.text())
+            else:
+                resolution = None
+            kwargs = {
+                "move_raw": move_raw.checkState().value,
+                "add_year": sort_by_year.isChecked(),
+                "close": close_checkbox.isChecked() or move_raw.checkState().value == 2,
+                "quality": int(quality_slider.getValue()),
+                "add_date": sort_by_date.isChecked(),
+                "resolution": resolution,
+            }
+            return True, kwargs
+        else:
+            return False, {}
 
     def save_settings_directory(self, root="", src=None, **kwargs):
         if root:
@@ -2646,7 +2736,7 @@ class MainWindow(QMainWindow):
     def save_settings(self, filename, src=None):
         if src is None:
             complete_dict = {
-                "image_params": self.image_params,
+                "image_params": self._strip_internal_image_params(self.image_params),
                 "profile_params": self.profile_params,
             }
         else:
@@ -2656,12 +2746,20 @@ class MainWindow(QMainWindow):
             ):
                 profile = self.image_params[src]["profile"]
                 complete_dict = {
-                    "image_params": {src: self.image_params[src]},
+                    "image_params": {
+                        src: self._strip_internal_image_params(
+                            {src: self.image_params[src]}
+                        )[src]
+                    },
                     "profile_params": {profile: self.profile_params[profile]},
                 }
             else:
                 complete_dict = {
-                    "image_params": {src: self.image_params[src]},
+                    "image_params": {
+                        src: self._strip_internal_image_params(
+                            {src: self.image_params[src]}
+                        )[src]
+                    },
                     "profile_params": {},
                 }
         if Path(filename).is_file():
@@ -2680,11 +2778,16 @@ class MainWindow(QMainWindow):
 
     def save_settings_system(self):
         self.settings.setValue("profile_params", json.dumps(self.profile_params))
-        self.settings.setValue("image_params", json.dumps(self.image_params))
+        self.settings.setValue(
+            "image_params",
+            json.dumps(self._strip_internal_image_params(self.image_params)),
+        )
 
     def load_settings_system(self):
         self.profile_params = json.loads(self.settings.value("profile_params", "{}"))
         self.image_params = json.loads(self.settings.value("image_params", "{}"))
+        for params in self.image_params.values():
+            params.pop("_metadata_checked", None)
 
         for profile in self.profile_params:
             if self.profile_selector.findText(profile) == -1:
@@ -2709,10 +2812,18 @@ class MainWindow(QMainWindow):
             complete_dict = json.load(f)
         self.image_params = {**complete_dict["image_params"], **self.image_params}
         self.profile_params = {**complete_dict["profile_params"], **self.profile_params}
+        for params in self.image_params.values():
+            params.pop("_metadata_checked", None)
         for profile in self.profile_params:
             if self.profile_selector.findText(profile) == -1:
                 self.profile_selector.addItem(profile)
         self.sync_thumbnail_settings()
+
+    def _strip_internal_image_params(self, image_params):
+        return {
+            key: {k: v for k, v in params.items() if k != "_metadata_checked"}
+            for key, params in image_params.items()
+        }
 
     def light_changed(self, value, light_name):
         if self.loading:
@@ -3019,7 +3130,7 @@ class MainWindow(QMainWindow):
             pass
 
         # Refresh UI and reprocess
-        self.load_image_params(src_short)
+        self.load_image_params(src_short, src)
         self.parameter_changed(src)
 
     def icc_loading_warning(self):
