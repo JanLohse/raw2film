@@ -261,7 +261,6 @@ class ImageBar(QScrollArea):
         self.image_labels = []
         self.highlighted_labels = set()
         self.selected_label = None
-        self.settings_images = set()
         gc.collect()
 
     def _state_for_label(self, label):

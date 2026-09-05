@@ -1910,6 +1910,22 @@ class MainWindow(QMainWindow):
         if self.active:
             self.update_preview(src)
 
+    def _ensure_metadata_for_images(self, srcs, progress_callback=None, **kwargs):
+        """Worker helper: ensure metadata is available for a list of full-path srcs.
+
+        This runs in a background worker to avoid blocking the UI when
+        extracting metadata with exiftool for multiple images at once.
+        """
+        for src in srcs:
+            try:
+                src_short = src.split("/")[-1]
+                # Force=False: _ensure_image_metadata will skip work if already done
+                self._ensure_image_metadata(src_short, src)
+            except Exception:
+                # Swallow exceptions to avoid crashing the worker thread; nothing
+                # special to do on failure here.
+                pass
+
     @lru_cache
     def load_raw_image(self, src, cam=None, lens=None):
         image = raw_to_linear(src)
@@ -1996,18 +2012,38 @@ class MainWindow(QMainWindow):
                 return  # default value and nothing to overwrite
         if time.time() - self.save_timer > 10:
             self.quick_save()
+
+        # Prepare list of images that need metadata extraction. Extracting
+        # metadata (via exiftool) can be slow on the first call, so do that in
+        # a background worker instead of blocking the UI here.
+        to_metadata = []
         for src in self.image_bar.get_highlighted():
             src_short = src.split("/")[-1]
             if src_short not in self.image_params:
                 self.image_params[src_short] = {}
-            self._ensure_image_metadata(src_short, src)
-            if "profile" not in self.image_params[src_short]:
-                self.image_params[src_short]["profile"] = (
-                    self.profile_selector.currentText()
-                )
-            if "exp_kelvin" not in self.image_params[src_short]:
-                self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
-            self.image_params[src_short][key] = value
+            ip = self.image_params[src_short]
+
+            # Determine whether metadata (cam/lens) likely needs fetching.
+            needs_meta = (
+                not ip.get("_metadata_checked") and ip.get("cam") in (None, "", "None")
+            ) or (
+                not ip.get("_metadata_checked") and ip.get("lens") in (None, "", "None")
+            )
+            if needs_meta:
+                to_metadata.append(src)
+
+            if "profile" not in ip:
+                ip["profile"] = self.profile_selector.currentText()
+            if "exp_kelvin" not in ip:
+                ip["exp_kelvin"] = self.exp_wb.getValue()
+            ip[key] = value
+
+        if to_metadata:
+            # Run metadata extraction asynchronously so the UI remains
+            # responsive. Do not semaphore this worker.
+            self.start_worker(
+                self._ensure_metadata_for_images, semaphore=False, srcs=to_metadata
+            )
         if key == "exp_kelvin":
             self.update_wb_mode(value)
         self.sync_thumbnail_settings()
@@ -2659,74 +2695,11 @@ class MainWindow(QMainWindow):
                 )
 
     def save_settings_dialogue(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Export settings")
-
-        layout = QVBoxLayout()
-
-        quality_slider = Slider(continuous=False)
-        quality_slider.setMinMaxTicks(0, 100)
-        quality_slider.setValue(100)
-        layout.addWidget(QLabel("JPEG quality:"))
-        layout.addWidget(quality_slider)
-
-        sort_by_year = QCheckBox("Sort by year")
-        sort_by_year.setChecked(True)
-        layout.addWidget(sort_by_year)
-
-        sort_by_date = QCheckBox("Sort by date")
-        sort_by_date.setChecked(True)
-        layout.addWidget(sort_by_date)
-
-        move_raw = QCheckBox("Move raw file to subfolder")
-        move_raw.setTristate(True)
-        move_raw.setToolTip(
-            "Checked: move file \nPartially checked: copy file\nUnchecked: do nothing "
-            "to raw file"
+        filename, ok = QFileDialog.getSaveFileName(
+            self, "Select file name", "raw2film_settings.json", "*.json"
         )
-        layout.addWidget(move_raw)
-
-        close_checkbox = QCheckBox("Close images after export")
-        move_raw.stateChanged.connect(lambda x: close_checkbox.setEnabled(x != 2))
-        move_raw.setChecked(True)
-        close_checkbox.setChecked(True)
-        layout.addWidget(close_checkbox)
-
-        resolution_field = HoverLineEdit(parent=self)
-        resolution_field.setValidator(QIntValidator())
-        layout.addWidget(QLabel("Resolution:"))
-        layout.addWidget(resolution_field)
-
-        # Buttons
-        button_layout = QHBoxLayout()
-        ok_button = AnimatedButton("OK", parent=self)
-        cancel_button = AnimatedButton("Cancel", parent=self)
-        button_layout.addWidget(ok_button)
-        button_layout.addWidget(cancel_button)
-
-        layout.addLayout(button_layout)
-        dialog.setLayout(layout)
-
-        # Connect buttons
-        ok_button.clicked.connect(dialog.accept)
-        cancel_button.clicked.connect(dialog.reject)
-
-        if dialog.exec():
-            if resolution_field.text():
-                resolution = int(resolution_field.text())
-            else:
-                resolution = None
-            kwargs = {
-                "move_raw": move_raw.checkState().value,
-                "add_year": sort_by_year.isChecked(),
-                "close": close_checkbox.isChecked() or move_raw.checkState().value == 2,
-                "quality": int(quality_slider.getValue()),
-                "add_date": sort_by_date.isChecked(),
-                "resolution": resolution,
-            }
-            return True, kwargs
-        else:
-            return False, {}
+        if ok:
+            self.save_settings(filename)
 
     def save_settings_directory(self, root="", src=None, **kwargs):
         if root:
@@ -2738,7 +2711,7 @@ class MainWindow(QMainWindow):
     def save_settings(self, filename, src=None):
         if src is None:
             complete_dict = {
-                "image_params": self._strip_internal_image_params(self.image_params),
+                "image_params": self.image_params,
                 "profile_params": self.profile_params,
             }
         else:
@@ -2748,20 +2721,12 @@ class MainWindow(QMainWindow):
             ):
                 profile = self.image_params[src]["profile"]
                 complete_dict = {
-                    "image_params": {
-                        src: self._strip_internal_image_params(
-                            {src: self.image_params[src]}
-                        )[src]
-                    },
+                    "image_params": {src: self.image_params[src]},
                     "profile_params": {profile: self.profile_params[profile]},
                 }
             else:
                 complete_dict = {
-                    "image_params": {
-                        src: self._strip_internal_image_params(
-                            {src: self.image_params[src]}
-                        )[src]
-                    },
+                    "image_params": {src: self.image_params[src]},
                     "profile_params": {},
                 }
         if Path(filename).is_file():
