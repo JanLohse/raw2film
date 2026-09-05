@@ -491,7 +491,7 @@ class MainWindow(QMainWindow):
             "blue_light": 0,
             "halation": True,
             "sharpness": True,
-            "grain": 2,
+            "grain": 1,
             "film_format": "135",
             "frame_width": 36,
             "frame_height": 24,
@@ -2297,6 +2297,8 @@ class MainWindow(QMainWindow):
             processing_args["negative_film"]
         ]
         if processing_args.get("print_film") is not None:
+            if processing_args["print_film"] == "Inversion":
+                processing_args["inversion"] = True
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
