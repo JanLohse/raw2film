@@ -195,8 +195,10 @@ class GpuProcessor:
         self.tex_lut_2d = None
         self.tex_lut_3d = None
         self.tex_lut_grain = None
+        self.color_masking_matrix = None
 
         self.buffer_params_lut_1d = None
+        self.buffer_color_masking_matrix = None
         self.buffer_params_grain = None
         self.buffer_mtf_kernel = None
         self.buffer_mtf_kernel_size = None
@@ -344,6 +346,35 @@ class GpuProcessor:
                 "height": 1,
                 "depth_or_array_layers": 1,
             },
+        )
+
+    def _ensure_color_masking_matrix(self, matrix: np.ndarray):
+        """Set up color masking matrix as uniform buffer."""
+        # Keep the CPU row-vector convention: the shader applies the matrix
+        # directly via per-channel dot products, so no extra transpose here.
+        matrix_f32 = matrix.astype(np.float32, copy=False)
+
+        # Pack as 3 rows of 4 floats each (16 bytes per row for alignment)
+        # Structure: f32, f32, f32, u32 (padding) per row
+        matrix_data = struct.pack(
+            "fffIfffIfffI",
+            matrix_f32[0, 0],
+            matrix_f32[0, 1],
+            matrix_f32[0, 2],
+            0,
+            matrix_f32[1, 0],
+            matrix_f32[1, 1],
+            matrix_f32[1, 2],
+            0,
+            matrix_f32[2, 0],
+            matrix_f32[2, 1],
+            matrix_f32[2, 2],
+            0,
+        )
+
+        self.buffer_color_masking_matrix = self.device.create_buffer_with_data(
+            data=matrix_data,
+            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
 
     def _ensure_lut_2d(self, lut: np.ndarray):
@@ -935,13 +966,13 @@ class GpuProcessor:
 
         self.grain_kernel_param_dict = new_kernel_dict
 
-    def load_density_curve(
+    def load_density_curve_and_masking(
         self,
         negative_film: FilmSpectral,
         push_pull: float | int,
         color_masking: float | None = None,
     ):
-        """Create 1D LUT for the films HD-curve."""
+        """Create 1D LUT for the films HD-curve and load color masking matrix."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
@@ -951,11 +982,17 @@ class GpuProcessor:
         if new_param_dict == self.curve_param_dict:
             return
 
-        density_curve = negative_film.get_density_curve(
-            push_pull=push_pull, color_masking=color_masking
-        )
+        density_curve = negative_film.get_density_curve(push_pull=push_pull)
+
+        if negative_film.density_measure != "bw":
+            self.color_masking_matrix = negative_film.get_color_masking_matrix(
+                color_masking
+            )
+        else:
+            self.color_masking_matrix = np.eye(3, dtype=DEFAULT_DTYPE)
 
         self._ensure_lut_1d(density_curve)
+        self._ensure_color_masking_matrix(self.color_masking_matrix)
 
         self.curve_param_dict = new_param_dict
 
@@ -976,7 +1013,6 @@ class GpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        color_masking: float | None = None,
     ):
         """Create the 3D output LUT."""
         new_param_dict = {
@@ -995,7 +1031,6 @@ class GpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
-            "color_masking": color_masking,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -1021,7 +1056,6 @@ class GpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
-            color_masking=color_masking,
         )
 
         if icc_transform is not None:
@@ -1065,6 +1099,14 @@ class GpuProcessor:
                         "buffer": self.buffer_params_lut_1d,
                         "offset": 0,
                         "size": self.buffer_params_lut_1d.size,
+                    },
+                },
+                {
+                    "binding": 5,
+                    "resource": {
+                        "buffer": self.buffer_color_masking_matrix,
+                        "offset": 0,
+                        "size": self.buffer_color_masking_matrix.size,
                     },
                 },
             ],
@@ -1733,7 +1775,7 @@ class GpuProcessor:
     ):
         """Internal shared routine executing the WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
-        self.load_density_curve(negative_film, push_pull, color_masking)
+        self.load_density_curve_and_masking(negative_film, push_pull, color_masking)
         self.load_output_lut(
             negative_film,
             print_film,
@@ -1750,7 +1792,6 @@ class GpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
-            color_masking,
         )
 
         scale = max(self.pipeline_resolution) / max(frame_width, frame_height)

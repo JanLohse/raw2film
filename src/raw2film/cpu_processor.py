@@ -37,6 +37,7 @@ class CpuProcessor:
         self.tex_lut_1d = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
+        self.color_masking_matrix = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -163,7 +164,7 @@ class CpuProcessor:
 
         self.input_param_dict = new_param_dict
 
-    def load_density_curve(
+    def load_density_curve_and_masking(
         self,
         negative_film: FilmSpectral,
         push_pull: float | int,
@@ -179,9 +180,14 @@ class CpuProcessor:
         if new_param_dict == self.curve_param_dict:
             return
 
-        density_curve = negative_film.get_density_curve(
-            push_pull=push_pull, color_masking=color_masking
-        )
+        density_curve = negative_film.get_density_curve(push_pull=push_pull)
+
+        if negative_film.density_measure != "bw":
+            self.color_masking_matrix = negative_film.get_color_masking_matrix(
+                color_masking
+            )
+        else:
+            self.color_masking_matrix = None
 
         self.tex_lut_1d = density_curve
 
@@ -204,7 +210,6 @@ class CpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        color_masking: float | None = None,
     ):
         """Create the output 3D LUT."""
         new_param_dict = {
@@ -223,7 +228,6 @@ class CpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
-            "color_masking": color_masking,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -249,7 +253,6 @@ class CpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
-            color_masking=color_masking,
         )
 
         if icc_transform is not None:
@@ -340,7 +343,7 @@ class CpuProcessor:
             max_scale,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
-        self.load_density_curve(negative_film, push_pull, color_masking)
+        self.load_density_curve_and_masking(negative_film, push_pull, color_masking)
         self.load_output_lut(
             negative_film,
             print_film,
@@ -357,7 +360,6 @@ class CpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
-            color_masking,
         )
 
         # process image
@@ -376,6 +378,9 @@ class CpuProcessor:
             )
 
         log_clip(image)
+
+        if negative_film.density_measure != "bw":
+            image @= self.color_masking_matrix.T
 
         image = multi_channel_interp(image, self.tex_lut_1d)
 
