@@ -1013,6 +1013,7 @@ class GpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
+        custom_inversion: bool = False,
     ):
         """Create the 3D output LUT."""
         new_param_dict = {
@@ -1031,6 +1032,7 @@ class GpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
+            "custom_inversion": custom_inversion,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -1056,6 +1058,7 @@ class GpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
+            custom_inversion=custom_inversion,
         )
 
         if icc_transform is not None:
@@ -1633,6 +1636,7 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
+        custom_inversion: bool = False,
         **kwargs,
     ):
         """Main function to load and process an image."""
@@ -1721,6 +1725,7 @@ class GpuProcessor:
         highlight_burn: float = 0.0,
         burn_scale: float = 50.0,
         color_masking: float | None = None,
+        custom_inversion: bool = False,
         **_,
     ):
         """Main function to process an image using pre-loaded CPU data."""
@@ -1772,6 +1777,7 @@ class GpuProcessor:
         highlight_burn,
         burn_scale,
         color_masking,
+        custom_inversion,
     ):
         """Internal shared routine executing the WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
@@ -1792,6 +1798,7 @@ class GpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
+            custom_inversion,
         )
 
         scale = max(self.pipeline_resolution) / max(frame_width, frame_height)

@@ -971,7 +971,8 @@ class MainWindow(QMainWindow):
             "Comment",
         ]
         self.filmstocks["None"] = None
-        self.filmstocks["Inversion"] = None
+        self.filmstocks["Inversion (ACES like)"] = None
+        self.filmstocks["Inversion (Optimized)"] = None
         self.negative_selector = FilmStockSelector(
             negative_info,
             self,
@@ -1049,7 +1050,8 @@ class MainWindow(QMainWindow):
         )
 
         print_info = {x: y for x, y in filmstock_info.items() if y["stage"] == "print"}
-        print_info["Inversion"] = {}
+        print_info["Inversion (ACES like)"] = {}
+        print_info["Inversion (Optimized)"] = {}
         print_info["None"] = {}
         sort_keys_print = ["Name", "Year", "Gamma"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]
@@ -2262,8 +2264,11 @@ class MainWindow(QMainWindow):
             "print_film" in processing_args
             and processing_args["print_film"] is not None
         ):
-            if processing_args["print_film"] == "Inversion":
+            if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
+                processing_args["custom_inversion"] = (
+                    "ACES" not in processing_args["print_film"]
+                )
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]
@@ -2333,8 +2338,11 @@ class MainWindow(QMainWindow):
             processing_args["negative_film"]
         ]
         if processing_args.get("print_film") is not None:
-            if processing_args["print_film"] == "Inversion":
+            if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
+                processing_args["custom_inversion"] = (
+                    "ACES" not in processing_args["print_film"]
+                )
             processing_args["print_film"] = self.filmstocks[
                 processing_args["print_film"]
             ]

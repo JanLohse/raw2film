@@ -25,7 +25,7 @@ dependencies = [
     "pyqt6>=6.11.0",
     "rawpy>=0.27.1",
     "scipy>=1.17.1",
-    "spectral-film-lut~=0.15.0",
+    "spectral-film-lut~=0.16.0",
     "wgpu>=0.31.1",
 ]
 

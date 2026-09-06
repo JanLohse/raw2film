@@ -210,6 +210,7 @@ class CpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
+        custom_inversion: bool = False,
     ):
         """Create the output 3D LUT."""
         new_param_dict = {
@@ -228,6 +229,7 @@ class CpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
+            "custom_inversion": custom_inversion,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -253,6 +255,7 @@ class CpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
+            custom_inversion=custom_inversion,
         )
 
         if icc_transform is not None:
@@ -320,6 +323,7 @@ class CpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
+        custom_inversion: bool = False,
         max_scale: float | None = 400.0,
         **_,
     ):
@@ -360,6 +364,7 @@ class CpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
+            custom_inversion,
         )
 
         # process image
