@@ -33,6 +33,10 @@ var<storage, read> kernel : Kernel;
 @group(0) @binding(7)
 var<uniform> kernel_size : vec2<u32>;
 
+// Extra uniform buffer containing the grain intensity in .x (vec4 alignment)
+@group(0) @binding(8)
+var<uniform> grain_extras : vec4<f32>;
+
 @compute
 @workgroup_size(8, 8)
 fn main(
@@ -81,9 +85,10 @@ fn main(
         vec3<f32>(1.0)
     );
 
-    let noise_r = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0).r * sum.r;
-    let noise_g = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0).g * sum.g;
-    let noise_b = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0).b * sum.b;
+    let intensity = grain_extras.x;
+    let noise_r = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0).r * sum.r * intensity;
+    let noise_g = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0).g * sum.g * intensity;
+    let noise_b = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0).b * sum.b * intensity;
 
     // Combine for final output using correct variable names
     let out_color = vec4<f32>(pixel.r + noise_r, pixel.g + noise_g, pixel.b + noise_b, pixel.a);

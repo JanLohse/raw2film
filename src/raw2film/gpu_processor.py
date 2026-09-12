@@ -200,6 +200,9 @@ class GpuProcessor:
         self.buffer_params_lut_1d = None
         self.buffer_color_masking_matrix = None
         self.buffer_params_grain = None
+        # Multiplier for grain intensity (used by GPU shaders). Default 1.0
+        self.grain_intensity = 1.0
+        self.buffer_grain_intensity = None
         self.buffer_mtf_kernel = None
         self.buffer_mtf_kernel_size = None
         self.buffer_halation_kernel = None
@@ -614,6 +617,7 @@ class GpuProcessor:
         denom = xp_max - xp_min
         inv_range = 1.0 / denom if denom != 0.0 else 0.0
 
+        # Pack xp_min, xp_max, inv_range and the current grain intensity as a float
         params_lut_1d = struct.pack(
             "ffff",
             xp_min,
@@ -626,6 +630,18 @@ class GpuProcessor:
             data=params_lut_1d,
             usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
         )
+
+        # Create/update small uniform buffer holding the grain intensity as a
+        # vec4<f32> (we store intensity in .x; WGSL requires 16-byte alignment).
+        intensity_data = struct.pack("ffff", float(self.grain_intensity), 0.0, 0.0, 0.0)
+        if self.buffer_grain_intensity is None:
+            self.buffer_grain_intensity = self.device.create_buffer_with_data(
+                data=intensity_data,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+        else:
+            # Update existing buffer
+            self.queue.write_buffer(self.buffer_grain_intensity, 0, intensity_data)
 
         self.queue.write_texture(
             {"texture": self.tex_lut_grain},
@@ -1188,6 +1204,14 @@ class GpuProcessor:
                 {"binding": 5, "resource": tex_noise.view},
                 {"binding": 6, "resource": {"buffer": self.buffer_grain_kernel}},
                 {"binding": 7, "resource": {"buffer": self.buffer_grain_kernel_size}},
+                {
+                    "binding": 8,
+                    "resource": {
+                        "buffer": self.buffer_grain_intensity,
+                        "offset": 0,
+                        "size": self.buffer_grain_intensity.size,
+                    },
+                },
             ],
         )
 
@@ -1683,6 +1707,16 @@ class GpuProcessor:
             "locs",
             "kwargs",  # <-- Explicitly drop 'kwargs'
         }
+        # If the UI passed a grain_intensity in kwargs, stash it on the instance
+        # so the GPU upload code can pack it into the uniform buffer.
+        try:
+            self.grain_intensity = float(
+                kwargs.get("grain_intensity", self.grain_intensity)
+            )
+        except Exception:
+            # keep existing value on error
+            pass
+
         pipe_args = {k: locs[k] for k in locs if k not in exclude}
         return self._execute_gpu_pipeline(**pipe_args)
 
@@ -1734,6 +1768,12 @@ class GpuProcessor:
         # Capture locals and exclude the dictionary captured by **_
         locs = locals()
         exclude = {"self", "cpu_payload", "locs", "_"}  # <-- Explicitly drop '_'
+        # If the caller passed a grain_intensity in the extra kwargs, use it
+        try:
+            self.grain_intensity = float(_.get("grain_intensity", self.grain_intensity))
+        except Exception:
+            pass
+
         pipe_args = {k: locs[k] for k in locs if k not in exclude}
 
         res = self._execute_gpu_pipeline(**pipe_args)

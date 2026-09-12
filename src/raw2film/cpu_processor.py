@@ -325,6 +325,7 @@ class CpuProcessor:
         color_masking: float | None = None,
         custom_inversion: bool = False,
         max_scale: float | None = 400.0,
+        grain_intensity: float = 1.0,
         **_,
     ):
         """Main function to load and process an image."""
@@ -403,6 +404,7 @@ class CpuProcessor:
                 grain_sigma=grain_sigma,
                 bw_grain=grain == 1,
                 adx=False,
+                grain_intensity=grain_intensity,
             )
             image = np.clip(image, 0, None)
 

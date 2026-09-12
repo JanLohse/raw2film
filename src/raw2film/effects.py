@@ -225,6 +225,7 @@ def apply_grain(
     grain_sigma: float = 0.4,
     bw_grain: bool = False,
     adx: bool = True,
+    grain_intensity: float = 1.0,
 ):
     """Applies a grain filter to an image."""
     grain = generate_grain(
@@ -232,7 +233,11 @@ def apply_grain(
     )
     grain_factors = stock.grain_transform(rgb, scale, adx=adx, bw_grain=bw_grain)
     grain = grain * grain_factors
-    rgb += grain
+    # Apply intensity multiplier (0..2) to control how strong the grain effect is
+    if grain_intensity != 1.0:
+        rgb += grain * grain_intensity
+    else:
+        rgb += grain
     return rgb
 
 

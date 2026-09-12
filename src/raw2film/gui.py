@@ -496,6 +496,7 @@ class MainWindow(QMainWindow):
             "frame_width": 36,
             "frame_height": 24,
             "grain_size": 6,
+            "grain_intensity": 1,
             "halation_size": 1.0,
             "halation_green_factor": 0.3,
             "projector_kelvin": 6500,
@@ -631,9 +632,23 @@ class MainWindow(QMainWindow):
 </table>""",
         )
 
-        self.grain_size = SliderLog(continuous=False)
+        self.grain_intensity = Slider(continuous=False)
+        """Multiplier for grain intensity (0..2)."""
+        self.grain_intensity.setMinMaxTicks(
+            0, 2, 1, 10, self.dflt_prf_params["grain_intensity"]
+        )
+        film_effects_group.add_option(
+            self.grain_intensity,
+            "Grain intensity",
+            self.dflt_prf_params["grain_intensity"],
+            self.grain_intensity.setValue,
+            tool_tip="Multiplier for grain intensity "
+            "(0 = none, 1 = default, 2 = double).",
+        )
+
+        self.grain_size = Slider(continuous=False)
         """Size of simulated film grains."""
-        self.grain_size.setMinMaxSteps(3, 12, 30, self.dflt_prf_params["grain_size"])
+        self.grain_size.setMinMaxTicks(3, 9, 1, 4, self.dflt_prf_params["grain_size"])
         film_effects_group.add_option(
             self.grain_size,
             "Grain size (microns)",
@@ -1438,6 +1453,9 @@ class MainWindow(QMainWindow):
         self.grain_size.valueChanged.connect(
             lambda x: self.profile_changed(x, "grain_size")
         )
+        self.grain_intensity.valueChanged.connect(
+            lambda x: self.profile_changed(x, "grain_intensity")
+        )
         self.grain_sigma.valueChanged.connect(
             lambda x: self.profile_changed(x, "grain_sigma")
         )
@@ -2140,6 +2158,7 @@ class MainWindow(QMainWindow):
                 ]
                 self.format_selector.setCurrentText(format_name)
         self.grain_size.setValue(profile_params["grain_size"])
+        self.grain_intensity.setValue(profile_params.get("grain_intensity", 1))
         self.grain_sigma.setValue(profile_params["grain_sigma"])
         self.negative_selector.setCurrentText(profile_params["negative_film"])
         self.print_selector.setCurrentText(profile_params["print_film"])
@@ -2421,15 +2440,11 @@ class MainWindow(QMainWindow):
                 shutil.copy2(src, target_raw)
 
         full_output_path = os.path.join(path, out_filename)
-        start = time.time()
         img = Image.fromarray(image)
         img.save(full_output_path, "JPEG", quality=quality)
-        print(f"PIL {time.time() - start}")
-        start = time.time()
         add_metadata(
             self.et, full_output_path, metadata, exp_comp=processing_args["exp_comp"]
         )
-        print(f"metadata {time.time() - start}")
 
         if close:
             QTimer.singleShot(0, lambda: self.image_bar.close_single_image(src))
