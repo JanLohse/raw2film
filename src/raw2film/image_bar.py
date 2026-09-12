@@ -194,6 +194,8 @@ class ImageBar(QScrollArea):
     """The selected image has changed."""
     copy_settings = pyqtSignal(str)
     """Settings are to be copied between images."""
+    images_empty = pyqtSignal()
+    """Emitted when the image list becomes empty after closing images."""
 
     def __init__(self):
         super().__init__()
@@ -294,6 +296,10 @@ class ImageBar(QScrollArea):
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
         self.refresh_thumbnail_states()
+
+        if self.image_labels:
+            self.select_image(self.image_labels[0])
+
         QApplication.processEvents()
         QTimer.singleShot(0, self.check_visible)
 
@@ -405,13 +411,23 @@ class ImageBar(QScrollArea):
         return [label.image_path for label in self.image_labels]
 
     def close_labels(self, labels):
+        # Copy labels to avoid modifying the iterable while iterating
+        labels_to_close = list(labels)
+
         if self.selected_label is not None:
             new_selected = self.image_labels.index(self.selected_label)
         else:
             new_selected = None
-        for image_label in labels:
+
+        for image_label in labels_to_close:
+            # skip labels that are no longer present
+            if image_label not in self.image_labels:
+                continue
             index = self.image_labels.index(image_label)
-            self.image_layout.itemAt(index).widget().setParent(None)
+            # Remove widget from layout and list
+            widget = self.image_layout.itemAt(index).widget()
+            if widget is not None:
+                widget.setParent(None)
             self.image_labels.pop(index)
             if image_label == self.selected_label:
                 self.selected_label = None
@@ -427,6 +443,9 @@ class ImageBar(QScrollArea):
                     new_selected = len(self.image_labels) - 1
         self.refresh_thumbnail_states()
         QTimer.singleShot(0, self.check_visible)
+        # Notify listeners if the bar is now empty
+        if not self.image_labels:
+            self.images_empty.emit()
         return new_selected
 
     def close_highlighted(self):

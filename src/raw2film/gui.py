@@ -57,6 +57,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -329,6 +330,26 @@ class MainWindow(QMainWindow):
         self.image_context = None
         self.context_mode = None
 
+        # Create placeholder widget with two buttons
+        self.empty_placeholder = QWidget()
+        placeholder_layout = QHBoxLayout(self.empty_placeholder)
+        placeholder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        btn_open_images = AnimatedButton("Open images", parent=self)
+        btn_open_folder = AnimatedButton("Open folder", parent=self)
+
+        btn_open_images.clicked.connect(self.load_images)
+        btn_open_folder.clicked.connect(self.load_folder)
+
+        placeholder_layout.addWidget(btn_open_images)
+        placeholder_layout.addWidget(btn_open_folder)
+
+        # Create container widget with QStackedLayout
+        self.image_container = QWidget()
+        self.image_stack = QStackedLayout(self.image_container)
+        self.image_stack.addWidget(self.empty_placeholder)  # Index 0: Placeholder
+        self.image_stack.addWidget(self.image)  # Index 1: Canvas image
+
         self.image_bar = ImageBar()
         image_bar_container = QFrame(self)
         image_bar_container.setObjectName("scroll")
@@ -346,7 +367,7 @@ class MainWindow(QMainWindow):
         page_splitter.setStretchFactor(1, 0)
 
         self.sidebar_layout.addWidget(sidebar_container)
-        self.top_splitter.addWidget(self.image)
+        self.top_splitter.addWidget(self.image_container)
         self.top_splitter.addWidget(sidebar_widget)
 
         # Fixes: Prevent the sidebar (index 1) from collapsing completely to 0 width
@@ -1573,6 +1594,7 @@ class MainWindow(QMainWindow):
         self.softproof_perceptual_intent.triggered.connect(
             lambda x: self.set_softproof_intent("perceptual")
         )
+        self.image_bar.images_empty.connect(self.show_empty_placeholder)
 
         self.setCentralWidget(page_splitter)
 
@@ -1642,7 +1664,7 @@ class MainWindow(QMainWindow):
         self.image = QRenderWidget(update_mode="ondemand")
         self.image.installEventFilter(self)
 
-        self.top_splitter.insertWidget(0, self.image)
+        self.image_stack.addWidget(self.image)
 
         old_histogram.setParent(None)
         old_histogram.deleteLater()
@@ -1880,6 +1902,7 @@ class MainWindow(QMainWindow):
             self.sync_thumbnail_settings()
 
     def load_image(self, src, **kwargs):
+        self.image_stack.setCurrentWidget(self.image)
         self.start_worker(self.load_image_process, src=src)
 
     def _ensure_image_metadata(self, src_short, src=None, force=False):
@@ -3178,3 +3201,6 @@ class MainWindow(QMainWindow):
         if self.et is not None:
             self.et.terminate()
         super().closeEvent(event)
+
+    def show_empty_placeholder(self):
+        self.image_stack.setCurrentWidget(self.empty_placeholder)
