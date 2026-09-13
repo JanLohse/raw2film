@@ -1200,7 +1200,13 @@ class MainWindow(QMainWindow):
 
         self.white_balance = QCheckBox("WB")
         """Whether to white balance slide film."""
-        self.white_balance.setToolTip("Whether to white balance slide film.")
+        self.white_balance.setTristate(True)
+        self.white_balance.setToolTip(
+            "Slide film white balance mode:\n"
+            "Unchecked = off\n"
+            "Partially checked = balance by peak white\n"
+            "Checked = balance by mid gray"
+        )
 
         checker_widget = QWidget()
         checker_widget_layout = QHBoxLayout(checker_widget)
@@ -2191,7 +2197,7 @@ class MainWindow(QMainWindow):
         self.inversion_gamma.setValue(profile_params["inversion_gamma"])
         self.idealized_curve.setChecked(profile_params["idealized_curve"])
         self.white_clip.setChecked(profile_params["white_clip"])
-        self.white_balance.setChecked(profile_params["white_balance"])
+        self.white_balance.setCheckState(Qt.CheckState(profile_params["white_balance"]))
         self.push_pull.setValue(profile_params["push_pull"])
 
         if "projector_kelvin" in profile_params:
