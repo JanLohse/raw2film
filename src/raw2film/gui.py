@@ -1670,7 +1670,7 @@ class MainWindow(QMainWindow):
         self.image = QRenderWidget(update_mode="ondemand")
         self.image.installEventFilter(self)
 
-        self.image_stack.addWidget(self.image)
+        self.image_stack.insertWidget(1, self.image)
 
         old_histogram.setParent(None)
         old_histogram.deleteLater()
@@ -1723,6 +1723,11 @@ class MainWindow(QMainWindow):
         self.top_splitter.setStretchFactor(0, 1)
         self.top_splitter.setStretchFactor(1, 0)
         self.top_splitter.setSizes([10000, sidebar_width])
+
+        if self.image_bar.current_image() is not None:
+            self.image_stack.setCurrentIndex(1)
+        else:
+            self.image_stack.setCurrentIndex(0)
 
     def setup_exiftool(self):
         try:
