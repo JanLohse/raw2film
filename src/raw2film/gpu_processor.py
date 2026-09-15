@@ -309,8 +309,8 @@ class GpuProcessor:
 
         self.tex_input.upload(self.queue, image)
 
-    def _ensure_lut_1d(self, lut: np.ndarray):
-        """Set up 1D LUT texture."""
+    def _ensure_lut_1d(self, lut: np.ndarray, apply_log: bool):
+        """Set up 1D LUT texture and update parameters buffer."""
         size = lut.shape[1]
         if self.tex_lut_1d is None or size != self.tex_lut_1d.size[0]:
             self.tex_lut_1d = self.device.create_texture(
@@ -330,12 +330,18 @@ class GpuProcessor:
         denom = xp_max - xp_min
         inv_range = 1.0 / denom if denom != 0.0 else 0.0
 
-        params_lut_1d = struct.pack("ffff", xp_min, xp_max, inv_range, 0.0)
+        # Pack 3 x float32 (fff) and 1 x uint32 (I) matching WGSL struct alignment
+        apply_log_val = 1 if apply_log else 0
+        params_lut_1d = struct.pack("fffI", xp_min, xp_max, inv_range, apply_log_val)
 
-        self.buffer_params_lut_1d = self.device.create_buffer_with_data(
-            data=params_lut_1d,
-            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
-        )
+        if self.buffer_params_lut_1d is None:
+            self.buffer_params_lut_1d = self.device.create_buffer_with_data(
+                data=params_lut_1d,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+        else:
+            # Update existing uniform buffer on host parameter change
+            self.queue.write_buffer(self.buffer_params_lut_1d, 0, params_lut_1d)
 
         self.queue.write_texture(
             {"texture": self.tex_lut_1d},
@@ -579,7 +585,7 @@ class GpuProcessor:
         )
 
     def _ensure_highlight_burn(
-        self, d_ref: float, highlight_burn: float, lowres_w: int, lowres_h: int
+        self, log_H_ref: float, highlight_burn: float, lowres_w: int, lowres_h: int
     ):
         """Set up highlight burn parameters."""
         self.tex_highlight_burn = self.device.create_texture(
@@ -590,7 +596,9 @@ class GpuProcessor:
 
         self.tex_highlight_burn_view = self.tex_highlight_burn.create_view()
 
-        uniform_data = np.array([highlight_burn, d_ref], dtype=np.float32)
+        highlight_burn_log10 = highlight_burn * np.log10(2)
+
+        uniform_data = np.array([highlight_burn_log10, log_H_ref], dtype=np.float32)
         self.buffer_highlight_burn = self.device.create_buffer_with_data(
             data=uniform_data,
             usage=wgpu.BufferUsage.UNIFORM,
@@ -904,14 +912,16 @@ class GpuProcessor:
         self, negative_film: FilmSpectral, highlight_burn: float, burn_scale: float
     ):
         """Create highlight burn parameters and upload them to the GPU."""
-        d_ref = negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0]
+        log_H_ref = negative_film.log_H_ref[
+            1 if len(negative_film.log_H_ref) > 1 else 0
+        ]
 
         scale_factor = math.ceil(min(self.pipeline_resolution) / burn_scale)
         lowres_w = max(1, self.pipeline_resolution[0] // scale_factor)
         lowres_h = max(1, self.pipeline_resolution[1] // scale_factor)
 
         new_param_dict = {
-            "d_ref": d_ref,
+            "log_H_ref": log_H_ref,
             "highlight_burn": highlight_burn,
             "lowres_w": lowres_w,
             "lowres_h": lowres_h,
@@ -920,7 +930,7 @@ class GpuProcessor:
         if new_param_dict == self.highlight_burn_param_dict:
             return
 
-        self._ensure_highlight_burn(d_ref, highlight_burn, lowres_w, lowres_h)
+        self._ensure_highlight_burn(log_H_ref, highlight_burn, lowres_w, lowres_h)
 
         self.highlight_burn_param_dict = new_param_dict
 
@@ -987,12 +997,14 @@ class GpuProcessor:
         negative_film: FilmSpectral,
         push_pull: float | int,
         color_masking: float | None = None,
+        apply_log: bool = True,
     ):
         """Create 1D LUT for the films HD-curve and load color masking matrix."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
             "color_masking": color_masking,
+            "apply_log": apply_log,
         }
 
         if new_param_dict == self.curve_param_dict:
@@ -1007,7 +1019,7 @@ class GpuProcessor:
         else:
             self.color_masking_matrix = np.eye(3, dtype=DEFAULT_DTYPE)
 
-        self._ensure_lut_1d(density_curve)
+        self._ensure_lut_1d(density_curve, apply_log)
         self._ensure_color_masking_matrix(self.color_masking_matrix)
 
         self.curve_param_dict = new_param_dict
@@ -1821,7 +1833,9 @@ class GpuProcessor:
     ):
         """Internal shared routine executing the WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
-        self.load_density_curve_and_masking(negative_film, push_pull, color_masking)
+        self.load_density_curve_and_masking(
+            negative_film, push_pull, color_masking, not highlight_burn
+        )
         self.load_output_lut(
             negative_film,
             print_film,
@@ -1878,6 +1892,14 @@ class GpuProcessor:
             )
             idx = 1 - idx
 
+        # Highlight burn in log exposure space
+        if highlight_burn:
+            self.load_highlight_burn(negative_film, highlight_burn, burn_scale)
+            self._dispatch_highlight_burn(
+                ping_pong_tex[idx], ping_pong_tex[1 - idx], encoder=encoder
+            )
+            idx = 1 - idx
+
         # 1D LUT
         self._dispatch(
             self.pipeline_lut_1d,
@@ -1927,17 +1949,6 @@ class GpuProcessor:
                 ),
                 self.pipeline_resolution,
                 encoder=encoder,
-            )
-            idx = 1 - idx
-
-        # Highlight Burn
-        if highlight_burn and (
-            print_film is not None
-            or negative_film.density_measure in ["status_m", "bw"]
-        ):
-            self.load_highlight_burn(negative_film, highlight_burn, burn_scale)
-            self._dispatch_highlight_burn(
-                ping_pong_tex[idx], ping_pong_tex[1 - idx], encoder=encoder
             )
             idx = 1 - idx
 

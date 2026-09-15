@@ -385,6 +385,9 @@ class CpuProcessor:
 
         log_clip(image)
 
+        if highlight_burn:
+            image = effects.burn(image, negative_film, highlight_burn, burn_scale)
+
         if negative_film.density_measure != "bw":
             image @= self.color_masking_matrix.T
 
@@ -407,12 +410,6 @@ class CpuProcessor:
                 grain_intensity=grain_intensity,
             )
             image = np.clip(image, 0, None)
-
-        if highlight_burn and (
-            print_film is not None
-            or negative_film.density_measure in ["status_m", "bw"]
-        ):
-            image = effects.burn(image, negative_film, highlight_burn, burn_scale)
 
         image = apply_lut_tetrahedral(image, self.tex_lut_3d, 0.25)
 

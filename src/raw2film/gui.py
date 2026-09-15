@@ -867,16 +867,16 @@ class MainWindow(QMainWindow):
 
         self.highlight_burn = Slider(continuous=False)
         self.highlight_burn.setMinMaxTicks(
-            0, 1, 1, 20, default=self.dflt_img_params["highlight_burn"]
+            0, 4, 1, 20, default=self.dflt_img_params["highlight_burn"]
         )
         basic_settings_group.add_option(
             self.highlight_burn,
             "Highlight burn",
             self.dflt_img_params["highlight_burn"],
             self.highlight_burn.setValue,
-            tool_tip="Lower the brightness of bright areas on the print film. Reach\n"
-            "can be configures under 'Burn scale' under 'Advanced printing\n"
-            "techniques'.\n"
+            tool_tip="Lower the brightness of bright areas. Reach can be configured\n"
+            "under 'Burn scale' under 'Advanced printing techniques.\n"
+            "Inspired by the burn method in darkroom printing. Is applied in stops.\n"
             "(Shift+Up: increase)\n"
             "(Shift+Down: decrease)",
         )

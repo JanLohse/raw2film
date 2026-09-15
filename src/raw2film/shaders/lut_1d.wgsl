@@ -2,7 +2,7 @@ struct Params {
     xp_min: f32,
     xp_max: f32,
     inv_range: f32,
-    _pad: u32,
+    apply_log: u32,
 };
 
 struct ColorMaskingMatrix {
@@ -54,10 +54,14 @@ fn main(
     let tex_coords = vec2<i32>(i32(gid.x), i32(gid.y));
     let pixel = textureLoad(input_tex, tex_coords, 0);
 
-    let log_pixel = safe_log10_vec3(pixel.rgb);
+    // Apply log transformation if input is still in linear space
+    var working_pixel = pixel.rgb;
+    if (params.apply_log != 0u) {
+        working_pixel = safe_log10_vec3(working_pixel);
+    }
 
-    // Apply color masking matrix after log conversion
-    let masked_pixel = apply_color_masking_matrix(log_pixel);
+    // Apply color masking matrix in log exposure space
+    let masked_pixel = apply_color_masking_matrix(working_pixel);
 
     let normalized_pos = clamp(
         (masked_pixel - params.xp_min) * params.inv_range,

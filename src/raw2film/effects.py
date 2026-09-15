@@ -401,24 +401,27 @@ def burn(
     burn_scale: float,
 ):
     """
-    Simulates highlight burning, which is a darkroom printing technique to reduce
-    the contrast and brightness of highlights. Similar to modern local tone-mapping
-    techniques.
+    Simulates highlight burning in the log exposure stage.
+
+    The burn amount is interpreted in stops: a value of 1.0 reduces fully burned
+    highlights by one stop, 2.0 by two stops, and so on.
     """
 
     def func(x):
         return np.clip(
-            x - negative_film.d_ref[1 if len(negative_film.d_ref) > 1 else 0],
+            x - negative_film.log_H_ref[1 if len(negative_film.log_H_ref) > 1 else 0],
             0,
             None,
         )
 
-    if image.shape[-1] == 3:
-        image = image - highlight_burn * down_up_blur(image[..., 1:2], burn_scale, func)
-    else:
-        image = image - highlight_burn * down_up_blur(image, burn_scale, func)
+    highlight_burn_log10 = highlight_burn * np.log10(2)
 
-    image = np.clip(image, 0, None)
+    if image.shape[-1] == 3:
+        image = image - highlight_burn_log10 * down_up_blur(
+            image[..., 1:2], burn_scale, func
+        )
+    else:
+        image = image - highlight_burn_log10 * down_up_blur(image, burn_scale, func)
 
     return image
 
