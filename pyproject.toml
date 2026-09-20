@@ -25,20 +25,20 @@ dependencies = [
     "pyqt6>=6.11.0",
     "rawpy>=0.27.1",
     "scipy>=1.17.1",
-    "spectral-film-lut~=0.17.1",
-    "wgpu>=0.31.1",
+    "spectral-film-lut~=0.18.0",
+    "wgpu>=0.32.0",
 ]
 
 [dependency-groups]
 dev = [
-    "mkdocstrings-python>=2.0.5",
-    "pre-commit>=4.6.0",
-    "pyinstaller>=6.21.0",
-    "ruff>=0.15.20",
-    "zensical>=0.0.47",
+    "mkdocstrings-python>=2.0.8",
+    "pre-commit>=4.6.2",
+    "pyinstaller>=6.22.3",
+    "ruff>=0.16.8",
+    "zensical>=0.0.63",
 ]
 install = [
-    "pyinstaller>=6.21.0",
+    "pyinstaller>=6.22.3",
 ]
 
 [project.urls]
