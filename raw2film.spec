@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 import colour.characterisation.datasets.rawtoaces as rawtoaces
 import spectral_film_lut.resources as sfl_resources  # needed only to locate resources
 import os
+import sys
 
 block_cipher = None
 
@@ -73,16 +74,35 @@ a.binaries = filtered_binaries
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name="Raw2Film",
-    debug=False,
-    strip=False,
-    upx=False,
-    console=False,
-    icon=icon,
-)
+if sys.platform == "linux":
+    exe = EXE(
+        pyz,
+        a.scripts,
+        name="Raw2Film",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,
+        exclude_binaries=True,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name="Raw2Film",
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name="Raw2Film",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,
+        icon=icon,
+    )

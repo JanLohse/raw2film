@@ -147,7 +147,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
+        os: [ windows-latest, ubuntu-22.04 ]
 
     steps:
       - name: Checkout commit
@@ -164,19 +164,74 @@ jobs:
       - name: Install PyInstaller and local package
         run: uv sync --no-dev --group install
 
+      - name: Install Qt runtime dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            zsync
+
       - name: Build with PyInstaller
-        run: uv run pyinstaller raw2film.spec
+        run: uv run pyinstaller --clean --noconfirm raw2film.spec
 
       - name: Package binaries
         shell: bash
         run: |
-          VERSION=$(uv pip list --format freeze | grep "^zensical=" | cut -d'=' -f3 || echo "dev")
-
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             mv dist/Raw2Film.exe Raw2Film.exe
           else
-            chmod +x dist/Raw2Film
-            mv dist/Raw2Film Raw2Film.AppImage
+            test -x dist/Raw2Film/Raw2Film
+            test -d dist/Raw2Film/_internal
+            mkdir -p AppDir/usr/bin \
+              AppDir/usr/share/applications \
+              AppDir/usr/share/icons/hicolor/512x512/apps
+            cp -a dist/Raw2Film/. AppDir/usr/bin/
+            chmod +x AppDir/usr/bin/Raw2Film
+            install -Dm755 packaging/appimage/AppRun AppDir/AppRun
+            install -Dm644 packaging/appimage/raw2film.desktop \
+              AppDir/raw2film.desktop
+            install -Dm644 packaging/appimage/raw2film.desktop \
+              AppDir/usr/share/applications/raw2film.desktop
+            install -Dm644 src/raw2film/resources/raw2film_512.png \
+              AppDir/raw2film.png
+            install -Dm644 src/raw2film/resources/raw2film_512.png \
+              AppDir/usr/share/icons/hicolor/512x512/apps/raw2film.png
+            XCB_PLUGIN="AppDir/usr/bin/_internal/PyQt6/Qt6/plugins/platforms/libqxcb.so"
+            ldd "$XCB_PLUGIN" \
+              | awk '/=> \// { print $3 } /^\/lib/ { print $1 }' \
+              | sort -u \
+              | while read -r library; do
+                  case "$(basename "$library")" in
+                    libc.so.*|libm.so.*|libdl.so.*|libpthread.so.*|librt.so.*|libresolv.so.*|libgcc_s.so.*|libstdc++.so.*)
+                      continue
+                      ;;
+                  esac
+                  install -Dm755 "$library" \
+                    "AppDir/usr/lib/x86_64-linux-gnu/$(basename "$library")"
+                done
+
+            wget -q \
+              https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+              -O appimagetool
+            chmod +x appimagetool
+            VERSION="${{ needs.create-tag.outputs.VERSION }}"
+            if [[ -n "$VERSION" ]]; then
+              UPDATE_INFORMATION="zsync|https://github.com/${{ github.repository }}/releases/download/${{ needs.create-tag.outputs.TAG }}/Raw2Film-${VERSION}.AppImage.zsync"
+              ARCH=x86_64 ./appimagetool --appimage-extract-and-run \
+                --updateinformation "$UPDATE_INFORMATION" \
+                AppDir Raw2Film.AppImage
+            else
+              ARCH=x86_64 ./appimagetool --appimage-extract-and-run \
+                AppDir Raw2Film.AppImage
+            fi
           fi
 
       - name: Upload artifacts
@@ -210,6 +265,9 @@ jobs:
           fi
           if [ -f "Raw2Film.AppImage" ]; then
             mv Raw2Film.AppImage "Raw2Film-${VERSION}.AppImage"
+          fi
+          if [ -f "Raw2Film.AppImage.zsync" ]; then
+            mv Raw2Film.AppImage.zsync "Raw2Film-${VERSION}.AppImage.zsync"
           fi
 
       - name: Create Release
