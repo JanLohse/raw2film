@@ -192,6 +192,7 @@ jobs:
             test -d dist/Raw2Film/_internal
             mkdir -p AppDir/usr/bin \
               AppDir/usr/share/applications \
+              AppDir/usr/share/metainfo \
               AppDir/usr/share/icons/hicolor/512x512/apps
             cp -a dist/Raw2Film/. AppDir/usr/bin/
             chmod +x AppDir/usr/bin/Raw2Film
@@ -200,6 +201,8 @@ jobs:
               AppDir/raw2film.desktop
             install -Dm644 packaging/appimage/raw2film.desktop \
               AppDir/usr/share/applications/raw2film.desktop
+            install -Dm644 packaging/appimage/raw2film.metainfo.xml \
+              AppDir/usr/share/metainfo/org.janlohse.raw2film.metainfo.xml
             install -Dm644 src/raw2film/resources/raw2film_512.png \
               AppDir/raw2film.png
             install -Dm644 src/raw2film/resources/raw2film_512.png \
