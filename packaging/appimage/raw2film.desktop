@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Raw2Film
+Comment=Raw image editor with built-in film emulation
+Exec=Raw2Film
+Icon=raw2film
+Type=Application
+Categories=Graphics;Photography;
+Terminal=false
