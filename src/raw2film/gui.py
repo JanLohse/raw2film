@@ -1514,6 +1514,7 @@ class MainWindow(QMainWindow):
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
         self.load_settings_button.triggered.connect(self.load_settings_dialogue)
         self.image_bar.image_changed.connect(self.load_image)
+        self.image_bar.image_changed.connect(self.update_window_title)
         self.add_profile.released.connect(self.add_profile_prompt)
         self.delete_profile_button.triggered.connect(self.delete_profile)
         self.delete_all_profiles_button.triggered.connect(self.delete_all_profiles)
@@ -1601,6 +1602,7 @@ class MainWindow(QMainWindow):
             lambda x: self.set_softproof_intent("perceptual")
         )
         self.image_bar.images_empty.connect(self.show_empty_placeholder)
+        self.image_bar.images_empty.connect(self.update_window_title)
 
         self.setCentralWidget(page_splitter)
 
@@ -1915,6 +1917,14 @@ class MainWindow(QMainWindow):
     def load_image(self, src, **kwargs):
         self.image_stack.setCurrentWidget(self.image)
         self.start_worker(self.load_image_process, src=src)
+
+    def update_window_title(self, image_path: str | None = None):
+        """Update the window title to show the currently selected image filename."""
+        if image_path is None:
+            self.setWindowTitle(f"Raw2Film {__version__}")
+        else:
+            filename = image_path.split("/")[-1]
+            self.setWindowTitle(f"{filename} - Raw2Film {__version__}")
 
     def _ensure_image_metadata(self, src_short, src=None, force=False):
         image_params = self.image_params.setdefault(src_short, {})
