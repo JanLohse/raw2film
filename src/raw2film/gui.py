@@ -1953,6 +1953,21 @@ class MainWindow(QMainWindow):
             if needs_lens:
                 image_params["lens"] = lens.model if lens else "None"
 
+            # Check for Fuji digital teleconverter zoom metadata
+            if metadata.get("RAF:RawZoomActive"):
+                zoom_size = metadata.get("RAF:RawZoomSize")
+                cropped_size = metadata.get("RAF:RawImageCroppedSize") or metadata.get(
+                    "RAF:RawImageFullSize"
+                )
+                if zoom_size and cropped_size:
+                    try:
+                        zw, _ = map(int, zoom_size.split())
+                        bw, _ = map(int, cropped_size.split())
+                        if zw > 0:
+                            image_params["zoom"] = bw / zw
+                    except Exception:
+                        pass
+
         if "lens_correction" not in image_params:
             image_params["lens_correction"] = self.auto_lens_correct.isChecked()
 
