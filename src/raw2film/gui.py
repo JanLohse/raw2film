@@ -164,7 +164,6 @@ class SidebarGroup(QWidget):
             setter(default)
         if tool_tip is not None:
             label.setToolTip(tool_tip)
-            widget.setToolTip(tool_tip)
         self.update_animation()
 
     def update_animation(self):
@@ -1008,7 +1007,7 @@ class MainWindow(QMainWindow):
         ]
         self.filmstocks["None"] = None
         self.filmstocks["Inversion (ACES like)"] = None
-        self.filmstocks["Inversion (Optimized)"] = None
+        # self.filmstocks["Inversion (Optimized)"] = None
         self.negative_selector = FilmStockSelector(
             negative_info,
             self,
@@ -1087,7 +1086,7 @@ class MainWindow(QMainWindow):
 
         print_info = {x: y for x, y in filmstock_info.items() if y["stage"] == "print"}
         print_info["Inversion (ACES like)"] = {}
-        print_info["Inversion (Optimized)"] = {}
+        # print_info["Inversion (Optimized)"] = {}
         print_info["None"] = {}
         sort_keys_print = ["Name", "Year", "Gamma"]
         group_keys_print = ["Manufacturer", "Type", "Decade", "Medium"]

@@ -45,6 +45,9 @@ def find_data(metadata, db):
         metadata, ["EXIF:LensModel", "EXIF:LensType"], ["LensModel", "LensType", "Lens"]
     )
 
+    camera_model_replacements = {"X100VI": "X100V"}
+    cam_models = [camera_model_replacements.get(item, item) for item in cam_models]
+
     if cam_makes != [None]:
         for cam_make in cam_makes:
             if cam_make is not None:
