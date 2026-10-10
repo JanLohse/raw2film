@@ -16,11 +16,7 @@ import PIL.ImageCms
 import wgpu
 from PIL import Image, ImageCms
 from PyQt6.QtCore import (
-    QAbstractAnimation,
-    QEasingCurve,
     QEvent,
-    QParallelAnimationGroup,
-    QPropertyAnimation,
     QRegularExpression,
     QSettings,
     QSize,
@@ -29,11 +25,9 @@ from PyQt6.QtCore import (
     QThreadPool,
     QTimer,
     pyqtSignal,
-    pyqtSlot,
 )
 from PyQt6.QtGui import (
     QAction,
-    QColor,
     QIcon,
     QImage,
     QIntValidator,
@@ -47,7 +41,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -62,13 +55,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from rendercanvas.qt import QRenderWidget
-from spectral_film_lut import BASE_DIR
-from spectral_film_lut.css_theme import BASE_COLOR, BORDER_RADIUS, OUTLINE_COLOR, THEME
+from spectral_film_lut.css_theme import BORDER_RADIUS, OUTLINE_COLOR, THEME
 from spectral_film_lut.filmstock_selector import FilmStockSelector
 from spectral_film_lut.gui_objects import (
     AboutDialog,
     AnimatedButton,
-    AnimatedToolButton,
     HoverLineEdit,
     Slider,
     SliderLog,
@@ -79,116 +70,23 @@ from spectral_film_lut.gui_objects import (
 from raw2film import R2F_BASE_DIR, __version__, data, effects, utils
 from raw2film.cpu_processor import CpuProcessor
 from raw2film.gpu_processor import GpuProcessor
-from raw2film.gui_objects import AutoShortcutsDialog, CpuWorker, GpuWorker
+from raw2film.gui_objects import (
+    AutoShortcutsDialog,
+    CpuWorker,
+    GpuWorker,
+    ImageInfoWidget,
+    SidebarGroup,
+)
 from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
-
-DOWN_ARROW_ICON = QIcon(f"{BASE_DIR}/resources/down_arrow.svg")
-RIGHT_ARROW_ICON = QIcon(f"{BASE_DIR}/resources/right_arrow.svg")
-
-
-class SidebarGroup(QWidget):
-    """A group wrapper for a sidebar that is collapsible."""
-
-    def __init__(self, title="", parent=None):
-        super().__init__(parent)
-
-        self.toggle_button = AnimatedToolButton(parent=self)
-        self.toggle_button._checked_color = QColor(BASE_COLOR)
-        self.toggle_button.setText("  " + title)
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setChecked(False)
-        self.toggle_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
-        self.toggle_button.setIcon(RIGHT_ARROW_ICON)
-        self.toggle_button.pressed.connect(self.on_pressed)
-        self.toggle_button.setStyleSheet("background: transparent;")
-        self.toggle_button.setIconSize(QSize(12, 12))
-
-        self.toggle_animation = QParallelAnimationGroup(self)
-
-        self.content_area = QScrollArea(maximumHeight=0, minimumHeight=0)
-        self.content_area.setContentsMargins(0, 0, 0, 0)
-        self.content_area.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self.content_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.content_layout = QGridLayout()
-        self.content_area.setLayout(self.content_layout)
-        self.content_counter = -1
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(0)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.toggle_button)
-        layout.addWidget(self.content_area)
-
-        self.toggle_animation.addAnimation(QPropertyAnimation(self, b"minimumHeight"))
-        self.toggle_animation.addAnimation(QPropertyAnimation(self, b"maximumHeight"))
-        self.toggle_animation.addAnimation(
-            QPropertyAnimation(self.content_area, b"maximumHeight")
-        )
-
-    def setChecked(self):
-        self.toggle_button.setChecked(True)
-        self.toggle_button.setIcon(DOWN_ARROW_ICON)
-        collapsed_height = self.sizeHint().height() - self.content_area.maximumHeight()
-        content_height = self.content_layout.sizeHint().height()
-        self.setMinimumHeight(collapsed_height + content_height)
-        self.setMaximumHeight(collapsed_height + content_height)
-        self.content_area.setMaximumHeight(content_height)
-
-    @pyqtSlot()
-    def on_pressed(self):
-        checked = self.toggle_button.isChecked()
-        self.toggle_button.setIcon(RIGHT_ARROW_ICON if checked else DOWN_ARROW_ICON)
-        self.toggle_animation.setDirection(
-            QAbstractAnimation.Direction.Backward
-            if checked
-            else QAbstractAnimation.Direction.Forward
-        )
-        self.toggle_animation.start()
-
-    def add_option(self, widget, name=None, default=None, setter=None, tool_tip=None):
-        self.content_counter += 1
-        label = QLabel(
-            name,
-            alignment=(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-        )
-        self.content_layout.addWidget(label, self.content_counter, 0)
-        self.content_layout.addWidget(widget, self.content_counter, 1)
-        if default is not None and setter is not None:
-            label.mouseDoubleClickEvent = lambda *args: setter(default)
-            setter(default)
-        if tool_tip is not None:
-            label.setToolTip(tool_tip)
-        self.update_animation()
-
-    def update_animation(self):
-        collapsed_height = self.sizeHint().height() - self.content_area.maximumHeight()
-        content_height = self.content_layout.sizeHint().height()
-        for i in range(self.toggle_animation.animationCount()):
-            animation = self.toggle_animation.animationAt(i)
-            animation.setDuration(300)
-            animation.setStartValue(collapsed_height)
-            animation.setEndValue(collapsed_height + content_height)
-            animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
-
-        content_animation = self.toggle_animation.animationAt(
-            self.toggle_animation.animationCount() - 1
-        )
-        content_animation.setDuration(300)
-        content_animation.setStartValue(0)
-        content_animation.setEndValue(content_height)
-        content_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
 
 
 class MainWindow(QMainWindow):
     """The main window of raw2film."""
 
     ui_update = pyqtSignal(dict)
+    info_update = pyqtSignal(dict, str, str)
     """The UI has updated."""
 
     def __init__(self, filmstocks):
@@ -343,6 +241,22 @@ class MainWindow(QMainWindow):
         placeholder_layout.addWidget(btn_open_images)
         placeholder_layout.addWidget(btn_open_folder)
 
+        # Create Image Info container widget (left of image preview)
+        self.info_container = QFrame(self)
+        self.info_container.setObjectName("scroll")
+        info_container_layout = QVBoxLayout(self.info_container)
+        info_container_layout.setContentsMargins(4, 4, 4, 4)
+        info_scroll = QScrollArea(self)
+        info_scroll.setWidgetResizable(True)
+        info_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        info_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.image_info_widget = ImageInfoWidget(self)
+        info_scroll.setWidget(self.image_info_widget)
+        info_scroll.setMinimumWidth(260)
+        info_container_layout.addWidget(info_scroll)
+
+        self.sidebar_layout.addWidget(sidebar_container)
+
         # Create container widget with QStackedLayout
         self.image_container = QWidget()
         self.image_stack = QStackedLayout(self.image_container)
@@ -366,17 +280,21 @@ class MainWindow(QMainWindow):
         page_splitter.setStretchFactor(1, 0)
 
         self.sidebar_layout.addWidget(sidebar_container)
+
+        self.top_splitter.addWidget(self.info_container)
         self.top_splitter.addWidget(self.image_container)
         self.top_splitter.addWidget(sidebar_widget)
 
-        # Fixes: Prevent the sidebar (index 1) from collapsing completely to 0 width
         self.top_splitter.setCollapsible(0, False)
         self.top_splitter.setCollapsible(1, False)
+        self.top_splitter.setCollapsible(2, False)
 
-        # Enforce that only index 0 (image) expands during window resizes
-        self.top_splitter.setStretchFactor(0, 1)
-        self.top_splitter.setStretchFactor(1, 0)
-        self.top_splitter.setSizes([10000, 370])
+        self.top_splitter.setStretchFactor(0, 0)
+        self.top_splitter.setStretchFactor(1, 1)
+        self.top_splitter.setStretchFactor(2, 0)
+
+        self.top_splitter.setSizes([0, 10000, 370])
+        self.info_container.hide()
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
@@ -432,6 +350,12 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.delete_profile_button)
         self.delete_all_profiles_button = QAction("Delete all profiles", self)
         edit_menu.addAction(self.delete_all_profiles_button)
+        self.image_info_action = QAction("Image info", self)
+        self.image_info_action.setShortcut(QKeySequence("Ctrl+I"))
+        self.image_info_action.setCheckable(True)
+        self.image_info_action.setChecked(False)
+        self.image_info_action.triggered.connect(self.toggle_image_info)
+        view_menu.addAction(self.image_info_action)
 
         self.full_preview = QAction("Full preview", self)
         self.full_preview.setShortcut(QKeySequence("Ctrl+Shift+F"))
@@ -1602,6 +1526,8 @@ class MainWindow(QMainWindow):
         )
         self.image_bar.images_empty.connect(self.show_empty_placeholder)
         self.image_bar.images_empty.connect(self.update_window_title)
+        self.info_update.connect(self.image_info_widget.update_info)
+        self.image_bar.images_empty.connect(lambda: self.info_update.emit({}, "", ""))
 
         self.setCentralWidget(page_splitter)
 
@@ -1885,6 +1811,17 @@ class MainWindow(QMainWindow):
             self.frame_width.setText(str(width))
             self.frame_height.setText(str(height))
 
+    def _trigger_initial_image_info(self):
+        current_img = self.image_bar.current_image()
+        if current_img:
+            src_short = current_img.split("/")[-1]
+            self._ensure_image_metadata(src_short, current_img)
+            metadata = load_metadata(current_img)
+            image_params = self.image_params.get(src_short, {})
+            self.info_update.emit(
+                metadata, image_params.get("cam"), image_params.get("lens")
+            )
+
     def load_images(self):
         filenames, ok = QFileDialog.getOpenFileNames(
             self,
@@ -1900,6 +1837,7 @@ class MainWindow(QMainWindow):
                 self.load_settings_directory(folder)
             self.image_bar.load_images(filenames)
             self.sync_thumbnail_settings()
+            self._trigger_initial_image_info()
 
     def load_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select image folder", "")
@@ -1912,6 +1850,7 @@ class MainWindow(QMainWindow):
             ]
             self.image_bar.load_images(filenames)
             self.sync_thumbnail_settings()
+            self._trigger_initial_image_info()
 
     def load_image(self, src, **kwargs):
         self.image_stack.setCurrentWidget(self.image)
@@ -1985,6 +1924,14 @@ class MainWindow(QMainWindow):
         if "exp_kelvin" not in self.image_params[src_short]:
             self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
         self.load_image_params(src_short, src)
+
+        # Emit info update for the image info widget
+        metadata = load_metadata(src)
+        image_params = self.image_params.get(src_short, {})
+        self.info_update.emit(
+            metadata, image_params.get("cam"), image_params.get("lens")
+        )
+
         if self.active:
             self.update_preview(src)
 
@@ -2904,6 +2851,7 @@ class MainWindow(QMainWindow):
         softproof_icc_path = self.settings.value("softproof_icc", None)
         display_intent = self.settings.value("display_rendering_intent", "relative")
         softproof_intent = self.settings.value("softproof_rendering_intent", "absolute")
+        info_val = self.settings.value("image_info_visible", None)
 
         self.set_display_intent(display_intent, False)
         self.set_softproof_intent(softproof_intent, False)
@@ -2912,7 +2860,6 @@ class MainWindow(QMainWindow):
         if softproof_icc_path is not None:
             self.load_softproof_icc(softproof_icc_path)
 
-        # Restore view-related settings (GPU rendering, half-res preview, full preview)
         def _to_bool(v):
             if v is None:
                 return False
@@ -2922,8 +2869,15 @@ class MainWindow(QMainWindow):
         half_val = self.settings.value("half_res_preview", None)
         full_val = self.settings.value("full_preview", None)
 
+        if info_val is not None:
+            is_visible = _to_bool(info_val)
+            self.image_info_action.setChecked(is_visible)
+            self.info_container.setVisible(is_visible)
+        else:
+            self.image_info_action.setChecked(False)
+            self.info_container.hide()
+
         if gpu_val is not None:
-            # set the action state according to stored value
             self.gpu_processing.setChecked(_to_bool(gpu_val))
         if half_val is not None:
             self.half_res_preview.setChecked(_to_bool(half_val))
@@ -2933,12 +2887,11 @@ class MainWindow(QMainWindow):
         if auto_lens_val is not None:
             self.auto_lens_correct.setChecked(_to_bool(auto_lens_val))
 
-        # Ensure rendering context matches restored GPU setting
+        QTimer.singleShot(0, self._update_splitter_sizes)
+
         try:
             self.create_context()
         except Exception:
-            # If context creation fails at startup, ignore and continue; the user
-            # can toggle GPU rendering later.
             pass
 
     def load_display_icc_dialog(self):
@@ -3239,3 +3192,36 @@ class MainWindow(QMainWindow):
 
     def show_empty_placeholder(self):
         self.image_stack.setCurrentWidget(self.empty_placeholder)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "top_splitter"):
+            self._update_splitter_sizes()
+
+    def _update_splitter_sizes(self):
+        total_width = self.top_splitter.width()
+        if total_width <= 0:
+            return
+
+        sidebar_width = 370
+        info_visible = self.info_container.isVisible()
+        info_width = 280 if info_visible else 0
+
+        handle_width = self.top_splitter.handleWidth()
+        num_handles = 2 if info_visible else 1
+
+        # Calculate remaining width strictly for the image container
+        image_width = (
+            total_width - info_width - sidebar_width - (handle_width * num_handles)
+        )
+        image_width = max(200, image_width)
+
+        if info_visible:
+            self.top_splitter.setSizes([info_width, image_width, sidebar_width])
+        else:
+            self.top_splitter.setSizes([0, image_width, sidebar_width])
+
+    def toggle_image_info(self, checked):
+        self.info_container.setVisible(checked)
+        self.settings.setValue("image_info_visible", "1" if checked else "0")
+        self._update_splitter_sizes()
