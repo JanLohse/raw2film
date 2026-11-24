@@ -1,9 +1,9 @@
 """The main GPU processing implementation."""
 
+import contextlib
 import math
 import random
 import struct
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +34,7 @@ from raw2film.utils import (
 class GpuTexture:
     """Wrapper for GPU texture to make usage easier."""
 
-    def __init__(self, device, size, format=wgpu.TextureFormat.rgba16float):
+    def __init__(self, device, size, format=wgpu.TextureFormat.rgba16float):  # noqa: D107
         self.device = device
         self.size = size
 
@@ -70,7 +70,7 @@ class GpuTexture:
 class GpuProcessor:
     """The main GPU processing implementation."""
 
-    def __init__(self, cameras, lenses):
+    def __init__(self, cameras, lenses):  # noqa: D107
         self.device = get_default_device()
         self.queue = self.device.queue
 
@@ -89,15 +89,11 @@ class GpuProcessor:
 
         copy_to_int_shader_path = Path(__file__).parent / "shaders/copy_to_int.wgsl"
         copy_to_int_shader_code = copy_to_int_shader_path.read_text()
-        copy_to_int_shader = self.device.create_shader_module(
-            code=copy_to_int_shader_code
-        )
+        copy_to_int_shader = self.device.create_shader_module(code=copy_to_int_shader_code)
 
         convolution_shader_path = Path(__file__).parent / "shaders/convolution.wgsl"
         convolution_shader_code = convolution_shader_path.read_text()
-        convolution_shader = self.device.create_shader_module(
-            code=convolution_shader_code
-        )
+        convolution_shader = self.device.create_shader_module(code=convolution_shader_code)
 
         noise_shader_path = Path(__file__).parent / "shaders/noise.wgsl"
         noise_shader_code = noise_shader_path.read_text()
@@ -119,13 +115,9 @@ class GpuProcessor:
         scale_shader_code = scale_shader_path.read_text()
         scale_shader = self.device.create_shader_module(code=scale_shader_code)
 
-        highlight_burn_shader_path = (
-            Path(__file__).parent / "shaders/highlight_burn.wgsl"
-        )
+        highlight_burn_shader_path = Path(__file__).parent / "shaders/highlight_burn.wgsl"
         highlight_burn_shader_code = highlight_burn_shader_path.read_text()
-        highlight_burn_shader = self.device.create_shader_module(
-            code=highlight_burn_shader_code
-        )
+        highlight_burn_shader = self.device.create_shader_module(code=highlight_burn_shader_code)
 
         # create pipelines
         self.pipeline_lut_1d = self.device.create_compute_pipeline(
@@ -258,13 +250,18 @@ class GpuProcessor:
 
         self.cameras = cameras
         self.lenses = lenses
+        self._raw_image_cache = {}
 
         self._create_histogram_buffers()
 
-    @lru_cache
     def load_raw_image_cached(self, src, cam=None, lens=None, half_size: bool = True):
         """Load images and cache previous requests."""
-        return self.load_raw_image(src, cam, lens, half_size)
+        cache_key = (src, cam, lens, half_size)
+        if cache_key not in self._raw_image_cache:
+            self._raw_image_cache[cache_key] = self.load_raw_image(src, cam, lens, half_size)
+            if len(self._raw_image_cache) > 32:
+                del self._raw_image_cache[next(iter(self._raw_image_cache))]
+        return self._raw_image_cache[cache_key]
 
     def load_raw_image(self, src, cam=None, lens=None, half_size: bool = True):
         """Load an image and apply lens correction."""
@@ -284,7 +281,7 @@ class GpuProcessor:
     def _ensure_image_texture(
         self,
         image: np.ndarray,
-        canvas_resolution: None | tuple[int, int] = None,
+        canvas_resolution: tuple[int, int] | None = None,
     ):
         """Set up textures and load image to GPU."""
         h, w = image.shape[:2]
@@ -297,9 +294,7 @@ class GpuProcessor:
             or self.tex_input.size != (w, h)
             or self.tex_int_out.size != canvas_resolution
         ):
-            self.tex_input = GpuTexture(
-                self.device, (w, h), format=wgpu.TextureFormat.rgba32float
-            )
+            self.tex_input = GpuTexture(self.device, (w, h), format=wgpu.TextureFormat.rgba32float)
             self.tex_a = GpuTexture(self.device, (w, h))
             self.tex_b = GpuTexture(self.device, (w, h))
             self.tex_temp = GpuTexture(self.device, (w, h))
@@ -503,10 +498,7 @@ class GpuProcessor:
 
         flat = kernel_rgba.reshape(-1, 4)
 
-        if (
-            self.buffer_grain_kernel is None
-            or self.buffer_grain_kernel.size < flat.nbytes
-        ):
+        if self.buffer_grain_kernel is None or self.buffer_grain_kernel.size < flat.nbytes:
             self.buffer_grain_kernel = self.device.create_buffer(
                 size=flat.nbytes,
                 usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
@@ -552,10 +544,7 @@ class GpuProcessor:
 
         flat = kernel_rgba.reshape(-1, 4)
 
-        if (
-            self.buffer_halation_kernel is None
-            or self.buffer_halation_kernel.size < flat.nbytes
-        ):
+        if self.buffer_halation_kernel is None or self.buffer_halation_kernel.size < flat.nbytes:
             self.buffer_halation_kernel = self.device.create_buffer(
                 size=flat.nbytes,
                 usage=(wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST),
@@ -667,9 +656,7 @@ class GpuProcessor:
 
     def _create_histogram_buffers(self, mix_table: np.ndarray = MIX_TABLE):
         """Set up buffers needed for histogram."""
-        self.tex_hist_out = GpuTexture(
-            self.device, (256, 256), format=wgpu.TextureFormat.rgba8uint
-        )
+        self.tex_hist_out = GpuTexture(self.device, (256, 256), format=wgpu.TextureFormat.rgba8uint)
 
         # Buffer 1: Atomic collection buckets (3 channels * 256 bins * 4 bytes)
         self.buffer_hist_counts = self.device.create_buffer(
@@ -710,7 +697,7 @@ class GpuProcessor:
         zoom: float,
         rotate_times: int,
         flip: bool,
-        resolution: None | tuple[int, int] = None,
+        resolution: tuple[int, int] | None = None,
         half_size: bool = True,
         cache: bool = True,
         chroma_nr: int = 0,
@@ -820,7 +807,7 @@ class GpuProcessor:
         image = np.dstack((image, np.ones_like(image[..., :1])))
 
         if canvas_mode != "No":
-            canvas_res, canvas_color, _ = get_canvas_data(
+            canvas_res, _canvas_color, _ = get_canvas_data(
                 output_res, canvas_mode, canvas_scale, canvas_ratio
             )
             canvas_res = (canvas_res[1], canvas_res[0])
@@ -862,9 +849,7 @@ class GpuProcessor:
         if new_param_dict == self.mtf_param_dict:
             return
 
-        mtf_kernel_np = mtf_kernel(
-            negative_film, scale, sharpening_strength, sharpening_sigma
-        )
+        mtf_kernel_np = mtf_kernel(negative_film, scale, sharpening_strength, sharpening_sigma)
 
         self._ensure_mtf_kernel(mtf_kernel_np)
 
@@ -912,9 +897,7 @@ class GpuProcessor:
         self, negative_film: FilmSpectral, highlight_burn: float, burn_scale: float
     ):
         """Create highlight burn parameters and upload them to the GPU."""
-        log_H_ref = negative_film.log_H_ref[
-            1 if len(negative_film.log_H_ref) > 1 else 0
-        ]
+        log_H_ref = negative_film.log_H_ref[1 if len(negative_film.log_H_ref) > 1 else 0]
 
         scale_factor = math.ceil(min(self.pipeline_resolution) / burn_scale)
         lowres_w = max(1, self.pipeline_resolution[0] // scale_factor)
@@ -981,9 +964,7 @@ class GpuProcessor:
         if new_kernel_dict == self.grain_kernel_param_dict:
             return
 
-        kernel = grain_kernel(
-            1 / scale, grain_size_mm=grain_size_mm, grain_sigma=grain_sigma
-        )
+        kernel = grain_kernel(1 / scale, grain_size_mm=grain_size_mm, grain_sigma=grain_sigma)
 
         if kernel is None:
             kernel = np.ones((1, 1), dtype=DEFAULT_DTYPE)
@@ -1013,9 +994,7 @@ class GpuProcessor:
         density_curve = negative_film.get_density_curve(push_pull=push_pull)
 
         if negative_film.density_measure != "bw":
-            self.color_masking_matrix = negative_film.get_color_masking_matrix(
-                color_masking
-            )
+            self.color_masking_matrix = negative_film.get_color_masking_matrix(color_masking)
         else:
             self.color_masking_matrix = np.eye(3, dtype=DEFAULT_DTYPE)
 
@@ -1324,9 +1303,7 @@ class GpuProcessor:
         )
 
     def generate_histogram(self, source_tex):
-        """
-        Executes the complete multi-pass pipeline chain to draw the output histogram.
-        """
+        """Execute the complete multi-pass pipeline chain to draw the histogram."""
         self._ensure_histogram_buffers()
 
         zero_data = np.zeros(3 * 256, dtype=np.uint32)
@@ -1366,9 +1343,9 @@ class GpuProcessor:
         return self.tex_hist_out
 
     def _dispatch(self, pipeline, bind_group, size, wg_size=(8, 8), encoder=None):
-        """
-        A unified, flexible dispatch helper that handles arbitrary workgroup sizes
-        and optional multi-pass command encoding chaining.
+        """Dispatch a workgroup and optionally chain command encoding.
+
+        Handles arbitrary workgroup sizes and optional multi-pass command encoding.
         """
         submit_instantly = False
         if encoder is None:
@@ -1390,6 +1367,7 @@ class GpuProcessor:
             self.queue.submit([encoder.finish()])
 
     def read_texture(self, texture):
+        """Read back a GPU texture as a padded NumPy buffer."""
         width, height, _ = texture.size
         # rgba8unorm uses 4 bytes per pixel (1 byte per channel)
         bytes_per_pixel = 4
@@ -1438,9 +1416,7 @@ class GpuProcessor:
         return rgb_view
 
     def _dispatch_highlight_burn(self, tex_a, tex_b, encoder=None):
-        """
-        Dispatch highlight burn in two passes.
-        """
+        """Dispatch highlight burn in two passes."""
         submit_instantly = False
         if encoder is None:
             encoder = self.device.create_command_encoder()
@@ -1501,16 +1477,12 @@ class GpuProcessor:
         # 1. Determine the overall canvas/container bounds shaping the destination
         # viewport aspect ratio
         has_canvas = (
-            getattr(self, "canvas_resolution", None) is not None
-            and self.canvas_resolution[0] > 0
+            getattr(self, "canvas_resolution", None) is not None and self.canvas_resolution[0] > 0
         )
 
         if has_canvas:
             content_w, content_h = self.canvas_resolution
-        elif (
-            getattr(self, "output_resolution", None) is not None
-            and self.output_resolution[0] > 0
-        ):
+        elif getattr(self, "output_resolution", None) is not None and self.output_resolution[0] > 0:
             content_w, content_h = self.output_resolution
         else:
             content_w, content_h = getattr(self, "pipeline_resolution", (src_w, src_h))
@@ -1546,9 +1518,7 @@ class GpuProcessor:
             )
 
         # Normalize canvas color from 0-255 integers to 0.0-1.0 floats
-        raw_color = (
-            self.canvas_color if self.canvas_color is not None else (255, 255, 255)
-        )
+        raw_color = self.canvas_color if self.canvas_color is not None else (255, 255, 255)
         # Check if color is already normalized floats or 0-255 ints
         c_r = raw_color[0] / 255.0 if max(raw_color) > 1.0 else float(raw_color[0])
         c_g = raw_color[1] / 255.0 if max(raw_color) > 1.0 else float(raw_color[1])
@@ -1646,7 +1616,7 @@ class GpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        resolution: None | tuple[int, int] = None,
+        resolution: tuple[int, int] | None = None,
         frame_width: int | float = 36,
         frame_height: int | float = 24,
         rotation: float = 0.0,
@@ -1675,7 +1645,7 @@ class GpuProcessor:
         custom_inversion: bool = False,
         **kwargs,
     ):
-        """Main function to load and process an image."""
+        """Load and process an image."""
         self.load_image_texture(
             src,
             cam,
@@ -1721,13 +1691,8 @@ class GpuProcessor:
         }
         # If the UI passed a grain_intensity in kwargs, stash it on the instance
         # so the GPU upload code can pack it into the uniform buffer.
-        try:
-            self.grain_intensity = float(
-                kwargs.get("grain_intensity", self.grain_intensity)
-            )
-        except Exception:
-            # keep existing value on error
-            pass
+        with contextlib.suppress(Exception):
+            self.grain_intensity = float(kwargs.get("grain_intensity", self.grain_intensity))
 
         pipe_args = {k: locs[k] for k in locs if k not in exclude}
         return self._execute_gpu_pipeline(**pipe_args)
@@ -1774,17 +1739,15 @@ class GpuProcessor:
         custom_inversion: bool = False,
         **_,
     ):
-        """Main function to process an image using pre-loaded CPU data."""
+        """Process an image using pre-loaded CPU data."""
         self.prepare_gpu_textures(cpu_payload)
 
         # Capture locals and exclude the dictionary captured by **_
         locs = locals()
         exclude = {"self", "cpu_payload", "locs", "_"}  # <-- Explicitly drop '_'
         # If the caller passed a grain_intensity in the extra kwargs, use it
-        try:
+        with contextlib.suppress(Exception):
             self.grain_intensity = float(_.get("grain_intensity", self.grain_intensity))
-        except Exception:
-            pass
 
         pipe_args = {k: locs[k] for k in locs if k not in exclude}
 
@@ -1831,7 +1794,7 @@ class GpuProcessor:
         color_masking,
         custom_inversion,
     ):
-        """Internal shared routine executing the WebGPU rendering pipeline passes."""
+        """Execute the shared WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve_and_masking(
             negative_film, push_pull, color_masking, not highlight_burn
@@ -1911,9 +1874,7 @@ class GpuProcessor:
 
         # Sharpness
         if sharpness and negative_film.mtf is not None:
-            self.load_mtf_kernel(
-                negative_film, scale, sharpening_strength, sharpening_sigma
-            )
+            self.load_mtf_kernel(negative_film, scale, sharpening_strength, sharpening_sigma)
             self._dispatch(
                 self.pipeline_convolution,
                 self._bind_convolution(
@@ -1930,12 +1891,8 @@ class GpuProcessor:
         # Grain
         if grain and negative_film.rms_density is not None:
             bw_grain = grain == 1
-            self.load_grain(
-                negative_film, scale, grain_size / 1000, grain_sigma, bw_grain
-            )
-            noise_pipeline = (
-                self.pipeline_noise if not bw_grain else self.pipeline_noise_bw
-            )
+            self.load_grain(negative_film, scale, grain_size / 1000, grain_sigma, bw_grain)
+            noise_pipeline = self.pipeline_noise if not bw_grain else self.pipeline_noise_bw
             self._dispatch(
                 noise_pipeline,
                 self._bind_noise(self.tex_temp, noise_pipeline),
@@ -1944,9 +1901,7 @@ class GpuProcessor:
             )
             self._dispatch(
                 self.pipeline_grain,
-                self._bind_grain(
-                    ping_pong_tex[idx], ping_pong_tex[1 - idx], self.tex_temp
-                ),
+                self._bind_grain(ping_pong_tex[idx], ping_pong_tex[1 - idx], self.tex_temp),
                 self.pipeline_resolution,
                 encoder=encoder,
             )

@@ -1,6 +1,4 @@
-"""
-The image bar on the bottom of the application.
-"""
+"""The image bar on the bottom of the application."""
 
 import gc
 import io
@@ -34,12 +32,12 @@ from spectral_film_lut.css_theme import BUTTON_RADIUS
 class RoundedLabel(QLabel):
     """A label with rounded corners."""
 
-    def __init__(self, radius=12, *args, **kwargs):
+    def __init__(self, radius=12, *args, **kwargs):  # noqa: D107
         super().__init__(*args, **kwargs)
         self.radius = radius
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-    def paintEvent(self, event):
+    def paintEvent(self, event):  # noqa: D102
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -73,7 +71,7 @@ _thumbnail_color = {
 class Thumbnail(QFrame):
     """A thumbnail frame for the image bar."""
 
-    def __init__(self, image_path, parent=None):
+    def __init__(self, image_path, parent=None):  # noqa: D107
         super().__init__(parent)
         self.image_path = image_path
         self.setToolTip(image_path)
@@ -115,6 +113,7 @@ class Thumbnail(QFrame):
         self.loaded = False
 
     def load(self):
+        """Load the embedded thumbnail and display it."""
         if self.loaded:
             return
         self.loaded = True
@@ -144,7 +143,7 @@ class Thumbnail(QFrame):
         self.settings_dot.move(self.width() - self.settings_dot.width() - 6, 6)
         self.settings_dot.raise_()
 
-    def setPixmap(self, pixmap: QPixmap):
+    def setPixmap(self, pixmap: QPixmap):  # noqa: D102
         if pixmap:
             self._pixmap = pixmap
             scaled_pixmap = self._pixmap.scaledToHeight(
@@ -155,6 +154,7 @@ class Thumbnail(QFrame):
             self.label.setPixmap(scaled_pixmap)
 
     def set_state(self, state="default"):
+        """Apply the visual state for the thumbnail."""
         bq_color = _thumbnail_color.get(state, _thumbnail_color["default"])
         outline_thickness = 3
         self.setStyleSheet(f"""
@@ -166,21 +166,22 @@ class Thumbnail(QFrame):
 """)
 
     def set_has_settings(self, has_settings: bool):
+        """Show or hide the settings indicator."""
         self.settings_dot.setVisible(has_settings)
 
-    def sizeHint(self):
+    def sizeHint(self):  # noqa: D102
         if self.loaded:
             return self.label.sizeHint()
         else:
             return QSize(self.width(), self.width())
 
-    def minimumSizeHint(self):
+    def minimumSizeHint(self):  # noqa: D102
         if self.loaded:
             return self.label.minimumSizeHint()
         else:
             return QSize(self.width(), self.width())
 
-    def size(self):
+    def size(self):  # noqa: D102
         if self.loaded:
             return self.label.minimumSizeHint()
         else:
@@ -197,7 +198,7 @@ class ImageBar(QScrollArea):
     images_empty = pyqtSignal()
     """Emitted when the image list becomes empty after closing images."""
 
-    def __init__(self):
+    def __init__(self):  # noqa: D107
         super().__init__()
         self.selected_label = None
         self.highlighted_labels = set()
@@ -212,9 +213,7 @@ class ImageBar(QScrollArea):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
         self.container = QWidget()
-        self.container.setSizePolicy(
-            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
-        )
+        self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
         self.setMinimumHeight(100)
         self.setMaximumHeight(250)
         self.height_hint = 130
@@ -249,14 +248,15 @@ class ImageBar(QScrollArea):
         self.horizontalScrollBar().valueChanged.connect(self.check_visible)
         self.horizontalScrollBar().rangeChanged.connect(self.check_visible)
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # noqa: D102
         self.container.resize(event.size())
         super().resizeEvent(event)
 
-    def sizeHint(self):
+    def sizeHint(self):  # noqa: D102
         return QSize(super().sizeHint().width(), self.height_hint)
 
     def clear_images(self):
+        """Remove all thumbnails from the image bar."""
         for i in reversed(range(self.image_layout.count())):
             widget = self.image_layout.takeAt(i).widget()
             widget.deleteLater()
@@ -273,13 +273,13 @@ class ImageBar(QScrollArea):
         return "default"
 
     def refresh_thumbnail_states(self):
+        """Refresh selection and settings indicators for every thumbnail."""
         for label in self.image_labels:
             label.set_state(self._state_for_label(label))
-            label.set_has_settings(
-                label.image_path.split("/")[-1] in self.settings_images
-            )
+            label.set_has_settings(label.image_path.split("/")[-1] in self.settings_images)
 
     def set_settings_images(self, image_paths):
+        """Update which thumbnails are marked as having image settings."""
         settings_images = {image_path.split("/")[-1] for image_path in image_paths}
         if settings_images == self.settings_images:
             return
@@ -287,12 +287,11 @@ class ImageBar(QScrollArea):
         self.refresh_thumbnail_states()
 
     def load_images(self, image_paths):
+        """Load thumbnails for a sorted collection of image paths."""
         self.clear_images()
         for img_path in sorted(image_paths, key=lambda x: x.split("/")[-1]):
             label = Thumbnail(img_path, self)
-            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(
-                event, lbl
-            )
+            label.mousePressEvent = lambda event, lbl=label: self.label_mouse_event(event, lbl)
             self.image_layout.addWidget(label)
             self.image_labels.append(label)
         self.refresh_thumbnail_states()
@@ -304,6 +303,7 @@ class ImageBar(QScrollArea):
         QTimer.singleShot(0, self.check_visible)
 
     def label_mouse_event(self, event, label):
+        """Handle mouse selection and copy-settings actions on a thumbnail."""
         if event.button() == Qt.MouseButton.LeftButton:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 self.highlight_image(label)
@@ -315,6 +315,7 @@ class ImageBar(QScrollArea):
             self.copy_settings.emit(label.image_path)
 
     def highlight_shift(self, label):
+        """Extend the highlighted range from the selected image to a label."""
         if self.selected_label is None or self.selected_label == label:
             return
         selected_index = self.image_labels.index(self.selected_label)
@@ -329,7 +330,8 @@ class ImageBar(QScrollArea):
         self.refresh_thumbnail_states()
 
     def highlight_image(self, label, friendly=False):
-        if not self.selected_label == label:
+        """Toggle one image in the highlighted selection."""
+        if self.selected_label != label:
             if label in self.highlighted_labels and not friendly:
                 self.highlighted_labels.remove(label)
             else:
@@ -337,6 +339,7 @@ class ImageBar(QScrollArea):
             self.refresh_thumbnail_states()
 
     def highlight_all(self):
+        """Select or clear all thumbnails."""
         if len(self.highlighted_labels) == len(self.image_labels):
             self.highlighted_labels = set()
         else:
@@ -344,6 +347,7 @@ class ImageBar(QScrollArea):
         self.refresh_thumbnail_states()
 
     def select_image(self, label):
+        """Select an image and emit its path to update the application."""
         if label == self.selected_label:
             return
         if self.selected_label:
@@ -358,17 +362,19 @@ class ImageBar(QScrollArea):
         self.image_changed.emit(label.image_path)
         self.ensure_visible(label)
 
-    def wheelEvent(self, event: QWheelEvent):
+    def wheelEvent(self, event: QWheelEvent):  # noqa: D102
         delta = event.angleDelta().y()
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta)
 
     def current_image(self):
+        """Return the path of the currently selected image, if any."""
         if self.selected_label is None:
             return None
         else:
             return self.selected_label.image_path
 
     def arrow_pressed(self, key, shift=False):
+        """Move selection with the left or right arrow key."""
         if not self.image_labels:
             return
 
@@ -378,15 +384,9 @@ class ImageBar(QScrollArea):
             current_index = -1
 
         if key == "right":
-            if current_index < len(self.image_labels) - 1:
-                target_index = current_index + 1
-            else:
-                target_index = 0
+            target_index = current_index + 1 if current_index < len(self.image_labels) - 1 else 0
         elif key == "left":
-            if current_index > 0:
-                target_index = current_index - 1
-            else:
-                target_index = -1
+            target_index = current_index - 1 if current_index > 0 else -1
         else:
             return
         if shift:
@@ -394,7 +394,7 @@ class ImageBar(QScrollArea):
         self.select_image(self.image_labels[target_index])
 
     def ensure_visible(self, label):
-        """Scrolls the view to make sure the selected image is visible"""
+        """Scrolls the view to make sure the selected image is visible."""
         x = label.pos().x()
         label_width = label.width()
         area_width = self.width()
@@ -405,12 +405,15 @@ class ImageBar(QScrollArea):
             self.horizontalScrollBar().setValue(x - area_width + 2 * label_width)
 
     def get_highlighted(self):
+        """Return sorted paths for all highlighted images."""
         return sorted([label.image_path for label in self.highlighted_labels])
 
     def get_all(self):
+        """Return paths for all loaded images."""
         return [label.image_path for label in self.image_labels]
 
     def close_labels(self, labels):
+        """Close thumbnails and return the index for the next selection."""
         # Copy labels to avoid modifying the iterable while iterating
         labels_to_close = list(labels)
 
@@ -432,11 +435,7 @@ class ImageBar(QScrollArea):
             if image_label == self.selected_label:
                 self.selected_label = None
             self.highlighted_labels.discard(image_label)
-            if (
-                new_selected is not None
-                and index <= new_selected
-                and (index or new_selected)
-            ):
+            if new_selected is not None and index <= new_selected and (index or new_selected):
                 if index < new_selected:
                     new_selected -= 1
                 if new_selected >= len(self.image_labels) - 1:
@@ -449,12 +448,14 @@ class ImageBar(QScrollArea):
         return new_selected
 
     def close_highlighted(self):
+        """Close every highlighted thumbnail."""
         new_selected = self.close_labels(self.highlighted_labels)
         self.highlighted_labels = set()
         if self.image_labels:
             self.select_image(self.image_labels[new_selected])
 
     def deselect_all(self):
+        """Reset the selection while preserving the current image."""
         if self.selected_label is not None:
             self.highlighted_labels = {self.selected_label}
         else:
@@ -462,6 +463,7 @@ class ImageBar(QScrollArea):
         self.refresh_thumbnail_states()
 
     def close_single_image(self, src):
+        """Close the thumbnail matching an image path."""
         for label in self.image_labels:
             if label.image_path == src:
                 new_selected = self.close_labels(
@@ -474,6 +476,7 @@ class ImageBar(QScrollArea):
                 return
 
     def check_visible(self):
+        """Load thumbnails only when they enter the visible viewport."""
         viewport = self.viewport().rect()
         for lbl in self.image_labels:
             # Map label's geometry to viewport coordinates

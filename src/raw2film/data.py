@@ -1,6 +1,4 @@
-"""
-Data on exif tags, file extensions, film formats, and color spaces.
-"""
+"""Data on exif tags, file extensions, film formats, and color spaces."""
 
 import numpy as np
 from spectral_film_lut.config import DEFAULT_DTYPE

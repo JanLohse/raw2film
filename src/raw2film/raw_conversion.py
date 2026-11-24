@@ -1,6 +1,4 @@
-"""
-The main processing pipeline for RAW images.
-"""
+"""The main processing pipeline for RAW images."""
 
 from functools import cache
 from typing import Literal

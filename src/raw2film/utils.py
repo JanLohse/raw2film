@@ -1,6 +1,4 @@
-"""
-Additional utility functions.
-"""
+"""Additional utility functions."""
 
 from functools import cache
 
@@ -15,14 +13,14 @@ from raw2film import data
 
 @cache
 def load_metadata(src):
-    """Loads and caches image exit data."""
+    """Load and cache image EXIF data."""
     with exiftool.ExifToolHelper() as et:
         metadata = et.get_metadata(src)[0]
     return metadata
 
 
 def find_data(metadata, db):
-    """Search for camera and lens name in metadata"""
+    """Search for camera and lens name in metadata."""
     cam, lens = None, None
 
     def check_tags(metadata, tags, endings):
@@ -83,7 +81,7 @@ def find_data(metadata, db):
 
 
 def add_metadata(et, src, metadata, exp_comp):
-    """Adds metadata to an image file."""
+    """Add metadata to an image file."""
     metadata = {
         key: metadata[key]
         for key in metadata
@@ -157,6 +155,7 @@ def generate_histogram(image, mix_table=MIX_TABLE, height=100):
         Precomputed lookup matrix of shape (2, 2, 2, 4), dtype uint8.
     height : int
         Height of the histogram image.
+
     """
     hist_r = np.zeros(256, dtype=np.int32)
     hist_g = np.zeros(256, dtype=np.int32)
@@ -227,6 +226,7 @@ def generate_histogram(image, mix_table=MIX_TABLE, height=100):
 
 
 def resolution_scaling(image: np.ndarray, resolution) -> np.ndarray:
+    """Scale an image to fit within the requested resolution."""
     h, w = image.shape[:2]
     h_factor = resolution[0] / h
     w_factor = resolution[1] / w
@@ -253,6 +253,7 @@ def apply_lut_tetrahedral(
     lut: np.ndarray,  # float32 LUT in [0, 1], shape (size, size, size, 3)
     scale: float = 1.0,
 ) -> np.ndarray:
+    """Apply a tetrahedral 3D LUT to an image."""
     h, w, _ = image.shape
     size = lut.shape[0]
 
@@ -305,12 +306,7 @@ def apply_lut_tetrahedral(
                     c110 = lut[r1, g1, b0]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + dr * (c100 - c000)
-                        + dg * (c110 - c100)
-                        + db * (c111 - c110)
-                    )
+                    c = c000 + dr * (c100 - c000) + dg * (c110 - c100) + db * (c111 - c110)
 
                 elif dr >= db:
                     # dr >= db > dg
@@ -318,12 +314,7 @@ def apply_lut_tetrahedral(
                     c101 = lut[r1, g0, b1]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + dr * (c100 - c000)
-                        + db * (c101 - c100)
-                        + dg * (c111 - c101)
-                    )
+                    c = c000 + dr * (c100 - c000) + db * (c101 - c100) + dg * (c111 - c101)
 
                 else:
                     # db > dr >= dg
@@ -331,12 +322,7 @@ def apply_lut_tetrahedral(
                     c101 = lut[r1, g0, b1]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + db * (c001 - c000)
-                        + dr * (c101 - c001)
-                        + dg * (c111 - c101)
-                    )
+                    c = c000 + db * (c001 - c000) + dr * (c101 - c001) + dg * (c111 - c101)
 
             else:
                 if db >= dg:
@@ -345,12 +331,7 @@ def apply_lut_tetrahedral(
                     c011 = lut[r0, g1, b1]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + db * (c001 - c000)
-                        + dg * (c011 - c001)
-                        + dr * (c111 - c011)
-                    )
+                    c = c000 + db * (c001 - c000) + dg * (c011 - c001) + dr * (c111 - c011)
 
                 elif db >= dr:
                     # dg > db >= dr
@@ -358,12 +339,7 @@ def apply_lut_tetrahedral(
                     c011 = lut[r0, g1, b1]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + dg * (c010 - c000)
-                        + db * (c011 - c010)
-                        + dr * (c111 - c011)
-                    )
+                    c = c000 + dg * (c010 - c000) + db * (c011 - c010) + dr * (c111 - c011)
 
                 else:
                     # dg > dr > db
@@ -371,12 +347,7 @@ def apply_lut_tetrahedral(
                     c110 = lut[r1, g1, b0]
                     c111 = lut[r1, g1, b1]
 
-                    c = (
-                        c000
-                        + dg * (c010 - c000)
-                        + dr * (c110 - c010)
-                        + db * (c111 - c110)
-                    )
+                    c = c000 + dg * (c010 - c000) + dr * (c110 - c010) + db * (c111 - c110)
 
             out[y, x] = c
 

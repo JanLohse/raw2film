@@ -1,3 +1,5 @@
+"""Raw2Film package."""
+
 from pathlib import Path
 
 try:

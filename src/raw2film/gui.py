@@ -1,12 +1,12 @@
-"""
-The main gui implementation.
-"""
+"""The main gui implementation."""
 
+import contextlib
 import json
+import logging
 import os
 import shutil
 import time
-from functools import lru_cache, partial
+from functools import partial
 from pathlib import Path
 
 import exiftool
@@ -81,6 +81,8 @@ from raw2film.image_bar import ImageBar
 from raw2film.raw_conversion import raw_to_linear
 from raw2film.utils import add_metadata, generate_histogram, load_metadata
 
+logger = logging.getLogger(__name__)
+
 
 class MainWindow(QMainWindow):
     """The main window of raw2film."""
@@ -89,7 +91,7 @@ class MainWindow(QMainWindow):
     info_update = pyqtSignal(dict, str, str)
     """The UI has updated."""
 
-    def __init__(self, filmstocks):
+    def __init__(self, filmstocks):  # noqa: D107
         super().__init__()
 
         self.flip = False
@@ -104,6 +106,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(icon)
 
         self.filmstocks = filmstocks
+        self._raw_image_cache = {}
         filmstock_info = {
             x: {
                 "Year": filmstocks[x].year,
@@ -118,9 +121,7 @@ class MainWindow(QMainWindow):
                 "Sensitivity": f"ISO {filmstocks[x].iso}"
                 if filmstocks[x].iso is not None
                 else None,
-                "sensitivity": filmstocks[x].iso
-                if filmstocks[x].iso is not None
-                else None,
+                "sensitivity": filmstocks[x].iso if filmstocks[x].iso is not None else None,
                 "resolution": f"{filmstocks[x].resolution} lines/mm"
                 if filmstocks[x].resolution is not None
                 else None,
@@ -134,9 +135,7 @@ class MainWindow(QMainWindow):
                 if filmstocks[x].year is not None
                 else None,
                 "stage": filmstocks[x].stage,
-                "Chromaticity": "BW"
-                if filmstocks[x].density_measure == "bw"
-                else "Color",
+                "Chromaticity": "BW" if filmstocks[x].density_measure == "bw" else "Color",
                 "image": QImage(
                     np.require(filmstocks[x].color_checker, np.uint8, "C"),
                     6,
@@ -160,18 +159,14 @@ class MainWindow(QMainWindow):
 
         self.histogram = QRenderWidget(update_mode="ondemand")
         self.histogram.setMinimumSize(QSize(256, 256))
-        self.histogram.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
-        )
+        self.histogram.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.histogram.setMinimumSize(0, 80)
         self.histogram_context = None
 
         page_splitter = QSplitter(Qt.Orientation.Vertical)
         sidebar_widget = QWidget()
 
-        sidebar_widget.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
-        )
+        sidebar_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.sidebar_layout = QVBoxLayout(sidebar_widget)
         self.sidebar_layout.addWidget(self.histogram)
         self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
@@ -385,9 +380,7 @@ class MainWindow(QMainWindow):
         self.display_relative_intent.setCheckable(True)
         self.display_relative_intent.setChecked(True)
         display_intent_menu.addAction(self.display_relative_intent)
-        self.display_relative_bpc_intent = QAction(
-            "Relative w/ black point compensation", self
-        )
+        self.display_relative_bpc_intent = QAction("Relative w/ black point compensation", self)
         self.display_relative_bpc_intent.setCheckable(True)
         self.display_relative_bpc_intent.setChecked(False)
         display_intent_menu.addAction(self.display_relative_bpc_intent)
@@ -401,9 +394,7 @@ class MainWindow(QMainWindow):
         self.load_softproof_icc_button = QAction("Load soft proofing ICC profile", self)
         self.load_softproof_icc_button.setCheckable(True)
         view_menu.addAction(self.load_softproof_icc_button)
-        self.reset_softproof_icc_button = QAction(
-            "Reset soft proofing ICC profile", self
-        )
+        self.reset_softproof_icc_button = QAction("Reset soft proofing ICC profile", self)
         self.reset_softproof_icc_button.setVisible(False)
         view_menu.addAction(self.reset_softproof_icc_button)
 
@@ -500,8 +491,7 @@ class MainWindow(QMainWindow):
 
         self.lensfunpy_db = lensfunpy.Database()
         self.cameras = {
-            camera.maker + " " + camera.model: camera
-            for camera in self.lensfunpy_db.cameras
+            camera.maker + " " + camera.model: camera for camera in self.lensfunpy_db.cameras
         }
         self.lenses = {lens.model: lens for lens in self.lensfunpy_db.lenses}
         self.cameras["None"] = None
@@ -529,9 +519,7 @@ class MainWindow(QMainWindow):
 
         # Connect the reload button to the handler that enables lens correction
         # for the current image and tries to reload camera/lens data.
-        self.reload_lens_data_button.released.connect(
-            lambda: self.reload_lens_cam_data()
-        )
+        self.reload_lens_data_button.released.connect(lambda: self.reload_lens_cam_data())
 
         self.camera_selector = WideComboBox(self)
         """Select camera model for lens correction."""
@@ -578,16 +566,13 @@ class MainWindow(QMainWindow):
 
         self.grain_intensity = Slider(continuous=False)
         """Multiplier for grain intensity (0..2)."""
-        self.grain_intensity.setMinMaxTicks(
-            0, 2, 1, 10, self.dflt_prf_params["grain_intensity"]
-        )
+        self.grain_intensity.setMinMaxTicks(0, 2, 1, 10, self.dflt_prf_params["grain_intensity"])
         film_effects_group.add_option(
             self.grain_intensity,
             "Grain intensity",
             self.dflt_prf_params["grain_intensity"],
             self.grain_intensity.setValue,
-            tool_tip="Multiplier for grain intensity "
-            "(0 = none, 1 = default, 2 = double).",
+            tool_tip="Multiplier for grain intensity (0 = none, 1 = default, 2 = double).",
         )
 
         self.grain_size = Slider(continuous=False)
@@ -603,9 +588,7 @@ class MainWindow(QMainWindow):
 
         self.grain_sigma = Slider(continuous=False)
         """Variance of simulated film grains. Effects perceived uniformity."""
-        self.grain_sigma.setMinMaxTicks(
-            0.0, 1.0, 1, 50, self.dflt_prf_params["grain_sigma"]
-        )
+        self.grain_sigma.setMinMaxTicks(0.0, 1.0, 1, 50, self.dflt_prf_params["grain_sigma"])
         film_effects_group.add_option(
             self.grain_sigma,
             "Grain variance",
@@ -669,9 +652,7 @@ class MainWindow(QMainWindow):
         How far the halation spreads. Halation is a warm glow around highlights,
         resulting from reflections on the film backing.
         """
-        self.halation_size.setMinMaxSteps(
-            0.5, 2, 50, self.dflt_prf_params["halation_size"]
-        )
+        self.halation_size.setMinMaxSteps(0.5, 2, 50, self.dflt_prf_params["halation_size"])
         film_effects_group.add_option(
             self.halation_size,
             "Halation size",
@@ -751,9 +732,7 @@ class MainWindow(QMainWindow):
         )
 
         self.exp_wb = SliderLog(continuous=False)
-        self.exp_wb.setMinMaxSteps(
-            2700, 16000, 120, self.dflt_img_params["exp_kelvin"], -2
-        )
+        self.exp_wb.setMinMaxSteps(2700, 16000, 120, self.dflt_img_params["exp_kelvin"], -2)
         self.exp_wb.set_color_gradient(
             np.array([2 / 3, 0.14, 0.65277]), np.array([2 / 3, 0.14, 0.15277])
         )
@@ -804,9 +783,7 @@ class MainWindow(QMainWindow):
             "(Shift+Down: decrease)",
         )
         self.burn_scale = Slider(continuous=False)
-        self.burn_scale.setMinMaxTicks(
-            1, 200, default=self.dflt_img_params["burn_scale"]
-        )
+        self.burn_scale.setMinMaxTicks(1, 200, default=self.dflt_img_params["burn_scale"])
         advanced_printing_group.add_option(
             self.burn_scale,
             "Burn scale",
@@ -826,9 +803,7 @@ class MainWindow(QMainWindow):
         self.flip_button.setObjectName("flip")
         for btn in (self.rotate_left, self.rotate_right, self.flip_button):
             btn.setMinimumWidth(10)
-            btn.setSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
+            btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             rotate_layout.addWidget(btn, stretch=1)
         rotate_layout.setContentsMargins(0, 0, 0, 0)
         rotate_layout.setSpacing(0)
@@ -841,9 +816,7 @@ class MainWindow(QMainWindow):
         )
 
         self.rotation = Slider(continuous=False)
-        self.rotation.setMinMaxTicks(
-            -90, 90, 1, 4, default=self.dflt_img_params["rotation"]
-        )
+        self.rotation.setMinMaxTicks(-90, 90, 1, 4, default=self.dflt_img_params["rotation"])
         basic_settings_group.add_option(
             self.rotation,
             "Rotation angle",
@@ -861,13 +834,11 @@ class MainWindow(QMainWindow):
             "Zoom",
             self.dflt_img_params["zoom"],
             self.zoom.setValue,
-            tool_tip="Crop into the image.\n"
-            "(Ctrl+Plus: zoom in)\n"
-            "(Ctrl+Minus: zoom out)",
+            tool_tip="Crop into the image.\n(Ctrl+Plus: zoom in)\n(Ctrl+Minus: zoom out)",
         )
 
         self.format_selector = WideComboBox(self)
-        self.format_selector.addItems(list(data.FORMATS.keys()) + ["Custom"])
+        self.format_selector.addItems([*list(data.FORMATS.keys()), "Custom"])
         profile_settings_group.add_option(
             self.format_selector,
             "Format",
@@ -897,9 +868,7 @@ class MainWindow(QMainWindow):
             "characteristics (halation, resolution, grain) and changes aspect ratio.",
         )
 
-        negative_info = {
-            x: y for x, y in filmstock_info.items() if y["stage"] == "camera"
-        }
+        negative_info = {x: y for x, y in filmstock_info.items() if y["stage"] == "camera"}
         sort_keys_negative = [
             "Name",
             "Year",
@@ -1223,9 +1192,7 @@ class MainWindow(QMainWindow):
         )
 
         self.canvas_scale = Slider(continuous=False)
-        self.canvas_scale.setMinMaxTicks(
-            1, 2, 1, 40, default=self.dflt_img_params["canvas_scale"]
-        )
+        self.canvas_scale.setMinMaxTicks(1, 2, 1, 40, default=self.dflt_img_params["canvas_scale"])
         canvas_group.add_option(
             self.canvas_scale,
             "Canvas scale",
@@ -1278,17 +1245,11 @@ class MainWindow(QMainWindow):
 
         # Exposure & Image Manipulation
         create_shortcut("Up", self.exp_comp.increase, "Increase exposure compensation")
-        create_shortcut(
-            "Down", self.exp_comp.decrease, "Decrease exposure compensation"
-        )
+        create_shortcut("Down", self.exp_comp.decrease, "Decrease exposure compensation")
         create_shortcut("Ctrl+Right", self.rotation.increase, "Rotate right")
         create_shortcut("Ctrl+Left", self.rotation.decrease, "Rotate left")
-        create_shortcut(
-            "Shift+Up", self.highlight_burn.increase, "Increase highlight-burn"
-        )
-        create_shortcut(
-            "Shift+Down", self.highlight_burn.decrease, "Decrease highlight-burn"
-        )
+        create_shortcut("Shift+Up", self.highlight_burn.increase, "Increase highlight-burn")
+        create_shortcut("Shift+Down", self.highlight_burn.decrease, "Decrease highlight-burn")
         create_shortcut("Ctrl+R", self.rotate_image, "Rotate image 90°")
 
         #  Zoom Controls
@@ -1339,9 +1300,7 @@ class MainWindow(QMainWindow):
         )
         self.image_selector.triggered.connect(self.load_images)
         self.folder_selector.triggered.connect(self.load_folder)
-        self.push_pull.valueChanged.connect(
-            lambda x: self.profile_changed(x, "push_pull")
-        )
+        self.push_pull.valueChanged.connect(lambda x: self.profile_changed(x, "push_pull"))
         self.projector_kelvin.valueChanged.connect(
             lambda x: self.profile_changed(x, "projector_kelvin")
         )
@@ -1351,29 +1310,15 @@ class MainWindow(QMainWindow):
         self.idealized_curve.stateChanged.connect(
             lambda x: self.profile_changed(x, "idealized_curve")
         )
-        self.white_clip.stateChanged.connect(
-            lambda x: self.profile_changed(x, "white_clip")
-        )
-        self.white_balance.stateChanged.connect(
-            lambda x: self.profile_changed(x, "white_balance")
-        )
-        self.exp_comp.valueChanged.connect(
-            lambda x: self.setting_changed(x, "exp_comp")
-        )
+        self.white_clip.stateChanged.connect(lambda x: self.profile_changed(x, "white_clip"))
+        self.white_balance.stateChanged.connect(lambda x: self.profile_changed(x, "white_balance"))
+        self.exp_comp.valueChanged.connect(lambda x: self.setting_changed(x, "exp_comp"))
         self.wb_mode.currentTextChanged.connect(self.changed_wb_mode)
-        self.exp_wb.valueChanged.connect(
-            lambda x: self.setting_changed(x, "exp_kelvin")
-        )
+        self.exp_wb.valueChanged.connect(lambda x: self.setting_changed(x, "exp_kelvin"))
         self.tint.valueChanged.connect(lambda x: self.setting_changed(x, "tint"))
-        self.red_light.valueChanged.connect(
-            lambda x: self.light_changed(x, "red_light")
-        )
-        self.green_light.valueChanged.connect(
-            lambda x: self.light_changed(x, "green_light")
-        )
-        self.blue_light.valueChanged.connect(
-            lambda x: self.light_changed(x, "blue_light")
-        )
+        self.red_light.valueChanged.connect(lambda x: self.light_changed(x, "red_light"))
+        self.green_light.valueChanged.connect(lambda x: self.light_changed(x, "green_light"))
+        self.blue_light.valueChanged.connect(lambda x: self.light_changed(x, "blue_light"))
         self.lens_correction.stateChanged.connect(
             lambda x: self.setting_changed(x, "lens_correction")
         )
@@ -1381,12 +1326,8 @@ class MainWindow(QMainWindow):
         self.full_preview.triggered.connect(self.toggle_full_preview)
         self.gpu_processing.triggered.connect(self.toggle_gpu_processing)
         self.half_res_preview.triggered.connect(self.toggle_half_res_preview)
-        self.halation.stateChanged.connect(
-            lambda x: self.profile_changed(x, "halation")
-        )
-        self.sharpness.stateChanged.connect(
-            lambda x: self.profile_changed(x, "sharpness")
-        )
+        self.halation.stateChanged.connect(lambda x: self.profile_changed(x, "halation"))
+        self.sharpness.stateChanged.connect(lambda x: self.profile_changed(x, "sharpness"))
         # Profile-bind sharpening parameters
         self.sharpening_strength.valueChanged.connect(
             lambda x: self.profile_changed(x, "sharpening_strength")
@@ -1395,23 +1336,15 @@ class MainWindow(QMainWindow):
             lambda x: self.profile_changed(x, "sharpening_sigma")
         )
         self.grain.stateChanged.connect(lambda x: self.profile_changed(x, "grain"))
-        self.rotation.valueChanged.connect(
-            lambda x: self.setting_changed(x, "rotation")
-        )
+        self.rotation.valueChanged.connect(lambda x: self.setting_changed(x, "rotation"))
         self.zoom.valueChanged.connect(lambda x: self.setting_changed(x, "zoom"))
         self.format_selector.currentTextChanged.connect(self.format_changed)
-        self.grain_size.valueChanged.connect(
-            lambda x: self.profile_changed(x, "grain_size")
-        )
+        self.grain_size.valueChanged.connect(lambda x: self.profile_changed(x, "grain_size"))
         self.grain_intensity.valueChanged.connect(
             lambda x: self.profile_changed(x, "grain_intensity")
         )
-        self.grain_sigma.valueChanged.connect(
-            lambda x: self.profile_changed(x, "grain_sigma")
-        )
-        self.halation_size.valueChanged.connect(
-            lambda x: self.profile_changed(x, "halation_size")
-        )
+        self.grain_sigma.valueChanged.connect(lambda x: self.profile_changed(x, "grain_sigma"))
+        self.halation_size.valueChanged.connect(lambda x: self.profile_changed(x, "halation_size"))
         self.halation_intensity.valueChanged.connect(
             lambda x: self.profile_changed(x, "halation_intensity")
         )
@@ -1421,18 +1354,10 @@ class MainWindow(QMainWindow):
         self.rotate_right.released.connect(self.rotate_image)
         self.rotate_left.released.connect(lambda: self.rotate_image(-1))
         self.flip_button.released.connect(self.flip_image)
-        self.lens_selector.currentTextChanged.connect(
-            lambda x: self.setting_changed(x, "lens")
-        )
-        self.camera_selector.currentTextChanged.connect(
-            lambda x: self.setting_changed(x, "cam")
-        )
-        self.frame_width.textChanged.connect(
-            lambda x: self.profile_changed(x, "frame_width")
-        )
-        self.frame_height.textChanged.connect(
-            lambda x: self.profile_changed(x, "frame_height")
-        )
+        self.lens_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "lens"))
+        self.camera_selector.currentTextChanged.connect(lambda x: self.setting_changed(x, "cam"))
+        self.frame_width.textChanged.connect(lambda x: self.profile_changed(x, "frame_width"))
+        self.frame_height.textChanged.connect(lambda x: self.profile_changed(x, "frame_height"))
         self.profile_selector.currentTextChanged.connect(self.load_profile_params)
         self.save_settings_button.triggered.connect(self.save_settings_dialogue)
         self.load_settings_button.triggered.connect(self.load_settings_dialogue)
@@ -1444,19 +1369,11 @@ class MainWindow(QMainWindow):
         self.highlight_burn.valueChanged.connect(
             lambda x: self.setting_changed(x, "highlight_burn")
         )
-        self.burn_scale.valueChanged.connect(
-            lambda x: self.setting_changed(x, "burn_scale")
-        )
-        self.saturation_slider.valueChanged.connect(
-            lambda x: self.profile_changed(x, "sat_adjust")
-        )
-        self.color_masking.valueChanged.connect(
-            lambda x: self.profile_changed(x, "color_masking")
-        )
+        self.burn_scale.valueChanged.connect(lambda x: self.setting_changed(x, "burn_scale"))
+        self.saturation_slider.valueChanged.connect(lambda x: self.profile_changed(x, "sat_adjust"))
+        self.color_masking.valueChanged.connect(lambda x: self.profile_changed(x, "color_masking"))
         self.quick_save_button.triggered.connect(self.quick_save)
-        self.close_highlighted_button.triggered.connect(
-            self.image_bar.close_highlighted
-        )
+        self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)
         self.image_bar.copy_settings.connect(self.copy_settings)
         self.deselect_all_button.triggered.connect(self.image_bar.deselect_all)
@@ -1466,9 +1383,7 @@ class MainWindow(QMainWindow):
         self.canvas_mode.currentTextChanged.connect(
             lambda x: self.setting_changed(x, "canvas_mode")
         )
-        self.canvas_scale.valueChanged.connect(
-            lambda x: self.setting_changed(x, "canvas_scale")
-        )
+        self.canvas_scale.valueChanged.connect(lambda x: self.setting_changed(x, "canvas_scale"))
         self.canvas_width.textChanged.connect(
             lambda: self.setting_changed(
                 float(self.canvas_height.text()) / float(self.canvas_width.text())
@@ -1485,12 +1400,8 @@ class MainWindow(QMainWindow):
                 "canvas_ratio",
             )
         )
-        self.shadow_comp.valueChanged.connect(
-            lambda x: self.profile_changed(x, "shadow_comp")
-        )
-        self.chroma_nr.valueChanged.connect(
-            lambda x: self.setting_changed(x, "chroma_nr")
-        )
+        self.shadow_comp.valueChanged.connect(lambda x: self.profile_changed(x, "shadow_comp"))
+        self.chroma_nr.valueChanged.connect(lambda x: self.setting_changed(x, "chroma_nr"))
         self.ui_update.connect(self.load_image_params_to_ui)
         self.load_display_icc_button.triggered.connect(self.load_display_icc_dialog)
         self.reset_display_icc_button.triggered.connect(self.reset_display_icc)
@@ -1545,9 +1456,7 @@ class MainWindow(QMainWindow):
         self.rotate_times = 0
         self.flip_image = False
         self.active = True  # prevent from running update_preview by setting inactive
-        self.loading = (
-            False  # prevent from storing settings while setting widget values
-        )
+        self.loading = False  # prevent from storing settings while setting widget values
         self.display_icc_path = None
         self.softproof_icc_path = None
         self.icc_transform = None
@@ -1574,12 +1483,14 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.setup_exiftool)
 
     def eventFilter(self, watched, event):
+        """Handle Qt events forwarded to this window."""
         if watched == self.image and event.type() == QEvent.Type.Resize:
             self.parameter_changed()
 
         return super().eventFilter(watched, event)
 
     def create_context(self):
+        """Replace the render contexts after switching between GPU and bitmap mode."""
         target_mode = "wgpu" if self.gpu_processing.isChecked() else "bitmap"
         if self.context_mode == target_mode:
             return
@@ -1604,9 +1515,7 @@ class MainWindow(QMainWindow):
 
         self.histogram = QRenderWidget(update_mode="ondemand")
         self.histogram.setMinimumSize(0, 80)
-        self.histogram.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        self.histogram.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         histogram_container = QWidget()
         container_layout = QHBoxLayout(histogram_container)
@@ -1657,6 +1566,7 @@ class MainWindow(QMainWindow):
             self.image_stack.setCurrentIndex(0)
 
     def setup_exiftool(self):
+        """Initialize ExifTool and show an error when it is unavailable."""
         try:
             self.et = exiftool.ExifToolHelper()
         except FileNotFoundError:
@@ -1671,6 +1581,7 @@ class MainWindow(QMainWindow):
                 QApplication.quit()
 
     def reset_image(self):
+        """Reset processing settings for every highlighted image."""
         for src in self.image_bar.get_highlighted():
             src_short = src.split("/")[-1]
             if src_short in self.image_params:
@@ -1679,32 +1590,29 @@ class MainWindow(QMainWindow):
         self.load_image(self.image_bar.selected_label.image_path)
 
     def reset_all_images(self):
+        """Clear processing settings for all images."""
         self.image_params = {}
         self.sync_thumbnail_settings()
         if self.image_bar.selected_label is not None:
             self.load_image(self.image_bar.selected_label.image_path)
 
     def reset_profile(self):
+        """Reset the currently selected processing profile."""
         profile = self.profile_selector.currentText()
         if profile in self.profile_params:
             self.profile_params[profile] = {}
         self.load_profile_params()
 
     def copy_settings(self, src):
+        """Copy the source image settings to every highlighted image."""
         src_short = src.split("/")[-1]
         if src_short in self.image_params:
             for image in self.image_bar.get_highlighted():
                 image_short = image.split("/")[-1]
                 lens, cam = None, None
-                if (
-                    image_short in self.image_params
-                    and "lens" in self.image_params[image_short]
-                ):
+                if image_short in self.image_params and "lens" in self.image_params[image_short]:
                     lens = self.image_params[image_short]["lens"]
-                if (
-                    image_short in self.image_params
-                    and "cam" in self.image_params[image_short]
-                ):
+                if image_short in self.image_params and "cam" in self.image_params[image_short]:
                     cam = self.image_params[image_short]["cam"]
                 self.image_params[image_short] = self.image_params[src_short].copy()
                 if lens is not None:
@@ -1719,6 +1627,7 @@ class MainWindow(QMainWindow):
         self.load_image(self.image_bar.selected_label.image_path)
 
     def delete_highlighted(self):
+        """Delete every highlighted image after confirmation."""
         reply = QMessageBox()
         number_images = len(self.image_bar.get_highlighted())
         if number_images == 1:
@@ -1727,9 +1636,7 @@ class MainWindow(QMainWindow):
             reply.setText(f"Delete {number_images} images permanently?")
         else:
             return
-        reply.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         x = reply.exec()
         if x == QMessageBox.StandardButton.Yes:
             for image in self.image_bar.get_highlighted():
@@ -1737,21 +1644,18 @@ class MainWindow(QMainWindow):
             self.image_bar.close_highlighted()
 
     def delete_profile(self):
+        """Delete the selected profile after confirmation."""
         current_profile = self.profile_selector.currentText()
         reply = QMessageBox(self)
         reply.setText(f"Delete profile {current_profile}?")
-        reply.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         x = reply.exec()
         if x == QMessageBox.StandardButton.Yes:
             if current_profile == "Default":
                 self.profile_params[current_profile] = {}
             else:
                 self.profile_selector.setCurrentText("Default")
-                self.profile_selector.removeItem(
-                    self.profile_selector.findText(current_profile)
-                )
+                self.profile_selector.removeItem(self.profile_selector.findText(current_profile))
                 if current_profile in self.profile_params:
                     self.profile_params.pop(current_profile)
                 for image in self.image_params:
@@ -1763,6 +1667,7 @@ class MainWindow(QMainWindow):
             self.load_profile_params()
 
     def delete_all_profiles(self):
+        """Delete all profiles except the default profile after confirmation."""
         reply = QMessageBox(self)
         profile_count = len(self.profile_params)
         if not profile_count:
@@ -1772,9 +1677,7 @@ class MainWindow(QMainWindow):
         else:
             message = f"Delete {profile_count} profiles permanently?"
         reply.setText(message)
-        reply.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        reply.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         x = reply.exec()
         if x == QMessageBox.StandardButton.Yes:
             profiles = tuple(self.profile_params.keys())
@@ -1783,9 +1686,7 @@ class MainWindow(QMainWindow):
                     self.profile_params[profile] = {}
                 else:
                     self.profile_selector.setCurrentText("Default")
-                    self.profile_selector.removeItem(
-                        self.profile_selector.findText(profile)
-                    )
+                    self.profile_selector.removeItem(self.profile_selector.findText(profile))
                     if profile in self.profile_params:
                         self.profile_params.pop(profile)
                     for image in self.image_params:
@@ -1797,6 +1698,7 @@ class MainWindow(QMainWindow):
             self.load_profile_params()
 
     def add_profile_prompt(self):
+        """Prompt for and add a new processing profile."""
         text, ok = QInputDialog.getText(self, "Add profile", "Profile name:")
         if ok:
             self.profile_params[text] = self.profile_params[
@@ -1806,23 +1708,24 @@ class MainWindow(QMainWindow):
             self.profile_selector.setCurrentText(text)
 
     def format_changed(self, film_format: str):
+        """Update frame dimensions when a preset format is selected."""
         if film_format != "Custom" and not self.loading:
             width, height = data.FORMATS[film_format]
             self.frame_width.setText(str(width))
             self.frame_height.setText(str(height))
 
     def _trigger_initial_image_info(self):
+        """Load metadata and emit image information for the selected image."""
         current_img = self.image_bar.current_image()
         if current_img:
             src_short = current_img.split("/")[-1]
             self._ensure_image_metadata(src_short, current_img)
             metadata = load_metadata(current_img)
             image_params = self.image_params.get(src_short, {})
-            self.info_update.emit(
-                metadata, image_params.get("cam"), image_params.get("lens")
-            )
+            self.info_update.emit(metadata, image_params.get("cam"), image_params.get("lens"))
 
     def load_images(self):
+        """Prompt for and load one or more raw image files."""
         filenames, ok = QFileDialog.getOpenFileNames(
             self,
             "Open raw images",
@@ -1831,15 +1734,14 @@ class MainWindow(QMainWindow):
         )
 
         if ok:
-            for folder in set(
-                ["/".join(filename.split("/")[:-1]) for filename in filenames]
-            ):
+            for folder in {"/".join(filename.split("/")[:-1]) for filename in filenames}:
                 self.load_settings_directory(folder)
             self.image_bar.load_images(filenames)
             self.sync_thumbnail_settings()
             self._trigger_initial_image_info()
 
     def load_folder(self):
+        """Prompt for and load every supported image in a folder."""
         folder = QFileDialog.getExistingDirectory(self, "Select image folder", "")
         if folder:
             self.load_settings_directory(folder)
@@ -1853,6 +1755,7 @@ class MainWindow(QMainWindow):
             self._trigger_initial_image_info()
 
     def load_image(self, src, **kwargs):
+        """Load an image and switch the preview stack to it."""
         self.image_stack.setCurrentWidget(self.image)
         self.start_worker(self.load_image_process, src=src)
 
@@ -1915,12 +1818,11 @@ class MainWindow(QMainWindow):
         return image_params
 
     def load_image_process(self, src, **kwargs):
+        """Prepare and process a single image source."""
         src_short = src.split("/")[-1]
         self._ensure_image_metadata(src_short, src)
         if "profile" not in self.image_params[src_short]:
-            self.image_params[src_short]["profile"] = (
-                self.profile_selector.currentText()
-            )
+            self.image_params[src_short]["profile"] = self.profile_selector.currentText()
         if "exp_kelvin" not in self.image_params[src_short]:
             self.image_params[src_short]["exp_kelvin"] = self.exp_wb.getValue()
         self.load_image_params(src_short, src)
@@ -1928,9 +1830,7 @@ class MainWindow(QMainWindow):
         # Emit info update for the image info widget
         metadata = load_metadata(src)
         image_params = self.image_params.get(src_short, {})
-        self.info_update.emit(
-            metadata, image_params.get("cam"), image_params.get("lens")
-        )
+        self.info_update.emit(metadata, image_params.get("cam"), image_params.get("lens"))
 
         if self.active:
             self.update_preview(src)
@@ -1951,24 +1851,31 @@ class MainWindow(QMainWindow):
                 # special to do on failure here.
                 pass
 
-    @lru_cache
     def load_raw_image(self, src, cam=None, lens=None):
-        image = raw_to_linear(src)
+        """Load and optionally lens-correct one raw image."""
+        cache_key = (src, cam, lens)
+        if cache_key not in self._raw_image_cache:
+            image = raw_to_linear(src)
 
-        if cam is not None and lens is not None:
-            cam = self.cameras[cam]
-            lens = self.lenses[lens]
+            if cam is not None and lens is not None:
+                cam = self.cameras[cam]
+                lens = self.lenses[lens]
 
-            image = effects.lens_correction(image, load_metadata(src), cam, lens)
+                image = effects.lens_correction(image, load_metadata(src), cam, lens)
 
-        return image
+            self._raw_image_cache[cache_key] = image
+            if len(self._raw_image_cache) > 32:
+                del self._raw_image_cache[next(iter(self._raw_image_cache))]
+        return self._raw_image_cache[cache_key]
 
     def changed_wb_mode(self, mode):
+        """Apply a white-balance preset or enable custom adjustment."""
         if mode != "Custom":
             self.exp_wb.setValue(self.wb_modes[mode])
             self.parameter_changed()
 
     def changed_negative(self, negative):
+        """Update UI and profile values when the negative stock changes."""
         self.active = False
         self.print_selector.setEnabled(negative not in self.reversal_stocks)
         if self.print_selector.isEnabled():
@@ -1984,6 +1891,7 @@ class MainWindow(QMainWindow):
         self.profile_changed(negative, "negative_film")
 
     def profile_changed(self, value, key):
+        """Store a profile value and trigger preview reprocessing."""
         if self.loading:
             return
         if key in ["frame_width", "frame_height"]:
@@ -2008,10 +1916,12 @@ class MainWindow(QMainWindow):
         self.parameter_changed()
 
     def quick_save(self):
+        """Persist settings and reset the save timer."""
         self.save_settings_system()
         self.save_timer = time.time()
 
     def sync_thumbnail_settings(self):
+        """Update thumbnails to indicate which images have custom settings."""
         if hasattr(self, "image_bar"):
             current_settings = frozenset(self.image_params.keys())
             if getattr(self, "_thumbnail_settings_images", None) == current_settings:
@@ -2020,6 +1930,7 @@ class MainWindow(QMainWindow):
             self.image_bar.set_settings_images(current_settings)
 
     def setting_changed(self, value, key):
+        """Store a changed setting for the current profile or image."""
         if self.loading:
             return
         current_image = self.image_bar.current_image()
@@ -2031,9 +1942,9 @@ class MainWindow(QMainWindow):
                     and value == self.image_params[current_image][key]
                 ):
                     return  # no change
-            elif (
-                key in self.dflt_img_params and self.dflt_img_params[key] == value
-            ) or (key in self.dflt_prf_params and self.dflt_prf_params[key] == value):
+            elif (key in self.dflt_img_params and self.dflt_img_params[key] == value) or (
+                key in self.dflt_prf_params and self.dflt_prf_params[key] == value
+            ):
                 return  # default value and nothing to overwrite
         if time.time() - self.save_timer > 10:
             self.quick_save()
@@ -2051,9 +1962,7 @@ class MainWindow(QMainWindow):
             # Determine whether metadata (cam/lens) likely needs fetching.
             needs_meta = (
                 not ip.get("_metadata_checked") and ip.get("cam") in (None, "", "None")
-            ) or (
-                not ip.get("_metadata_checked") and ip.get("lens") in (None, "", "None")
-            )
+            ) or (not ip.get("_metadata_checked") and ip.get("lens") in (None, "", "None"))
             if needs_meta:
                 to_metadata.append(src)
 
@@ -2066,15 +1975,14 @@ class MainWindow(QMainWindow):
         if to_metadata:
             # Run metadata extraction asynchronously so the UI remains
             # responsive. Do not semaphore this worker.
-            self.start_worker(
-                self._ensure_metadata_for_images, semaphore=False, srcs=to_metadata
-            )
+            self.start_worker(self._ensure_metadata_for_images, semaphore=False, srcs=to_metadata)
         if key == "exp_kelvin":
             self.update_wb_mode(value)
         self.sync_thumbnail_settings()
         self.parameter_changed()
 
     def update_wb_mode(self, value):
+        """Select a preset or custom mode for a Kelvin white-balance value."""
         value = round(value, -2)
         if value in self.wb_modes.values():
             self.wb_mode.setCurrentText(
@@ -2084,16 +1992,20 @@ class MainWindow(QMainWindow):
             self.wb_mode.setCurrentText("Custom")
 
     def setup_profile_params(self, profile, src=None):
+        """Merge profile values with the default processing parameters."""
         if profile in self.profile_params:
             return {**self.dflt_prf_params, **self.profile_params[profile]}
         else:
             return self.dflt_prf_params
 
     def load_image_params(self, src, full_src=None):
+        """Load resolved image parameters and emit them to the UI."""
         image_params = self.setup_image_params(src, full_src)
         self.ui_update.emit(image_params)
 
     def load_image_params_to_ui(self, image_params):
+        """Populate widgets from a resolved image parameter dictionary."""
+
         def set_safely(widget, method_name, key):
             if key in image_params:
                 widget.blockSignals(True)
@@ -2134,6 +2046,7 @@ class MainWindow(QMainWindow):
         self.sync_thumbnail_settings()
 
     def load_profile_params(self, profile=None):
+        """Load profile values into the processing controls."""
         if profile is None:
             profile = self.profile_selector.currentText()
         self.active = False
@@ -2183,6 +2096,7 @@ class MainWindow(QMainWindow):
         self.parameter_changed()
 
     def lights_changed(self, value):
+        """Update linked or independent color-light controls."""
         if self.link_lights.isChecked():
             if (
                 value
@@ -2199,9 +2113,11 @@ class MainWindow(QMainWindow):
             self.parameter_changed()
 
     def print_output(self, s):
+        """Handle an output status callback."""
         return
 
     def update_finished(self):
+        """Restart queued preview work after a worker finishes."""
         self.running = False
         if self.waiting:
             self.waiting = False
@@ -2209,14 +2125,17 @@ class MainWindow(QMainWindow):
             self.start_worker(self.update_preview)
 
     def progress_fn(self, n):
+        """Accept a worker progress update."""
         return
 
     def parameter_changed(self, src=None):
+        """Schedule preview reprocessing after a parameter change."""
         if self.active:
             self.create_context()
             self.start_worker(self.update_preview, src=src)
 
     def start_worker(self, function, semaphore=True, *args, **kwargs):
+        """Start a QRunnable while preventing duplicate processing."""
         if semaphore:
             if self.running:
                 self.waiting = True
@@ -2234,6 +2153,7 @@ class MainWindow(QMainWindow):
         full_height: int,
         full_width: int,
     ):
+        """Render an RGB image into a bitmap-sized preview canvas."""
         image = np.ascontiguousarray(image)
 
         image_height, image_width = image.shape[:2]
@@ -2253,17 +2173,16 @@ class MainWindow(QMainWindow):
 
         canvas_rgba = np.zeros((canvas_height, canvas_width, 4), dtype=np.uint8)
 
-        canvas_rgba[
-            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 0:3
-        ] = image
+        canvas_rgba[y_offset : y_offset + image_height, x_offset : x_offset + image_width, 0:3] = (
+            image
+        )
 
-        canvas_rgba[
-            y_offset : y_offset + image_height, x_offset : x_offset + image_width, 3
-        ] = 255
+        canvas_rgba[y_offset : y_offset + image_height, x_offset : x_offset + image_width, 3] = 255
 
         self.image_context.set_bitmap(canvas_rgba)
 
     def update_preview(self, src=None, *args, **kwargs):
+        """Process and draw the selected or explicitly supplied image."""
         if src is None:
             if self.image_bar.current_image() is None:
                 return
@@ -2281,21 +2200,12 @@ class MainWindow(QMainWindow):
         profile_args = self.setup_profile_params(image_args["profile"], src)
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
 
-        processing_args["negative_film"] = self.filmstocks[
-            processing_args["negative_film"]
-        ]
-        if (
-            "print_film" in processing_args
-            and processing_args["print_film"] is not None
-        ):
+        processing_args["negative_film"] = self.filmstocks[processing_args["negative_film"]]
+        if "print_film" in processing_args and processing_args["print_film"] is not None:
             if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
-                processing_args["custom_inversion"] = (
-                    "ACES" not in processing_args["print_film"]
-                )
-            processing_args["print_film"] = self.filmstocks[
-                processing_args["print_film"]
-            ]
+                processing_args["custom_inversion"] = "ACES" not in processing_args["print_film"]
+            processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
 
         processing_args["resolution"] = (
             full_height,
@@ -2303,9 +2213,7 @@ class MainWindow(QMainWindow):
         )
 
         if self.half_res_preview.isChecked():
-            processing_args["resolution"] = tuple(
-                x // 2 for x in processing_args["resolution"]
-            )
+            processing_args["resolution"] = tuple(x // 2 for x in processing_args["resolution"])
         if not self.full_preview.isChecked():
             processing_args["sharpness"] = False
             processing_args["grain"] = False
@@ -2327,7 +2235,7 @@ class MainWindow(QMainWindow):
                 )
                 histogram = generate_histogram(image, height=80)
                 self.histogram_context.set_bitmap(histogram)
-                img_height, img_width, _ = image.shape
+                _img_height, _img_width, _ = image.shape
                 self.numpy_to_canvas(image, full_height, full_width)
         except AttributeError:
             QTimer.singleShot(100, lambda: self.update_preview(src))
@@ -2337,6 +2245,7 @@ class MainWindow(QMainWindow):
         self.image.setToolTip(src)
 
     def setup_image_params(self, src, full_src=None):
+        """Merge default and saved parameters for an image."""
         src_short = src.split("/")[-1]
         image_params = {**self.dflt_img_params, **self.image_params[src_short]}
 
@@ -2358,18 +2267,12 @@ class MainWindow(QMainWindow):
         processing_args = {**self.dflt_prf_params, **image_args, **profile_args}
 
         # 2. Film stock resolution mappings
-        processing_args["negative_film"] = self.filmstocks[
-            processing_args["negative_film"]
-        ]
+        processing_args["negative_film"] = self.filmstocks[processing_args["negative_film"]]
         if processing_args.get("print_film") is not None:
             if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
-                processing_args["custom_inversion"] = (
-                    "ACES" not in processing_args["print_film"]
-                )
-            processing_args["print_film"] = self.filmstocks[
-                processing_args["print_film"]
-            ]
+                processing_args["custom_inversion"] = "ACES" not in processing_args["print_film"]
+            processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
 
         if resolution is not None:
             processing_args["resolution"] = (resolution, resolution)
@@ -2377,14 +2280,14 @@ class MainWindow(QMainWindow):
         metadata = load_metadata(src)
 
         # 3. Lensfun DB Correction mapping
-        if processing_args.get("lens_correction") or (
-            "lens_correction" not in processing_args and auto_lens_correct
-        ):
-            if "cam" not in processing_args or "lens" not in processing_args:
-                cam, lens = utils.find_data(metadata, self.lensfunpy_db)
-                if cam or lens:
-                    processing_args["cam"] = f"{cam.maker} {cam.model}"
-                    processing_args["lens"] = lens.model
+        if (
+            processing_args.get("lens_correction")
+            or ("lens_correction" not in processing_args and auto_lens_correct)
+        ) and ("cam" not in processing_args or "lens" not in processing_args):
+            cam, lens = utils.find_data(metadata, self.lensfunpy_db)
+            if cam or lens:
+                processing_args["cam"] = f"{cam.maker} {cam.model}"
+                processing_args["lens"] = lens.model
 
         # 4. Global parameter adjustments (Safe check configuration)
         processing_args["chroma_nr"] = processing_args.get("chroma_nr", 0) * 2
@@ -2402,9 +2305,7 @@ class MainWindow(QMainWindow):
         total_count: int | None = None,
         **kwargs,
     ) -> str:
-        """
-        Centralized file system saving, file movement, and metadata restoration logic.
-        """
+        """Centralize file system saving and metadata restoration."""
         src, filename = task
         src_short = src.split("/")[-1]
 
@@ -2447,19 +2348,22 @@ class MainWindow(QMainWindow):
         full_output_path = os.path.join(path, out_filename)
         img = Image.fromarray(image)
         img.save(full_output_path, "JPEG", quality=quality)
-        add_metadata(
-            self.et, full_output_path, metadata, exp_comp=processing_args["exp_comp"]
-        )
+        add_metadata(self.et, full_output_path, metadata, exp_comp=processing_args["exp_comp"])
 
         if close:
             QTimer.singleShot(0, lambda: self.image_bar.close_single_image(src))
 
-        print(f"exported {out_filename} in {time.time() - start_time:.2f}s")
+        logger.info(
+            "exported %s in %.2fs",
+            out_filename,
+            time.time() - start_time,
+        )
         if current_idx and total_count:
             return f"exported {out_filename} ({current_idx}/{total_count})"
         return f"exported {out_filename}"
 
     def save_image(self, src: str, filename: str, **kwargs):
+        """Process and export one image to a JPEG file."""
         start = time.time()
         # Fallback to widget check if direct thread state snapshot isn't passed
         auto_lens_correct = (
@@ -2470,11 +2374,7 @@ class MainWindow(QMainWindow):
             src, auto_lens_correct, kwargs.get("resolution")
         )
 
-        processor = (
-            self.gpu_processor
-            if self.gpu_processing.isChecked()
-            else self.cpu_processor
-        )
+        processor = self.gpu_processor if self.gpu_processing.isChecked() else self.cpu_processor
 
         image = processor.process(src, half_size=False, cache=False, **processing_args)
 
@@ -2483,19 +2383,17 @@ class MainWindow(QMainWindow):
         )
 
     def save_image_dialog(self):
+        """Prompt for an output name and export the selected image."""
         src = self.image_bar.current_image()
         if src is None:
             return
         filename = src.split("/")[-1].split(".")[0]
-        filename, ok = QFileDialog.getSaveFileName(
-            self, "Choose output file", filename, "*.jpg"
-        )
+        filename, ok = QFileDialog.getSaveFileName(self, "Choose output file", filename, "*.jpg")
         if ok:
-            self.start_worker(
-                self.save_image, src=src, filename=filename, semaphore=False
-            )
+            self.start_worker(self.save_image, src=src, filename=filename, semaphore=False)
 
     def save_multiple_process(self, folder, filenames, **kwargs):
+        """Configure and run a batch image export."""
         self.active = False
         tasks = [(f, folder + "/" + f.split("/")[-1].split(".")[0]) for f in filenames]
 
@@ -2531,9 +2429,7 @@ class MainWindow(QMainWindow):
         else:
             self.worker = CpuWorker()
             self.thread.started.connect(
-                partial(
-                    self.worker.run_tasks, self.execute_cpu_single_step, tasks, **kwargs
-                )
+                partial(self.worker.run_tasks, self.execute_cpu_single_step, tasks, **kwargs)
             )
 
         self.worker.moveToThread(self.thread)
@@ -2548,20 +2444,17 @@ class MainWindow(QMainWindow):
 
         self.thread.start()
 
-    def execute_cpu_single_step(
-        self, task: tuple, current_idx: int, total_count: int, **kwargs
-    ):
+    def execute_cpu_single_step(self, task: tuple, current_idx: int, total_count: int, **kwargs):
+        """Export one image using the CPU processing pipeline."""
         start = time.time()
-        src, filename = task
+        src, _filename = task
         auto_lens_correct = kwargs.get("_auto_lens_correct_state", False)
 
         processing_args, metadata = self._build_processing_params(
             src, auto_lens_correct, kwargs.get("resolution")
         )
 
-        image = self.cpu_processor.process(
-            src, half_size=False, cache=False, **processing_args
-        )
+        image = self.cpu_processor.process(src, half_size=False, cache=False, **processing_args)
 
         return self._export_processed_image(
             image,
@@ -2575,6 +2468,7 @@ class MainWindow(QMainWindow):
         )
 
     def prepare_cpu_stage(self, src: str, **kwargs):
+        """Prepare CPU-side data for a GPU batch export."""
         auto_lens_correct = kwargs.get("_auto_lens_correct_state", False)
 
         processing_args, metadata = self._build_processing_params(
@@ -2598,6 +2492,7 @@ class MainWindow(QMainWindow):
         total_count: int | None = None,
         **kwargs,
     ):
+        """Export an image using preloaded GPU pipeline data."""
         start = time.time()
 
         # Unpack preloaded variables
@@ -2619,16 +2514,19 @@ class MainWindow(QMainWindow):
         )
 
     def update_progress(self, message, value):
+        """Update the batch export progress dialog."""
         self.progress_dialog.setLabelText(message)
         self.progress_dialog.setValue(value)
 
     def tasks_finished(self):
+        """Restore UI state after all batch tasks finish."""
         self.active = True
         self.progress_dialog.close()
         if self.image_bar.current_image() is not None:
             self.load_image(self.image_bar.current_image())
 
     def save_image_setting_dialog(self):
+        """Prompt for batch export settings."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Export settings")
 
@@ -2651,8 +2549,7 @@ class MainWindow(QMainWindow):
         move_raw = QCheckBox("Move raw file to subfolder")
         move_raw.setTristate(True)
         move_raw.setToolTip(
-            "Checked: move file \nPartially checked: copy file\nUnchecked: do nothing "
-            "to raw file"
+            "Checked: move file \nPartially checked: copy file\nUnchecked: do nothing to raw file"
         )
         layout.addWidget(move_raw)
 
@@ -2682,10 +2579,7 @@ class MainWindow(QMainWindow):
         cancel_button.clicked.connect(dialog.reject)
 
         if dialog.exec():
-            if resolution_field.text():
-                resolution = int(resolution_field.text())
-            else:
-                resolution = None
+            resolution = int(resolution_field.text()) if resolution_field.text() else None
             kwargs = {
                 "move_raw": move_raw.checkState().value,
                 "add_year": sort_by_year.isChecked(),
@@ -2699,6 +2593,7 @@ class MainWindow(QMainWindow):
             return False, {}
 
     def save_all_images(self):
+        """Prompt for an export folder and export every loaded image."""
         if not self.image_bar.get_all():
             return
         ok, kwargs = self.save_image_setting_dialog()
@@ -2711,6 +2606,7 @@ class MainWindow(QMainWindow):
                 )
 
     def save_selected_images(self):
+        """Prompt for an export folder and export every highlighted image."""
         if not self.image_bar.get_highlighted():
             return
         ok, kwargs = self.save_image_setting_dialog()
@@ -2723,6 +2619,7 @@ class MainWindow(QMainWindow):
                 )
 
     def save_settings_dialogue(self):
+        """Prompt for a settings file name and save it."""
         filename, ok = QFileDialog.getSaveFileName(
             self, "Select file name", "raw2film_settings.json", "*.json"
         )
@@ -2730,13 +2627,12 @@ class MainWindow(QMainWindow):
             self.save_settings(filename)
 
     def save_settings_directory(self, root="", src=None, **kwargs):
-        if root:
-            filename = root + "/raw2film_settings.json"
-        else:
-            filename = "raw2film_settings.json"
+        """Save settings into the requested directory."""
+        filename = root + "/raw2film_settings.json" if root else "raw2film_settings.json"
         self.save_settings(filename, src)
 
     def save_settings(self, filename, src=None):
+        """Write complete or image-specific settings to JSON."""
         if src is None:
             complete_dict = {
                 "image_params": self.image_params,
@@ -2772,6 +2668,7 @@ class MainWindow(QMainWindow):
             json.dump(complete_dict, f)
 
     def save_settings_system(self):
+        """Persist profile and image settings in application QSettings."""
         self.settings.setValue("profile_params", json.dumps(self.profile_params))
         self.settings.setValue(
             "image_params",
@@ -2779,6 +2676,7 @@ class MainWindow(QMainWindow):
         )
 
     def load_settings_system(self):
+        """Restore profile and image settings from persistent QSettings."""
         self.profile_params = json.loads(self.settings.value("profile_params", "{}"))
         self.image_params = json.loads(self.settings.value("image_params", "{}"))
         for params in self.image_params.values():
@@ -2790,19 +2688,19 @@ class MainWindow(QMainWindow):
         self.sync_thumbnail_settings()
 
     def load_settings_dialogue(self):
+        """Prompt for a settings file and load it."""
         filename, ok = QFileDialog.getOpenFileName(self)
         if ok:
             self.load_settings(filename)
 
     def load_settings_directory(self, root=""):
-        if root:
-            filename = root + "/raw2film_settings.json"
-        else:
-            filename = "raw2film_settings.json"
+        """Load settings from raw2film_settings.json in a directory."""
+        filename = root + "/raw2film_settings.json" if root else "raw2film_settings.json"
         if Path(filename).is_file():
             self.load_settings(filename)
 
     def load_settings(self, filename):
+        """Merge saved settings from a JSON file into the current session."""
         with open(filename) as f:
             complete_dict = json.load(f)
         self.image_params = {**complete_dict["image_params"], **self.image_params}
@@ -2815,12 +2713,14 @@ class MainWindow(QMainWindow):
         self.sync_thumbnail_settings()
 
     def _strip_internal_image_params(self, image_params):
+        """Remove runtime-only image metadata before saving settings."""
         return {
             key: {k: v for k, v in params.items() if k != "_metadata_checked"}
             for key, params in image_params.items()
         }
 
     def light_changed(self, value, light_name):
+        """Apply a changed print-light value to linked or individual lights."""
         if self.loading:
             return
         if self.link_lights.isChecked():
@@ -2839,14 +2739,17 @@ class MainWindow(QMainWindow):
             self.profile_changed(value, light_name)
 
     def rotate_image(self, direction=1):
+        """Rotate the image clockwise or counterclockwise."""
         self.rotate_times = (self.rotate_times - direction) % 4
         self.setting_changed(self.rotate_times, "rotate_times")
 
     def flip_image(self):
+        """Toggle horizontal image flipping."""
         self.flip = not self.flip
         self.setting_changed(self.flip, "flip")
 
     def load_view_settings(self):
+        """Restore persisted preview, ICC, and lens settings."""
         display_icc_path = self.settings.value("display_icc", None)
         softproof_icc_path = self.settings.value("softproof_icc", None)
         display_intent = self.settings.value("display_rendering_intent", "relative")
@@ -2889,12 +2792,11 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, self._update_splitter_sizes)
 
-        try:
+        with contextlib.suppress(Exception):
             self.create_context()
-        except Exception:
-            pass
 
     def load_display_icc_dialog(self):
+        """Prompt for and load a display ICC profile."""
         icc_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select display ICC profile",
@@ -2905,11 +2807,10 @@ class MainWindow(QMainWindow):
             self.load_display_icc(icc_path)
             self.parameter_changed()
         else:
-            self.load_display_icc_button.setChecked(
-                not self.load_display_icc_button.isChecked()
-            )
+            self.load_display_icc_button.setChecked(not self.load_display_icc_button.isChecked())
 
     def load_display_icc(self, icc_path):
+        """Configure a display ICC profile and rebuild the transform."""
         self.display_icc_path = icc_path
 
         self.load_display_icc_button.setToolTip(icc_path)
@@ -2920,6 +2821,7 @@ class MainWindow(QMainWindow):
         self.build_icc_transform()
 
     def reset_display_icc(self):
+        """Clear the display ICC profile and rebuild the transform."""
         self.display_icc_path = None
 
         self.reset_display_icc_button.setVisible(False)
@@ -2932,6 +2834,7 @@ class MainWindow(QMainWindow):
         self.parameter_changed()
 
     def load_softproof_icc_dialog(self):
+        """Prompt for and load a soft-proof ICC profile."""
         icc_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select ICC profile for soft proofing",
@@ -2947,6 +2850,7 @@ class MainWindow(QMainWindow):
             )
 
     def load_softproof_icc(self, icc_path):
+        """Configure a soft-proof ICC profile and rebuild the transform."""
         self.softproof_icc_path = icc_path
 
         self.load_softproof_icc_button.setToolTip(icc_path)
@@ -2957,6 +2861,7 @@ class MainWindow(QMainWindow):
         self.build_icc_transform()
 
     def reset_softproof_icc(self):
+        """Clear the soft-proof ICC profile and rebuild the transform."""
         self.softproof_icc_path = None
 
         self.load_softproof_icc_button.setChecked(False)
@@ -2969,10 +2874,8 @@ class MainWindow(QMainWindow):
         self.parameter_changed()
 
     def build_icc_transform(self):
-        if self.icc_bpc:
-            flags = ImageCms.Flags.BLACKPOINTCOMPENSATION
-        else:
-            flags = 0x0
+        """Build or clear the display and soft-proof ICC transform."""
+        flags = ImageCms.Flags.BLACKPOINTCOMPENSATION if self.icc_bpc else 0
         try:
             if self.display_icc_path:
                 if self.softproof_icc_path:
@@ -3016,6 +2919,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.icc_loading_warning)
 
     def set_display_intent(self, intent, build_transform=True):
+        """Apply a display rendering intent."""
         self.display_absolute_intent.setChecked(intent == "absolute")
         self.display_relative_intent.setChecked(intent == "relative")
         self.display_relative_bpc_intent.setChecked(intent == "relative_bpc")
@@ -3040,6 +2944,7 @@ class MainWindow(QMainWindow):
             self.parameter_changed()
 
     def set_softproof_intent(self, intent, build_transform=True):
+        """Apply a soft-proof rendering intent."""
         self.softproof_absolute_intent.setChecked(intent == "absolute")
         self.softproof_relative_intent.setChecked(intent == "relative")
         self.softproof_perceptual_intent.setChecked(intent == "perceptual")
@@ -3060,13 +2965,13 @@ class MainWindow(QMainWindow):
             self.parameter_changed()
 
     def toggle_gpu_processing(self, checked):
-        """Called when the GPU rendering action is toggled. Persist the choice and
-        recreate the rendering context so it takes effect immediately."""
+        """Persist GPU processing and recreate the rendering context.
+
+        Recreate the context so the GPU setting takes effect immediately.
+        """
         self.settings.setValue("gpu_processing", "1" if checked else "0")
-        try:
+        with contextlib.suppress(Exception):
             self.create_context()
-        except Exception:
-            pass
         self.parameter_changed()
 
     def toggle_half_res_preview(self, checked):
@@ -3086,16 +2991,14 @@ class MainWindow(QMainWindow):
 
     def toggle_auto_lens_correction(self, checked):
         """Persist whether to auto-toggle lens correction for newly loaded images."""
-        try:
+        with contextlib.suppress(Exception):
             self.settings.setValue("auto_lens_correct", "1" if checked else "0")
-        except Exception:
-            # ignore settings failure
-            pass
 
     def reload_lens_cam_data(self):
-        """Enable lens correction for the current image and try to reload
-        camera and lens data from metadata. Updates image params and triggers
-        a re-render."""
+        """Enable lens correction and reload camera and lens metadata.
+
+        Update image parameters and trigger a re-render.
+        """
         current = self.image_bar.current_image()
         if current is None:
             return
@@ -3125,24 +3028,22 @@ class MainWindow(QMainWindow):
         self.lens_correction.setChecked(True)
 
         # Clear any cached raw load that might depend on previous lens/cam
-        try:
-            self.load_raw_image.cache_clear()
-        except Exception:
-            pass
+        self._raw_image_cache.clear()
 
         # Refresh UI and reprocess
         self.load_image_params(src_short, src)
         self.parameter_changed(src)
 
     def icc_loading_warning(self):
+        """Warn that saved ICC profiles could not be restored."""
         QMessageBox.information(
             self,
             "ICC loading failed",
-            "The ICC profiles could not be restored from last session. They have "
-            "been reset.",
+            "The ICC profiles could not be restored from last session. They have been reset.",
         )
 
     def show_about(self):
+        """Open the application about dialog."""
         app_links = {
             "GitHub Page": "https://github.com/JanLohse/raw2film",
             "PyPI Page": "https://pypi.org/project/raw2film/",
@@ -3185,15 +3086,17 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def closeEvent(self, event):
+        """Save settings and terminate ExifTool before closing."""
         self.quick_save()
         if self.et is not None:
             self.et.terminate()
         super().closeEvent(event)
 
     def show_empty_placeholder(self):
+        """Switch the preview stack to the empty placeholder."""
         self.image_stack.setCurrentWidget(self.empty_placeholder)
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event):  # noqa: D102
         super().resizeEvent(event)
         if hasattr(self, "top_splitter"):
             self._update_splitter_sizes()
@@ -3211,9 +3114,7 @@ class MainWindow(QMainWindow):
         num_handles = 2 if info_visible else 1
 
         # Calculate remaining width strictly for the image container
-        image_width = (
-            total_width - info_width - sidebar_width - (handle_width * num_handles)
-        )
+        image_width = total_width - info_width - sidebar_width - (handle_width * num_handles)
         image_width = max(200, image_width)
 
         if info_visible:
@@ -3222,6 +3123,7 @@ class MainWindow(QMainWindow):
             self.top_splitter.setSizes([0, image_width, sidebar_width])
 
     def toggle_image_info(self, checked):
+        """Show or hide the image information sidebar."""
         self.info_container.setVisible(checked)
         self.settings.setValue("image_info_visible", "1" if checked else "0")
         self._update_splitter_sizes()

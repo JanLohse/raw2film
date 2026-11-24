@@ -1,7 +1,5 @@
 """The main CPU processing implementation."""
 
-from functools import lru_cache
-
 import numpy as np
 from PIL import Image, ImageCms
 from spectral_film_lut.color_space import GAMMA_KEYS
@@ -24,7 +22,7 @@ from raw2film.utils import (
 class CpuProcessor:
     """The main CPU processing implementation."""
 
-    def __init__(self, cameras, lenses):
+    def __init__(self, cameras, lenses):  # noqa: D107
         self.device = get_default_device()
         self.queue = self.device.queue
 
@@ -48,11 +46,16 @@ class CpuProcessor:
         # Init lens correction data
         self.cameras = cameras
         self.lenses = lenses
+        self._raw_image_cache = {}
 
-    @lru_cache
     def load_raw_image_cached(self, src, cam=None, lens=None, half_size: bool = True):
         """Load images and cache previous requests."""
-        return self.load_raw_image(src, cam, lens, half_size)
+        cache_key = (src, cam, lens, half_size)
+        if cache_key not in self._raw_image_cache:
+            self._raw_image_cache[cache_key] = self.load_raw_image(src, cam, lens, half_size)
+            if len(self._raw_image_cache) > 32:
+                del self._raw_image_cache[next(iter(self._raw_image_cache))]
+        return self._raw_image_cache[cache_key]
 
     def load_raw_image(self, src, cam=None, lens=None, half_size: bool = True):
         """Load an image and apply lens correction."""
@@ -80,12 +83,13 @@ class CpuProcessor:
         zoom: float,
         rotate_times: int,
         flip: bool,
-        resolution: None | tuple[int, int] = None,
+        resolution: tuple[int, int] | None = None,
         half_size: bool = True,
         cache: bool = True,
         chroma_nr: int = 0,
         max_scale: float | None = None,
     ) -> tuple[int, int] | None:
+        """Process image parameters and upload the result to a CPU texture."""
         new_param_dict = {
             "src": src,
             "cam": cam,
@@ -183,9 +187,7 @@ class CpuProcessor:
         density_curve = negative_film.get_density_curve(push_pull=push_pull)
 
         if negative_film.density_measure != "bw":
-            self.color_masking_matrix = negative_film.get_color_masking_matrix(
-                color_masking
-            )
+            self.color_masking_matrix = negative_film.get_color_masking_matrix(color_masking)
         else:
             self.color_masking_matrix = None
 
@@ -297,7 +299,7 @@ class CpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        resolution: None | tuple[int, int] = None,
+        resolution: tuple[int, int] | None = None,
         frame_width: int | float = 36,
         frame_height: int | float = 24,
         rotation: float = 0.0,
@@ -328,7 +330,7 @@ class CpuProcessor:
         grain_intensity: float = 1.0,
         **_,
     ):
-        """Main function to load and process an image."""
+        """Load and process an image."""
         # Update textures
         resolution = self.load_image_texture(
             src,

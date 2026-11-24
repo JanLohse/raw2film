@@ -1,3 +1,5 @@
+"""Command-line entry point for Raw2Film."""
+
 import ctypes
 import multiprocessing
 import os
@@ -13,10 +15,9 @@ os.environ["NUMBA_THREADING_LAYER"] = "workqueue"
 
 
 def run(exit_immediately: bool = False):
+    """Launch the application and optionally exit immediately."""
     if sys.platform == "win32":
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "jan_lohse.raw2film"
-        )
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("jan_lohse.raw2film")
     app, splash_screen = launch_splash_screen("Raw2Film", __version__)
 
     icon = QIcon()

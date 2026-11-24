@@ -1,6 +1,4 @@
-"""
-Helper functions for color math.
-"""
+"""Helper functions for color math."""
 
 import math
 
@@ -30,14 +28,8 @@ def kelvin_to_XYZ(CCT):
 
     x = np.where(
         CCT <= 4000,
-        -0.2661239 * 10**9 / CCT_3
-        - 0.2343589 * 10**6 / CCT_2
-        + 0.8776956 * 10**3 / CCT
-        + 0.179910,
-        -3.0258469 * 10**9 / CCT_3
-        + 2.1070379 * 10**6 / CCT_2
-        + 0.2226347 * 10**3 / CCT
-        + 0.24039,
+        -0.2661239 * 10**9 / CCT_3 - 0.2343589 * 10**6 / CCT_2 + 0.8776956 * 10**3 / CCT + 0.179910,
+        -3.0258469 * 10**9 / CCT_3 + 2.1070379 * 10**6 / CCT_2 + 0.2226347 * 10**3 / CCT + 0.24039,
     )
 
     x_3 = x**3
@@ -68,10 +60,8 @@ def encode_ARRILogC3(x):
     return np.where(x > cut, (c / np.log(10)) * np.log(a * x + b) + d, e * x + f)
 
 
-def calc_exposure(
-    rgb: np.ndarray, ref_exposure: float = 0.18, metadata: dict | None = None
-):
-    """Calculates exposure value of the rgb image."""
+def calc_exposure(rgb: np.ndarray, ref_exposure: float = 0.18, metadata: dict | None = None):
+    """Calculate the exposure value of the RGB image."""
     lum_mat = rgb[::2, ::2, 1]
 
     factor = 3
@@ -82,9 +72,7 @@ def calc_exposure(
             and metadata["EXIF:FNumber"] != "undef"
         ):
             factor = (
-                metadata["EXIF:FNumber"] ** 2
-                / metadata["EXIF:ISO"]
-                / metadata["EXIF:ExposureTime"]
+                metadata["EXIF:FNumber"] ** 2 / metadata["EXIF:ISO"] / metadata["EXIF:ExposureTime"]
             )
         else:
             factor = 4**2 / metadata["EXIF:ISO"] / metadata["EXIF:ExposureTime"]
@@ -100,16 +88,25 @@ def calc_exposure(
 
 
 def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
-    """
-    Convert from XYZ (D65) to sRGB using CuPy.
+    """Convert from XYZ (D65) to sRGB using CuPy.
 
-    Parameters:
-        XYZ (cp.ndarray): Input array of shape (..., 3), dtype float32 or float64.
-        output_uint8 (bool): If True, returns output in 0–255 uint8 range.
-        clip (bool): If True, clips RGB values to [0, 1] before gamma.
+    Parameters
+    ----------
+    M : cp.ndarray, optional
+        RGB transform matrix.
+    XYZ : cp.ndarray
+        Input array of shape (..., 3), dtype float32 or float64.
+    apply_matrix : bool
+        Apply the RGB transform matrix.
+    clip : bool
+        Clip values to [0, 1] before gamma correction.
+    output_uint8 : bool
+        Return values as uint8 in [0, 255].
 
-    Returns:
+    Returns
+    -------
         cp.ndarray: sRGB values, same shape as XYZ (or uint8 if output_uint8 is True).
+
     """
     # XYZ to linear RGB matrix (sRGB, D65)
     if M is None:
@@ -123,10 +120,7 @@ def xyz_to_srgb(XYZ, M=None, output_uint8=True, clip=True, apply_matrix=True):
         )
 
     # Linear RGB
-    if apply_matrix:
-        RGB_linear = XYZ @ M.T
-    else:
-        RGB_linear = XYZ
+    RGB_linear = XYZ @ M.T if apply_matrix else XYZ
 
     # Optional clipping before gamma (standard practice)
     if clip:

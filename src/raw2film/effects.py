@@ -1,6 +1,4 @@
-"""
-Image processing effects.
-"""
+"""Image processing effects."""
 
 import math
 from collections.abc import Callable
@@ -20,7 +18,7 @@ from raw2film.raw_conversion import CANVAS_MODES
 
 
 def lens_correction(
-    rgb: np.ndarray, metadata: dict, cam: None | str, lens: None | str
+    rgb: np.ndarray, metadata: dict, cam: str | None, lens: str | None
 ) -> np.ndarray:
     """Apply lens correction using lensfunpy."""
     # noinspection PyUnresolvedReferences
@@ -93,13 +91,9 @@ def crop_image(rgb: np.ndarray, zoom=1, aspect=1.5, flip=False) -> np.ndarray:
                 :,
             ]
     elif y > aspect * x:
-        rgb = rgb[
-            :, math.ceil(y / 2 - x * aspect / 2) : math.ceil(y / 2 + x * aspect / 2), :
-        ]
+        rgb = rgb[:, math.ceil(y / 2 - x * aspect / 2) : math.ceil(y / 2 + x * aspect / 2), :]
     else:
-        rgb = rgb[
-            math.ceil(x / 2 - y / aspect / 2) : math.ceil(x / 2 + y / aspect / 2), :, :
-        ]
+        rgb = rgb[math.ceil(x / 2 - y / aspect / 2) : math.ceil(x / 2 + y / aspect / 2), :, :]
 
     if zoom > 1:
         x, y, _ = rgb.shape
@@ -121,7 +115,7 @@ def mtf_curve(logf, vals):
 
 
 def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
-    """Computes a convolution kernel from a mtf function."""
+    """Compute a convolution kernel from an MTF function."""
     kernel_size = round(kernel_size_mm / pixel_size_mm)
     if kernel_size % 2 == 0:
         kernel_size += 1
@@ -144,6 +138,7 @@ def compute_kernel_from_function(func, kernel_size_mm, pixel_size_mm):
 
 
 def convolve_2d(rgb: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """Convolve an RGB image with a 2D kernel."""
     if len(kernel.shape) == 2:
         rgb = cv.filter2D(rgb, -1, kernel)
     elif rgb.shape[-1] == 1:
@@ -157,6 +152,7 @@ def convolve_2d(rgb: np.ndarray, kernel: np.ndarray) -> np.ndarray:
 
 
 def mtf_kernel_layer(logf, vals, scale):
+    """Build a MTF convolution kernel for an image scale."""
     mtf_func = mtf_curve(np.asarray(logf), np.asarray(vals))
     kernel = compute_kernel_from_function(mtf_func, 0.1, 1 / scale)
     return kernel
@@ -227,7 +223,7 @@ def apply_grain(
     adx: bool = True,
     grain_intensity: float = 1.0,
 ):
-    """Applies a grain filter to an image."""
+    """Apply a grain filter to an image."""
     grain = generate_grain(
         rgb.shape, scale, grain_size_mm, bw_grain, cached=True, grain_sigma=grain_sigma
     )
@@ -250,12 +246,11 @@ def compute_halation_kernel(
     halation_intensity: float = 1.0,
     bw: bool = False,
 ):
+    """Compute an RGB kernel for the halation effect."""
     if bw:
         halation_red_factor = halation_green_factor
         halation_blue_factor = halation_green_factor
-    kernel = np.asarray(
-        exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE
-    )
+    kernel = np.asarray(exponential_blur_kernel(scale / 4 * halation_size), dtype=DEFAULT_DTYPE)
     kernel = np.dstack([kernel] * 3)
     color_factors = halation_intensity * np.array(
         [halation_red_factor, halation_green_factor, halation_blue_factor],
@@ -278,7 +273,7 @@ def halation(
     halation_intensity: float = 1.0,
     bw: bool = False,
 ) -> np.ndarray:
-    """A halation image processing effect."""
+    """Apply a halation image processing effect."""
     kernel = compute_halation_kernel(
         scale,
         halation_size,
@@ -298,6 +293,7 @@ def get_canvas_data(
     canvas_scale: float = 1.0,
     canvas_ratio: float = 1.0,
 ):
+    """Calculate the output canvas size, color, and offset."""
     if "white" in canvas_mode:
         canvas_color = (255, 255, 255)
     elif "black" in canvas_mode:
@@ -346,7 +342,7 @@ def add_canvas(
     canvas_scale: float = 1.0,
     canvas_ratio: float = 1.0,
 ):
-    """Adds a background canvas to an image."""
+    """Add a background canvas to an image."""
     if canvas_mode == "No":
         return image
 
@@ -355,17 +351,15 @@ def add_canvas(
     )
 
     canvas = np.tensordot(np.ones(output_resolution), canvas_color, axes=0)
-    canvas[
-        offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]
-    ] = image
+    canvas[offset[0] : offset[0] + image.shape[0], offset[1] : offset[1] + image.shape[1]] = image
 
     return canvas.astype(dtype="uint8")
 
 
 def down_up_blur(image: np.ndarray, scale: int = 50, func: Callable | None = None):
-    """
-    Blur by downsampling and then upsampling. Very fast on CPU compared to accurate
-    blur filters.
+    """Blur an image by downsampling and upsampling.
+
+    This is very fast on CPU compared with accurate blur filters.
     """
     scale = math.ceil(min(image.shape[:2]) / scale)
     # Downsample
@@ -386,7 +380,9 @@ def down_up_blur(image: np.ndarray, scale: int = 50, func: Callable | None = Non
         up = ndimage.zoom(blurred, scale, order=1)
         # Crop or pad to match original shape
         up_resized = np.pad(
-            up, [(0, max(x - y, 0)) for x, y in zip(image.shape, up.shape)], mode="edge"
+            up,
+            [(0, max(x - y, 0)) for x, y in zip(image.shape, up.shape, strict=False)],
+            mode="edge",
         )[: image.shape[0], : image.shape[1]]
         blurred_channels.append(up_resized)
 
@@ -400,8 +396,7 @@ def burn(
     highlight_burn: float,
     burn_scale: float,
 ):
-    """
-    Simulates highlight burning in the log exposure stage.
+    """Simulate highlight burning in the log exposure stage.
 
     The burn amount is interpreted in stops: a value of 1.0 reduces fully burned
     highlights by one stop, 2.0 by two stops, and so on.
@@ -417,9 +412,7 @@ def burn(
     highlight_burn_log10 = highlight_burn * np.log10(2)
 
     if image.shape[-1] == 3:
-        image = image - highlight_burn_log10 * down_up_blur(
-            image[..., 1:2], burn_scale, func
-        )
+        image = image - highlight_burn_log10 * down_up_blur(image[..., 1:2], burn_scale, func)
     else:
         image = image - highlight_burn_log10 * down_up_blur(image, burn_scale, func)
 
@@ -428,7 +421,7 @@ def burn(
 
 @njit
 def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
-    """A fast 1D gaussian kernel."""
+    """Create a fast 1D Gaussian kernel."""
     assert size % 2 == 1
     k = size // 2
 
@@ -444,9 +437,7 @@ def gaussian_kernel_1d(size: int, sigma: float) -> np.ndarray:
 
 
 @njit(parallel=True)
-def blur_horizontal_masked(
-    image: np.ndarray, kernel: np.ndarray, blur_mask: np.ndarray
-):
+def blur_horizontal_masked(image: np.ndarray, kernel: np.ndarray, blur_mask: np.ndarray):
     """Horizontal blur with a mask."""
     h, w, c = image.shape
     k = kernel.shape[0] // 2
@@ -492,10 +483,17 @@ def blur_vertical_masked(image: np.ndarray, kernel: np.ndarray, blur_mask: np.nd
 
 @njit
 def gaussian_blur_separable_masked(image, kernel, blur_channels):
-    """
-    image: (H, W, C) float32
-    kernel: 1D Gaussian kernel
-    blur_channels: iterable of booleans, length C
+    """Apply a separable Gaussian blur to selected channels.
+
+    Parameters
+    ----------
+    image : ndarray
+        Image in (H, W, C) float32 format.
+    kernel : ndarray
+        1D Gaussian kernel.
+    blur_channels : iterable of bool
+        Blur mask with one value per channel.
+
     """
     blur_mask = np.asarray(blur_channels, dtype=np.bool_)
     temp = blur_horizontal_masked(image, kernel, blur_mask)
@@ -504,7 +502,7 @@ def gaussian_blur_separable_masked(image, kernel, blur_channels):
 
 @njit(parallel=True)
 def XYZ_to_xyY(image: np.ndarray, eps: float = 1e-8):
-    """Converts from CIE XYZ to xyY."""
+    """Convert CIE XYZ values to xyY."""
     h, w, _ = image.shape
     out = np.empty_like(image)
 
@@ -529,7 +527,7 @@ def XYZ_to_xyY(image: np.ndarray, eps: float = 1e-8):
 
 @njit(parallel=True)
 def xyY_to_XYZ(image: np.ndarray, eps: float = 1e-8):
-    """Converts from CIE xyY to XYZ."""
+    """Convert CIE xyY values to XYZ."""
     h, w, _ = image.shape
     out = np.empty_like(image)
 
@@ -554,8 +552,7 @@ def xyY_to_XYZ(image: np.ndarray, eps: float = 1e-8):
 
 @njit
 def chroma_nr_filter(image: np.ndarray, size: int = 0):
-    """A simple chroma noise reduction filter by blurring only color channels."""
-
+    """Reduce chroma noise by blurring only color channels."""
     image = XYZ_to_xyY(image)
     size = int(size) * 2 + 1
     sigma = 0.3 * ((size - 1) * 0.5 - 1) + 0.8

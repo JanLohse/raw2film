@@ -1,5 +1,7 @@
 """Additional GUI objects used by Raw2Film."""
 
+import contextlib
+import logging
 import queue
 import threading
 import time
@@ -37,20 +39,26 @@ from spectral_film_lut.gui_objects import (
     AnimatedToolButton,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class CpuWorker(QObject):
+    """Run CPU processing tasks in a Qt worker thread."""
+
     progress = pyqtSignal(str, int)
     finished = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self):  # noqa: D107
         super().__init__()
         self._is_canceled = False
 
     @pyqtSlot()
     def cancel(self):
+        """Cancel pending CPU worker tasks."""
         self._is_canceled = True
 
     def run_tasks(self, func_execute_cpu, tasks, **kwargs):
+        """Run CPU tasks sequentially and emit progress updates."""
         self._is_canceled = False
         total = len(tasks)
 
@@ -59,35 +67,35 @@ class CpuWorker(QObject):
         for idx, task in enumerate(tasks, 1):
             if self._is_canceled:
                 break
-            status_msg = func_execute_cpu(
-                task, current_idx=idx, total_count=total, **kwargs
-            )
+            status_msg = func_execute_cpu(task, current_idx=idx, total_count=total, **kwargs)
             self.progress.emit(status_msg, idx)
 
-        print(f"total {time.time() - start:.2f}s")
+        logger.info("total %.2fs", time.time() - start)
 
         self.finished.emit()
 
 
 class GpuWorker(QObject):
+    """Run GPU processing tasks with a CPU producer thread."""
+
     progress = pyqtSignal(str, int)
     finished = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self):  # noqa: D107
         super().__init__()
         self._is_canceled = False
         self.payload_queue = None
 
     @pyqtSlot()
     def cancel(self):
+        """Cancel pending GPU worker tasks and stop the producer."""
         self._is_canceled = True
         if self.payload_queue is not None:
-            try:
+            with contextlib.suppress(queue.Full):
                 self.payload_queue.put((None, None, None), block=False)
-            except queue.Full:
-                pass
 
     def run_tasks(self, func_prepare_cpu, func_execute_gpu, tasks, **kwargs):
+        """Process tasks with a CPU producer and GPU consumer pipeline."""
         self._is_canceled = False
         total = len(tasks)
         self.payload_queue = queue.Queue(maxsize=1)
@@ -102,9 +110,7 @@ class GpuWorker(QObject):
                     pipeline_payload = func_prepare_cpu(task[0], **kwargs)
                     while not self._is_canceled:
                         try:
-                            self.payload_queue.put(
-                                (idx, task, pipeline_payload), timeout=0.1
-                            )
+                            self.payload_queue.put((idx, task, pipeline_payload), timeout=0.1)
                             break
                         except queue.Full:
                             continue
@@ -135,18 +141,18 @@ class GpuWorker(QObject):
 
         producer_thread.join(timeout=1.0)
 
-        print(f"total {time.time() - start:.2f}s")
+        logger.info("total %.2fs", time.time() - start)
 
         self.finished.emit()
 
 
 class AutoShortcutsDialog(QDialog):
-    """
-    A dialog that automatically builds a list of shortcuts from both QActions and
-    QShortcuts.
+    """Build a dialog listing keyboard shortcuts.
+
+    The dialog collects actions and shortcuts from both QActions and QShortcuts.
     """
 
-    def __init__(self, shortcuts_data, parent=None):
+    def __init__(self, shortcuts_data, parent=None):  # noqa: D107
         super().__init__(parent)
         self.setWindowTitle("Keyboard Shortcuts")
         self.setMinimumSize(400, 350)
@@ -162,9 +168,7 @@ class AutoShortcutsDialog(QDialog):
         """
 
         for description, shortcut_str in sorted(shortcuts_data.items()):
-            html_content += (
-                f"<tr><td>{description}</td><td><b>{shortcut_str}</b></td></tr>"
-            )
+            html_content += f"<tr><td>{description}</td><td><b>{shortcut_str}</b></td></tr>"
 
         html_content += "</table>"
         text_area.setHtml(html_content)
@@ -182,7 +186,7 @@ RIGHT_ARROW_ICON = QIcon(f"{BASE_DIR}/resources/right_arrow.svg")
 class SidebarGroup(QWidget):
     """A group wrapper for a sidebar that is collapsible."""
 
-    def __init__(self, title="", parent=None):
+    def __init__(self, title="", parent=None):  # noqa: D107
         super().__init__(parent)
 
         self.toggle_button = AnimatedToolButton(parent=self)
@@ -190,9 +194,7 @@ class SidebarGroup(QWidget):
         self.toggle_button.setText("  " + title)
         self.toggle_button.setCheckable(True)
         self.toggle_button.setChecked(False)
-        self.toggle_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle_button.setIcon(RIGHT_ARROW_ICON)
         self.toggle_button.pressed.connect(self.on_pressed)
         self.toggle_button.setStyleSheet("background: transparent;")
@@ -202,9 +204,7 @@ class SidebarGroup(QWidget):
 
         self.content_area = QScrollArea(maximumHeight=0, minimumHeight=0)
         self.content_area.setContentsMargins(0, 0, 0, 0)
-        self.content_area.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        self.content_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.content_area.setFrameShape(QFrame.Shape.NoFrame)
         self.content_layout = QGridLayout()
         self.content_area.setLayout(self.content_layout)
@@ -218,11 +218,10 @@ class SidebarGroup(QWidget):
 
         self.toggle_animation.addAnimation(QPropertyAnimation(self, b"minimumHeight"))
         self.toggle_animation.addAnimation(QPropertyAnimation(self, b"maximumHeight"))
-        self.toggle_animation.addAnimation(
-            QPropertyAnimation(self.content_area, b"maximumHeight")
-        )
+        self.toggle_animation.addAnimation(QPropertyAnimation(self.content_area, b"maximumHeight"))
 
     def setChecked(self):
+        """Expand the sidebar group."""
         self.toggle_button.setChecked(True)
         self.toggle_button.setIcon(DOWN_ARROW_ICON)
         collapsed_height = self.sizeHint().height() - self.content_area.maximumHeight()
@@ -233,6 +232,7 @@ class SidebarGroup(QWidget):
 
     @pyqtSlot()
     def on_pressed(self):
+        """Toggle the sidebar group open or collapsed."""
         checked = self.toggle_button.isChecked()
         self.toggle_button.setIcon(RIGHT_ARROW_ICON if checked else DOWN_ARROW_ICON)
         self.toggle_animation.setDirection(
@@ -243,6 +243,7 @@ class SidebarGroup(QWidget):
         self.toggle_animation.start()
 
     def add_option(self, widget, name=None, default=None, setter=None, tool_tip=None):
+        """Add an option widget and optional label behavior to the sidebar."""
         self.content_counter += 1
         label = QLabel(
             name,
@@ -258,6 +259,7 @@ class SidebarGroup(QWidget):
         self.update_animation()
 
     def update_animation(self):
+        """Configure the collapse and expand animations."""
         collapsed_height = self.sizeHint().height() - self.content_area.maximumHeight()
         content_height = self.content_layout.sizeHint().height()
         for i in range(self.toggle_animation.animationCount()):
@@ -279,7 +281,7 @@ class SidebarGroup(QWidget):
 class ImageInfoWidget(QWidget):
     """A widget showing image metadata details."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None):  # noqa: D107
         super().__init__(parent)
         self.layout = QGridLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -315,12 +317,8 @@ class ImageInfoWidget(QWidget):
                 alignment=(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             )
             val_label.setWordWrap(True)
-            val_label.setSizePolicy(
-                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-            )
-            val_label.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-            )
+            val_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            val_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
             self.layout.addWidget(title_label, i, 0)
             self.layout.addWidget(val_label, i, 1)
@@ -328,6 +326,7 @@ class ImageInfoWidget(QWidget):
 
     @pyqtSlot(dict, str, str)
     def update_info(self, metadata, cam_str, lens_str):
+        """Populate metadata labels for the selected image."""
         if not metadata:
             for lbl in self.labels.values():
                 lbl.setText("-")

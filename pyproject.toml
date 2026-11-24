@@ -58,8 +58,23 @@ local_scheme = "no-local-version"
 [tool.hatch.build.hooks.vcs]
 version-file = "src/raw2film/_version.py"
 
+[tool.ruff]
+line-length = 100
+
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+    "C4",
+    "T20",
+    "PT",
+    "D",
+]
 
 [tool.ruff.format]
 quote-style = "double"

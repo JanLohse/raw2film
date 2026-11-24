@@ -1,3 +1,5 @@
+"""Run the application smoke test offscreen."""
+
 import os
 
 from raw2film.__main__ import run
