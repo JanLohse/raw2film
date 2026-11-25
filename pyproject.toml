@@ -19,14 +19,14 @@ classifiers = [
 dependencies = [
     "lensfunpy>=1.18.0",
     "numpy>=2.4.6",
-    "opencv-python>=5.0.0.93",
-    "pillow>=12.3.0",
+    "opencv-python>=5.1.0.95",
+    "pillow>=13.0.0",
     "pyexiftool>=0.5.6",
-    "pyqt6>=6.11.0",
-    "rawpy>=0.27.1",
+    "pyqt6>=6.12.1",
+    "rawpy>=0.28.0",
     "scipy>=1.17.1",
     "spectral-film-lut~=0.18.0",
-    "wgpu>=0.32.0",
+    "wgpu>=0.33.0",
 ]
 
 [dependency-groups]
