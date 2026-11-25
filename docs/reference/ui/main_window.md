@@ -5,6 +5,6 @@ tags:
   - UI
 ---
 
-# GUI
+# Main Window
 
-::: raw2film.gui
+::: raw2film.ui.main_window

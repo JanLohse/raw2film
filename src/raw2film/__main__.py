@@ -27,7 +27,7 @@ def run(exit_immediately: bool = False):
 
     from spectral_film_lut.film_loader import load_ui
 
-    from raw2film.gui import MainWindow
+    from raw2film.ui.main_window import MainWindow
 
     load_ui(MainWindow, splash_screen, app, exit_immediately=exit_immediately)
 

@@ -1687,7 +1687,7 @@ class GpuProcessor:
             "half_size",
             "cache",
             "locs",
-            "kwargs",  # <-- Explicitly drop 'kwargs'
+            "kwargs",
         }
         # If the UI passed a grain_intensity in kwargs, stash it on the instance
         # so the GPU upload code can pack it into the uniform buffer.
