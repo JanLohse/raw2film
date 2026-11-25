@@ -325,11 +325,6 @@ class ImageManagementMixin:
             self.profile_changed(self.print_selector.currentText(), "print_film")
         else:
             self.profile_changed(None, "print_film")
-        # Load film stock's default color masking when film stock changes
-        if negative in self.filmstocks and self.filmstocks[negative] is not None:
-            film_stock = self.filmstocks[negative]
-            if hasattr(film_stock, "color_masking"):
-                self.color_masking.setValue(film_stock.color_masking)
         self.active = True
         self.profile_changed(negative, "negative_film")
 
@@ -526,6 +521,7 @@ class ImageManagementMixin:
         self.shadow_comp.setValue(profile_params["shadow_comp"])
         self.saturation_slider.setValue(profile_params["sat_adjust"])
         self.color_masking.setValue(profile_params["color_masking"])
+        self.dye_inhibition.setValue(profile_params["dye_inhibition"])
         self.inversion_gamma.setValue(profile_params["inversion_gamma"])
         self.idealized_curve.setChecked(profile_params["idealized_curve"])
         self.white_clip.setChecked(profile_params["white_clip"])

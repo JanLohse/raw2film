@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from spectral_film_lut.css_theme import BUTTON_RADIUS
+from spectral_film_lut.ui.theme import BUTTON_RADIUS
 
 
 class RoundedLabel(QLabel):

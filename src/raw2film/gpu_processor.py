@@ -9,11 +9,11 @@ from pathlib import Path
 import numpy as np
 import wgpu
 from PIL import Image, ImageCms
-from spectral_film_lut.color_space import GAMMA_KEYS
 from spectral_film_lut.config import DEFAULT_DTYPE
+from spectral_film_lut.core.color_space import GAMMA_KEYS
+from spectral_film_lut.core.utils import create_lut
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.grain_generation import grain_kernel
-from spectral_film_lut.utils import create_lut
+from spectral_film_lut.ui.grain_generation import grain_kernel
 from wgpu import TextureUsage, get_default_device
 
 from raw2film import effects
@@ -184,13 +184,15 @@ class GpuProcessor:
         self.tex_hist_out = None
 
         self.tex_lut_1d = None
+        self.tex_lut_1d_adjusted = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
         self.tex_lut_grain = None
-        self.color_masking_matrix = None
+        self.dye_inhibition_matrix = None
 
         self.buffer_params_lut_1d = None
-        self.buffer_color_masking_matrix = None
+        self.buffer_params_lut_1d_adjusted = None
+        self.buffer_dye_inhibition_matrix = None
         self.buffer_params_grain = None
         # Multiplier for grain intensity (used by GPU shaders). Default 1.0
         self.grain_intensity = 1.0
@@ -304,16 +306,21 @@ class GpuProcessor:
 
         self.tex_input.upload(self.queue, image)
 
-    def _ensure_lut_1d(self, lut: np.ndarray, apply_log: bool):
-        """Set up 1D LUT texture and update parameters buffer."""
+    def _ensure_lut_1d(self, lut: np.ndarray, apply_log: bool, adjusted: bool = False):
+        """Set up a density-curve LUT texture and update its parameters."""
         size = lut.shape[1]
-        if self.tex_lut_1d is None or size != self.tex_lut_1d.size[0]:
-            self.tex_lut_1d = self.device.create_texture(
+        texture_attr = "tex_lut_1d_adjusted" if adjusted else "tex_lut_1d"
+        view_attr = "tex_lut_1d_adjusted_view" if adjusted else "tex_lut_1d_view"
+        params_attr = "buffer_params_lut_1d_adjusted" if adjusted else "buffer_params_lut_1d"
+        texture = getattr(self, texture_attr)
+        if texture is None or size != texture.size[0]:
+            texture = self.device.create_texture(
                 size=(size, 1, 1),
                 format=wgpu.TextureFormat.rgba16float,
                 usage=(wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST),
             )
-            self.tex_lut_1d_view = self.tex_lut_1d.create_view()
+            setattr(self, texture_attr, texture)
+            setattr(self, view_attr, texture.create_view())
 
         lut_rgba = np.ones((size, 4), dtype=np.float32)
         lut_rgba[..., 0:3] = lut[1:, ...].T
@@ -329,17 +336,18 @@ class GpuProcessor:
         apply_log_val = 1 if apply_log else 0
         params_lut_1d = struct.pack("fffI", xp_min, xp_max, inv_range, apply_log_val)
 
-        if self.buffer_params_lut_1d is None:
-            self.buffer_params_lut_1d = self.device.create_buffer_with_data(
+        buffer = getattr(self, params_attr)
+        if buffer is None:
+            buffer = self.device.create_buffer_with_data(
                 data=params_lut_1d,
                 usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
             )
         else:
-            # Update existing uniform buffer on host parameter change
-            self.queue.write_buffer(self.buffer_params_lut_1d, 0, params_lut_1d)
+            self.queue.write_buffer(buffer, 0, params_lut_1d)
+        setattr(self, params_attr, buffer)
 
         self.queue.write_texture(
-            {"texture": self.tex_lut_1d},
+            {"texture": texture},
             lut_rgba_16,
             {
                 "bytes_per_row": size * 4 * 2,
@@ -352,16 +360,14 @@ class GpuProcessor:
             },
         )
 
-    def _ensure_color_masking_matrix(self, matrix: np.ndarray):
-        """Set up color masking matrix as uniform buffer."""
-        # Keep the CPU row-vector convention: the shader applies the matrix
-        # directly via per-channel dot products, so no extra transpose here.
+    def _ensure_dye_inhibition_matrix(
+        self, matrix: np.ndarray, d_max: np.ndarray, positive_film: bool
+    ):
+        """Upload the dye-inhibition matrix and film density limits."""
         matrix_f32 = matrix.astype(np.float32, copy=False)
-
-        # Pack as 3 rows of 4 floats each (16 bytes per row for alignment)
-        # Structure: f32, f32, f32, u32 (padding) per row
+        d_max_f32 = np.asarray(d_max, dtype=np.float32).reshape(3)
         matrix_data = struct.pack(
-            "fffIfffIfffI",
+            "fffIfffIfffIfffI",
             matrix_f32[0, 0],
             matrix_f32[0, 1],
             matrix_f32[0, 2],
@@ -374,12 +380,18 @@ class GpuProcessor:
             matrix_f32[2, 1],
             matrix_f32[2, 2],
             0,
+            d_max_f32[0],
+            d_max_f32[1],
+            d_max_f32[2],
+            int(positive_film),
         )
-
-        self.buffer_color_masking_matrix = self.device.create_buffer_with_data(
-            data=matrix_data,
-            usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
-        )
+        if self.buffer_dye_inhibition_matrix is None:
+            self.buffer_dye_inhibition_matrix = self.device.create_buffer_with_data(
+                data=matrix_data,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+        else:
+            self.queue.write_buffer(self.buffer_dye_inhibition_matrix, 0, matrix_data)
 
     def _ensure_lut_2d(self, lut: np.ndarray):
         """Set up 2D LUT texture."""
@@ -978,28 +990,48 @@ class GpuProcessor:
         negative_film: FilmSpectral,
         push_pull: float | int,
         color_masking: float | None = None,
+        dye_inhibition: float | None = None,
         apply_log: bool = True,
     ):
-        """Create 1D LUT for the films HD-curve and load color masking matrix."""
+        """Load both density curves and the matrix used for dye inhibition."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
             "color_masking": color_masking,
+            "dye_inhibition": dye_inhibition,
             "apply_log": apply_log,
         }
 
         if new_param_dict == self.curve_param_dict:
             return
 
-        density_curve = negative_film.get_density_curve(push_pull=push_pull)
+        is_active = (
+            dye_inhibition not in (None, 0)
+            and negative_film.density_measure != "bw"
+            and negative_film.stage == "camera"
+        )
+        matrix = (
+            negative_film.get_dye_inhibition_matrix(dye_inhibition)
+            if is_active
+            else np.zeros((3, 3), dtype=DEFAULT_DTYPE)
+        )
+        density_curve = negative_film.get_density_curve(
+            push_pull=push_pull,
+            color_masking=color_masking,
+            dye_inhibition=dye_inhibition,
+        )
+        adjusted_curve = (
+            negative_film._adjust_density_curve(density_curve, matrix)
+            if is_active
+            else density_curve
+        )
 
-        if negative_film.density_measure != "bw":
-            self.color_masking_matrix = negative_film.get_color_masking_matrix(color_masking)
-        else:
-            self.color_masking_matrix = np.eye(3, dtype=DEFAULT_DTYPE)
-
+        self.dye_inhibition_matrix = matrix
         self._ensure_lut_1d(density_curve, apply_log)
-        self._ensure_color_masking_matrix(self.color_masking_matrix)
+        self._ensure_lut_1d(adjusted_curve, False, adjusted=True)
+        self._ensure_dye_inhibition_matrix(
+            matrix, negative_film.d_max, negative_film.film_type == "positive"
+        )
 
         self.curve_param_dict = new_param_dict
 
@@ -1020,7 +1052,8 @@ class GpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        custom_inversion: bool = False,
+        color_masking: float | None = None,
+        dye_inhibition: float | None = None,
     ):
         """Create the 3D output LUT."""
         new_param_dict = {
@@ -1039,7 +1072,8 @@ class GpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
-            "custom_inversion": custom_inversion,
+            "color_masking": color_masking,
+            "dye_inhibition": dye_inhibition,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -1065,7 +1099,8 @@ class GpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
-            custom_inversion=custom_inversion,
+            color_masking=color_masking,
+            dye_inhibition=dye_inhibition,
         )
 
         if icc_transform is not None:
@@ -1114,9 +1149,18 @@ class GpuProcessor:
                 {
                     "binding": 5,
                     "resource": {
-                        "buffer": self.buffer_color_masking_matrix,
+                        "buffer": self.buffer_params_lut_1d_adjusted,
                         "offset": 0,
-                        "size": self.buffer_color_masking_matrix.size,
+                        "size": self.buffer_params_lut_1d_adjusted.size,
+                    },
+                },
+                {"binding": 6, "resource": self.tex_lut_1d_adjusted_view},
+                {
+                    "binding": 7,
+                    "resource": {
+                        "buffer": self.buffer_dye_inhibition_matrix,
+                        "offset": 0,
+                        "size": self.buffer_dye_inhibition_matrix.size,
                     },
                 },
             ],
@@ -1642,7 +1686,7 @@ class GpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
-        custom_inversion: bool = False,
+        dye_inhibition: float | None = None,
         **kwargs,
     ):
         """Load and process an image."""
@@ -1736,7 +1780,7 @@ class GpuProcessor:
         highlight_burn: float = 0.0,
         burn_scale: float = 50.0,
         color_masking: float | None = None,
-        custom_inversion: bool = False,
+        dye_inhibition: float | None = None,
         **_,
     ):
         """Process an image using pre-loaded CPU data."""
@@ -1792,12 +1836,16 @@ class GpuProcessor:
         highlight_burn,
         burn_scale,
         color_masking,
-        custom_inversion,
+        dye_inhibition,
     ):
         """Execute the shared WebGPU rendering pipeline passes."""
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
         self.load_density_curve_and_masking(
-            negative_film, push_pull, color_masking, not highlight_burn
+            negative_film,
+            push_pull,
+            color_masking,
+            dye_inhibition,
+            apply_log=not highlight_burn,
         )
         self.load_output_lut(
             negative_film,
@@ -1815,7 +1863,8 @@ class GpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
-            custom_inversion,
+            color_masking,
+            dye_inhibition,
         )
 
         scale = max(self.pipeline_resolution) / max(frame_width, frame_height)

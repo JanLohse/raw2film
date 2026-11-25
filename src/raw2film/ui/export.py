@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QVBoxLayout,
 )
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.widgets.controls import (
     AnimatedButton,
     HoverLineEdit,
     Slider,

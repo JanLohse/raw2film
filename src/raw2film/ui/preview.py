@@ -6,7 +6,7 @@ import numpy as np
 from PyQt6.QtCore import (
     QTimer,
 )
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.widgets.controls import (
     Worker,
 )
 
@@ -128,7 +128,6 @@ class PreviewMixin:
         if "print_film" in processing_args and processing_args["print_film"] is not None:
             if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
-                processing_args["custom_inversion"] = "ACES" not in processing_args["print_film"]
             processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
 
         processing_args["resolution"] = (
@@ -195,7 +194,6 @@ class PreviewMixin:
         if processing_args.get("print_film") is not None:
             if processing_args["print_film"].startswith("Inversion"):
                 processing_args["inversion"] = True
-                processing_args["custom_inversion"] = "ACES" not in processing_args["print_film"]
             processing_args["print_film"] = self.filmstocks[processing_args["print_film"]]
 
         if resolution is not None:

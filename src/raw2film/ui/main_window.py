@@ -29,8 +29,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from rendercanvas.qt import QRenderWidget
-from spectral_film_lut.css_theme import BORDER_RADIUS, THEME
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.theme import BORDER_RADIUS, THEME
+from spectral_film_lut.ui.widgets.controls import (
     AboutDialog,
 )
 
@@ -173,7 +173,8 @@ class MainWindow(
             "push_pull": 0.0,
             "sharpening_strength": 0.0,
             "sharpening_sigma": 1.0,
-            "color_masking": 1.0,
+            "color_masking": 0.5,
+            "dye_inhibition": 0.5,
         }
         self.dflt_img_params = {
             "exp_comp": 0,

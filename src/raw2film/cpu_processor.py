@@ -2,11 +2,11 @@
 
 import numpy as np
 from PIL import Image, ImageCms
-from spectral_film_lut.color_space import GAMMA_KEYS
 from spectral_film_lut.config import DEFAULT_DTYPE
+from spectral_film_lut.core.color_space import GAMMA_KEYS
+from spectral_film_lut.core.utils import create_lut, log_clip, multi_channel_interp
+from spectral_film_lut.core.xy_lut import apply_2d_lut
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.utils import create_lut, log_clip, multi_channel_interp
-from spectral_film_lut.xy_lut import apply_2d_lut
 from wgpu import get_default_device
 
 from raw2film import effects
@@ -33,9 +33,13 @@ class CpuProcessor:
         self.tex_output = None
 
         self.tex_lut_1d = None
+        self.tex_lut_1d_adjusted = None
         self.tex_lut_2d = None
         self.tex_lut_3d = None
-        self.color_masking_matrix = None
+        self.dye_inhibition_matrix = None
+        self.dye_inhibition_active = False
+        self.positive_film = False
+        self.d_max = None
 
         # Comparison dicts
         self.image_param_dict = None
@@ -173,25 +177,42 @@ class CpuProcessor:
         negative_film: FilmSpectral,
         push_pull: float | int,
         color_masking: float | None = None,
+        dye_inhibition: float | None = None,
     ):
-        """Create the 1D LUT for the HD-curve."""
+        """Create the 1D LUT for the film density curve."""
         new_param_dict = {
             "negative_film": negative_film.name,
             "push_pull": push_pull,
             "color_masking": color_masking,
+            "dye_inhibition": dye_inhibition,
         }
 
         if new_param_dict == self.curve_param_dict:
             return
 
-        density_curve = negative_film.get_density_curve(push_pull=push_pull)
-
-        if negative_film.density_measure != "bw":
-            self.color_masking_matrix = negative_film.get_color_masking_matrix(color_masking)
-        else:
-            self.color_masking_matrix = None
-
+        self.dye_inhibition_active = (
+            dye_inhibition not in (None, 0)
+            and negative_film.density_measure != "bw"
+            and negative_film.stage == "camera"
+        )
+        self.dye_inhibition_matrix = (
+            negative_film.get_dye_inhibition_matrix(dye_inhibition)
+            if self.dye_inhibition_active
+            else np.zeros((3, 3), dtype=DEFAULT_DTYPE)
+        )
+        density_curve = negative_film.get_density_curve(
+            push_pull=push_pull,
+            color_masking=color_masking,
+            dye_inhibition=dye_inhibition,
+        )
         self.tex_lut_1d = density_curve
+        self.tex_lut_1d_adjusted = (
+            negative_film._adjust_density_curve(density_curve, self.dye_inhibition_matrix)
+            if self.dye_inhibition_active
+            else density_curve
+        )
+        self.positive_film = negative_film.film_type == "positive"
+        self.d_max = negative_film.d_max
 
         self.curve_param_dict = new_param_dict
 
@@ -212,7 +233,8 @@ class CpuProcessor:
         white_balance: bool = False,
         white_clip: bool = False,
         icc_transform=None,
-        custom_inversion: bool = False,
+        color_masking: float | None = None,
+        dye_inhibition: float | None = None,
     ):
         """Create the output 3D LUT."""
         new_param_dict = {
@@ -231,7 +253,8 @@ class CpuProcessor:
             "white_balance": white_balance,
             "white_clip": white_clip,
             "icc_transform": icc_transform,
-            "custom_inversion": custom_inversion,
+            "color_masking": color_masking,
+            "dye_inhibition": dye_inhibition,
         }
 
         if new_param_dict == self.output_param_dict:
@@ -257,7 +280,8 @@ class CpuProcessor:
             white_balance=white_balance,
             white_clip=white_clip,
             linear_scaling=4.0,
-            custom_inversion=custom_inversion,
+            color_masking=color_masking,
+            dye_inhibition=dye_inhibition,
         )
 
         if icc_transform is not None:
@@ -325,7 +349,7 @@ class CpuProcessor:
         half_size: bool = True,
         cache: bool = True,
         color_masking: float | None = None,
-        custom_inversion: bool = False,
+        dye_inhibition: float | None = None,
         max_scale: float | None = 400.0,
         grain_intensity: float = 1.0,
         **_,
@@ -350,7 +374,7 @@ class CpuProcessor:
             max_scale,
         )
         self.load_input_lut(negative_film, exp_kelvin, tint, exp_comp)
-        self.load_density_curve_and_masking(negative_film, push_pull, color_masking)
+        self.load_density_curve_and_masking(negative_film, push_pull, color_masking, dye_inhibition)
         self.load_output_lut(
             negative_film,
             print_film,
@@ -367,7 +391,8 @@ class CpuProcessor:
             white_balance,
             white_clip,
             icc_transform,
-            custom_inversion,
+            color_masking,
+            dye_inhibition,
         )
 
         # process image
@@ -390,10 +415,16 @@ class CpuProcessor:
         if highlight_burn:
             image = effects.burn(image, negative_film, highlight_burn, burn_scale)
 
-        if negative_film.density_measure != "bw":
-            image @= self.color_masking_matrix.T
-
-        image = multi_channel_interp(image, self.tex_lut_1d)
+        if self.dye_inhibition_active:
+            initial_density = multi_channel_interp(image, self.tex_lut_1d)
+            if self.positive_film:
+                inhibition_source = np.clip(self.d_max - initial_density, 0.0, None)
+            else:
+                inhibition_source = np.clip(initial_density, 0.0, None)
+            adjusted_exposure = image - inhibition_source @ self.dye_inhibition_matrix.T
+            image = multi_channel_interp(adjusted_exposure, self.tex_lut_1d_adjusted)
+        else:
+            image = multi_channel_interp(image, self.tex_lut_1d)
 
         if sharpness and negative_film.mtf is not None:
             image = effects.film_sharpness(

@@ -1,14 +1,16 @@
-struct Params {
+struct CurveParams {
     xp_min: f32,
     xp_max: f32,
     inv_range: f32,
     apply_log: u32,
 };
 
-struct ColorMaskingMatrix {
-    m00: f32, m01: f32, m02: f32, _pad0: u32,
-    m10: f32, m11: f32, m12: f32, _pad1: u32,
-    m20: f32, m21: f32, m22: f32, _pad2: u32,
+struct DyeInhibitionParams {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+    row2: vec4<f32>,
+    d_max: vec3<f32>,
+    positive_film: u32,
 };
 
 @group(0) @binding(0)
@@ -18,34 +20,57 @@ var input_tex: texture_2d<f32>;
 var output_tex: texture_storage_2d<rgba16float, write>;
 
 @group(0) @binding(2)
-var lut_tex: texture_2d<f32>;
+var density_lut: texture_2d<f32>;
 
 @group(0) @binding(3)
 var lut_sampler: sampler;
 
 @group(0) @binding(4)
-var<uniform> params: Params;
+var<uniform> density_params: CurveParams;
 
 @group(0) @binding(5)
-var<uniform> color_matrix: ColorMaskingMatrix;
+var<uniform> adjusted_params: CurveParams;
+
+@group(0) @binding(6)
+var adjusted_lut: texture_2d<f32>;
+
+@group(0) @binding(7)
+var<uniform> dye_inhibition: DyeInhibitionParams;
 
 fn safe_log10_vec3(v: vec3<f32>) -> vec3<f32> {
     let eps = 1e-6;
     return log2(max(v, vec3<f32>(eps))) / log2(10.0);
 }
 
-fn apply_color_masking_matrix(rgb: vec3<f32>) -> vec3<f32> {
-    let r = rgb.r * color_matrix.m00 + rgb.g * color_matrix.m01 + rgb.b * color_matrix.m02;
-    let g = rgb.r * color_matrix.m10 + rgb.g * color_matrix.m11 + rgb.b * color_matrix.m12;
-    let b = rgb.r * color_matrix.m20 + rgb.g * color_matrix.m21 + rgb.b * color_matrix.m22;
+fn sample_density(normalized_pos: vec3<f32>) -> vec3<f32> {
+    let r = textureSampleLevel(
+        density_lut, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0
+    ).r;
+    let g = textureSampleLevel(
+        density_lut, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0
+    ).g;
+    let b = textureSampleLevel(
+        density_lut, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0
+    ).b;
+    return vec3<f32>(r, g, b);
+}
+
+fn sample_adjusted_density(normalized_pos: vec3<f32>) -> vec3<f32> {
+    let r = textureSampleLevel(
+        adjusted_lut, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0
+    ).r;
+    let g = textureSampleLevel(
+        adjusted_lut, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0
+    ).g;
+    let b = textureSampleLevel(
+        adjusted_lut, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0
+    ).b;
     return vec3<f32>(r, g, b);
 }
 
 @compute
 @workgroup_size(8, 8)
-fn main(
-    @builtin(global_invocation_id) gid: vec3<u32>
-) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dims = textureDimensions(input_tex);
     if (gid.x >= dims.x || gid.y >= dims.y) {
         return;
@@ -54,26 +79,34 @@ fn main(
     let tex_coords = vec2<i32>(i32(gid.x), i32(gid.y));
     let pixel = textureLoad(input_tex, tex_coords, 0);
 
-    // Apply log transformation if input is still in linear space
     var working_pixel = pixel.rgb;
-    if (params.apply_log != 0u) {
+    if (density_params.apply_log != 0u) {
         working_pixel = safe_log10_vec3(working_pixel);
     }
 
-    // Apply color masking matrix in log exposure space
-    let masked_pixel = apply_color_masking_matrix(working_pixel);
-
-    let normalized_pos = clamp(
-        (masked_pixel - params.xp_min) * params.inv_range,
+    let density_pos = clamp(
+        (working_pixel - density_params.xp_min) * density_params.inv_range,
         vec3<f32>(0.0),
         vec3<f32>(1.0)
     );
+    let initial_density = sample_density(density_pos);
 
-    let out_r = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.r, 0.5), 0.0).r;
-    let out_g = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.g, 0.5), 0.0).g;
-    let out_b = textureSampleLevel(lut_tex, lut_sampler, vec2<f32>(normalized_pos.b, 0.5), 0.0).b;
+    var inhibition_source = max(initial_density, vec3<f32>(0.0));
+    if (dye_inhibition.positive_film != 0u) {
+        inhibition_source = max(dye_inhibition.d_max - initial_density, vec3<f32>(0.0));
+    }
 
-    let out_color = vec4<f32>(out_r, out_g, out_b, pixel.a);
+    let adjusted_exposure = working_pixel - vec3<f32>(
+        dot(dye_inhibition.row0.xyz, inhibition_source),
+        dot(dye_inhibition.row1.xyz, inhibition_source),
+        dot(dye_inhibition.row2.xyz, inhibition_source)
+    );
+    let adjusted_pos = clamp(
+        (adjusted_exposure - adjusted_params.xp_min) * adjusted_params.inv_range,
+        vec3<f32>(0.0),
+        vec3<f32>(1.0)
+    );
+    let output_color = sample_adjusted_density(adjusted_pos);
 
-    textureStore(output_tex, tex_coords, out_color);
+    textureStore(output_tex, tex_coords, vec4<f32>(output_color, pixel.a));
 }

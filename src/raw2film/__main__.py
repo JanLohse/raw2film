@@ -7,7 +7,7 @@ import sys
 
 from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QIcon
-from spectral_film_lut.splash_screen import launch_splash_screen
+from spectral_film_lut.ui.splash import launch_splash_screen
 
 from raw2film import R2F_BASE_DIR, __version__
 
@@ -25,7 +25,7 @@ def run(exit_immediately: bool = False):
         path = f"{R2F_BASE_DIR}/resources/raw2film_{size}.png"
         icon.addFile(path, QSize(size, size))
 
-    from spectral_film_lut.film_loader import load_ui
+    from spectral_film_lut.data.film_loader import load_ui
 
     from raw2film.ui.main_window import MainWindow
 

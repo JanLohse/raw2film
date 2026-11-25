@@ -33,8 +33,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from spectral_film_lut import BASE_DIR
-from spectral_film_lut.css_theme import BASE_COLOR
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.theme import BASE_COLOR
+from spectral_film_lut.ui.widgets.controls import (
     AnimatedButton,
     AnimatedToolButton,
 )

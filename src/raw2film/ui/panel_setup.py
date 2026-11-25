@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QWidget,
 )
-from spectral_film_lut.filmstock_selector import FilmStockSelector
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.filmstock_selector import FilmStockSelector
+from spectral_film_lut.ui.widgets.controls import (
     AnimatedButton,
     HoverLineEdit,
     Slider,
@@ -715,7 +715,7 @@ class PanelSetupMixin:
         inter-layer effects. Should probably set lower, but should be experimented with.
         """
         self.color_masking.setMinMaxTicks(
-            0, 2, 1, 100, default=self.dflt_prf_params["color_masking"]
+            0, 1, 1, 100, default=self.dflt_prf_params["color_masking"]
         )
         self.color_masking.set_color_gradient(
             np.array(
@@ -742,6 +742,24 @@ class PanelSetupMixin:
             "For film without a color mask like slide film this\n"
             "can be used to simulate other inter-layer effects. Should\n"
             "probably set lower, but should be experimented with.",
+        )
+
+        self.dye_inhibition = Slider(continuous=False)
+        self.dye_inhibition.setMinMaxTicks(
+            0, 1, 1, 100, default=self.dflt_prf_params["dye_inhibition"]
+        )
+        self.dye_inhibition.set_color_gradient(
+            np.array([0.666, 0.0, 0.0]),
+            np.array([0.666, 0.25, 2.0]),
+            20,
+            False,
+        )
+        profile_settings_group.add_option(
+            self.dye_inhibition,
+            "Dye inhibition",
+            self.dflt_prf_params["dye_inhibition"],
+            self.dye_inhibition.setValue,
+            tool_tip="Simulate development inhibitor regeneration (DIR) between film layers.",
         )
 
         self.canvas_mode = WideComboBox(self)

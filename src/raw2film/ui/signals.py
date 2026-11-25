@@ -146,6 +146,9 @@ class SignalSetupMixin:
         self.burn_scale.valueChanged.connect(lambda x: self.setting_changed(x, "burn_scale"))
         self.saturation_slider.valueChanged.connect(lambda x: self.profile_changed(x, "sat_adjust"))
         self.color_masking.valueChanged.connect(lambda x: self.profile_changed(x, "color_masking"))
+        self.dye_inhibition.valueChanged.connect(
+            lambda x: self.profile_changed(x, "dye_inhibition")
+        )
         self.quick_save_button.triggered.connect(self.quick_save)
         self.close_highlighted_button.triggered.connect(self.image_bar.close_highlighted)
         self.delete_highlighted_button.triggered.connect(self.delete_highlighted)

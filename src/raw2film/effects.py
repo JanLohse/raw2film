@@ -12,7 +12,7 @@ from numba import njit, prange
 from scipy import ndimage
 from spectral_film_lut.config import DEFAULT_DTYPE
 from spectral_film_lut.film_spectral import FilmSpectral
-from spectral_film_lut.grain_generation import generate_grain
+from spectral_film_lut.ui.grain_generation import generate_grain
 
 from raw2film.raw_conversion import CANVAS_MODES
 

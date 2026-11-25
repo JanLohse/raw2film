@@ -6,7 +6,7 @@ from typing import Literal
 import numpy as np
 import rawpy
 from spectral_film_lut.config import DEFAULT_DTYPE
-from spectral_film_lut.utils import (
+from spectral_film_lut.core.utils import (
     create_lut,
 )
 

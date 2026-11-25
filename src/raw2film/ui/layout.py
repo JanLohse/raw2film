@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from rendercanvas.qt import QRenderWidget
-from spectral_film_lut.css_theme import BORDER_RADIUS, OUTLINE_COLOR, THEME
-from spectral_film_lut.gui_objects import (
+from spectral_film_lut.ui.theme import BORDER_RADIUS, OUTLINE_COLOR, THEME
+from spectral_film_lut.ui.widgets.controls import (
     AnimatedButton,
 )
 

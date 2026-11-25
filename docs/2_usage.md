@@ -25,3 +25,9 @@ When clicking on the magnifying glass a window opens to search and browse throug
 available film stocks.
 
 <img width="100%" alt="Film stock selection ui" src="https://github.com/user-attachments/assets/f04175e3-2860-4cba-ad79-b49c28540146" />
+
+## Film Color Controls
+
+Color masking and dye inhibition are profile settings. Color masking stays fixed when
+you select a different film stock; dye inhibition controls development inhibitor
+regeneration between the film layers.
